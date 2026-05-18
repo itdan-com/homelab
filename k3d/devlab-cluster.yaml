@@ -1,0 +1,76 @@
+# Declarative cluster definition for the devlab k3d cluster.
+#
+# This file IS the source of truth for cluster shape going forward.
+# To recreate the cluster:
+#
+#   k3d cluster delete devlab
+#   k3d cluster create --config k3d/devlab-cluster.yaml
+#
+# Why these choices:
+#   - Per-node memory cap (7Gi x 4 = 28Gi) tames K8s scheduler
+#     over-commit. Without this, each node container reports the
+#     full WSL2 VM RAM (~31Gi) and the scheduler thinks the cluster
+#     has 124Gi — leading to OOM kills when workloads are placed.
+#   - hostAliases wires host.docker.internal to the current WSL2
+#     default-route gateway (= the Windows host). This is the IP
+#     that gets pods to Ollama on the RTX 4070. NOTE: WSL2 reboots
+#     can shift this IP; recreate the cluster if pods stop reaching
+#     host.docker.internal. (Phase 2 prep flagged in STATUS.md.)
+#   - Ports 8080/8443 on host map to Traefik 80/443 inside cluster.
+#     Avoids clashing with Portainer (9000/9443) and anything Windows
+#     might be using on 80/443.
+#   - k3s ships Traefik 2.x by default; we keep it for Phase 2-5 ingress.
+
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: devlab
+
+servers: 1
+agents: 3
+
+# Pin k3s image to the version we validated in Phase 1. Updating this
+# is a deliberate decision, not a drive-by — bumping k3s minor versions
+# may require bumping kubectl too (currently v1.32; +/-1 minor window).
+image: docker.io/rancher/k3s:v1.31.5-k3s1
+
+# Map host ports to Traefik (the embedded ingress controller).
+# Format: hostPort:containerPort. nodeFilter pins to the LB container.
+ports:
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer
+  - port: 8443:443
+    nodeFilters:
+      - loadbalancer
+
+# Make the Windows host (where Ollama runs on the RTX 4070) reachable
+# from inside pods as host.docker.internal. CoreDNS gets this written
+# into its NodeHosts on cluster create.
+#
+# 172.19.80.1 = WSL2 default gateway as of 2026-05-17. If WSL reboots
+# and the gateway IP shifts, this file needs updating + cluster recreate.
+# See STATUS.md backlog: "WSL2 default-gateway IP is fragile".
+hostAliases:
+  - ip: "172.19.80.1"
+    hostnames:
+      - host.docker.internal
+
+options:
+  k3d:
+    # Block on `k3d cluster create` until nodes are Ready
+    wait: true
+    timeout: "120s"
+  k3s:
+    # Default k3s ships Traefik enabled — leave it (phase 2 uses it for ingress)
+    # Add k3s-side args here if needed later (e.g. --disable=servicelb).
+    extraArgs: []
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true
+  runtime:
+    # Per-node memory caps. Real WSL2 VM has ~31Gi; cap nodes so total
+    # scheduler-visible memory is realistic (~28Gi across 4 nodes),
+    # leaving ~3Gi headroom for the WSL host itself + Portainer etc.
+    serversMemory: "7Gi"
+    agentsMemory: "7Gi"
