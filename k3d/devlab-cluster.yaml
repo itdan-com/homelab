@@ -5,6 +5,11 @@
 #
 #   k3d cluster delete devlab
 #   k3d cluster create --config k3d/devlab-cluster.yaml
+#   # IMPORTANT: bounce CoreDNS once so it re-reads NodeHosts with
+#   # the hostAliases k3d just injected. Without this, host.docker.internal
+#   # transiently resolves to whatever upstream DNS returns (often the
+#   # Windows LAN IP) for ~60s+ until cache expires.
+#   kubectl -n kube-system delete pod -l k8s-app=kube-dns
 #
 # Why these choices:
 #   - Per-node memory cap (7Gi x 4 = 28Gi) tames K8s scheduler
@@ -69,8 +74,9 @@ options:
     updateDefaultKubeconfig: true
     switchCurrentContext: true
   runtime:
-    # Per-node memory caps. Real WSL2 VM has ~31Gi; cap nodes so total
-    # scheduler-visible memory is realistic (~28Gi across 4 nodes),
-    # leaving ~3Gi headroom for the WSL host itself + Portainer etc.
-    serversMemory: "7Gi"
-    agentsMemory: "7Gi"
+    # Per-node memory caps. Real WSL2 VM has ~31G; cap nodes so total
+    # scheduler-visible memory is realistic (~28G across 4 nodes),
+    # leaving ~3G headroom for the WSL host itself + Portainer etc.
+    # NOTE: k3d uses Docker-style suffix (g, m) not Kubernetes (Gi, Mi).
+    serversMemory: "7g"
+    agentsMemory: "7g"
