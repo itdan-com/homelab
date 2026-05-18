@@ -1,0 +1,34 @@
+# Phase 5 — Team enablement layer
+
+**Goal:** Authentik (SSO), a prompt/skill gallery + LLM observability service (Langfuse is the likely fit, treat as swappable), MinIO (S3-compatible object storage for uploads/artifacts), cert-manager + Traefik for TLS on `*.lab.local`. After this phase a friend or teammate could be onboarded end-to-end with one SSO identity.
+
+**Status:** Not started. Blocked on Phase 4.
+
+---
+
+## High-level outline
+
+1. Add `catalog/authentik/`; configure as OIDC provider.
+2. Wire OpenWebUI, Portainer, Grafana (when present in Phase 7), and the prompt gallery to authenticate via Authentik.
+3. Add `catalog/langfuse/` (or alternative); integrate LiteLLM as a tracing + cost backend.
+4. Add `catalog/minio/`; configure as the upload/artifact store; create initial buckets.
+5. Add `cert-manager` + the existing Traefik (k3d ships with it) for `*.lab.local` TLS via a self-signed CA.
+6. Local DNS: add `/etc/hosts` entries on the Mac and Windows box pointing `openwebui.lab.local`, `portainer.lab.local`, etc. at the cluster's exposed IP.
+
+## Open questions to resolve at the start
+
+- LDAP/SAML alternatives to Authentik if the OIDC story gets sticky? (Keycloak is the obvious fallback; Authentik chosen for lighter footprint.)
+- Langfuse vs. Helicone vs. a custom prompt gallery: Langfuse is the recommendation but verify it integrates with LiteLLM out of the box at the current version.
+- Self-signed CA UX: every browser will warn on first visit. Document the "trust this CA" step for the Mac, since that's the daily-driver browser.
+
+## Phase exit criteria
+
+- A user can SSO into OpenWebUI, Portainer, Grafana (Phase 7), Langfuse, and any future service with one identity.
+- An OpenWebUI conversation appears in Langfuse with cost attribution.
+- An upload via OpenWebUI lands in MinIO.
+- TLS works on every `*.lab.local` URL without browser-warning friction for daily use.
+- `STATUS.md` updated.
+
+## Notes captured during execution
+
+- (empty)

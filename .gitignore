@@ -1,0 +1,39 @@
+# ---------- Secrets — NEVER commit these ----------
+# Kubeconfigs (admin certs + private keys baked in)
+**/kubeconfig
+**/kubeconfig.yaml
+**/*-kubeconfig*
+**/kube/config
+
+# Generic secret patterns
+*.pem
+*.key
+*-secret.yaml
+*-secrets.yaml
+secrets/
+.env
+.env.*
+!.env.example
+
+# ---------- Ephemeral cluster state ----------
+# Regenerated on each cluster build, no need to track
+k3d/devlab.host-alias-ip
+k3d/devlab-kubeconfig*
+
+# ---------- Helm / tooling clutter ----------
+charts/
+*.tgz
+.helm/
+
+# ---------- Editor / OS noise ----------
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# ---------- Build / tmp ----------
+/tmp/
+tmp/
+.tmp/
