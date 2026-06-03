@@ -1,0 +1,23 @@
+apiVersion: v2
+name: template
+description: |
+  Canonical skeleton chart for the homelab catalog. Copy this directory
+  to catalog/<your-service>/ and edit. The label-propagation helpers in
+  templates/_helpers.tpl are the contract — do not edit them inside a
+  real chart; if they need to change, update them here in _template and
+  copy into every existing chart.
+type: application
+version: 0.1.0
+# appVersion: the upstream app's version. Conventionally used as the
+# default image tag — see values.yaml. Real charts: set this to whatever
+# upstream version you're deploying.
+appVersion: "1.25-alpine"
+
+# Four chart-level labels — properties of WHAT THE CHART IS.
+# These are fixed per chart. A chart either talks to an LLM or it doesn't.
+# See catalog/README.md for the full label schema and what each one drives.
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

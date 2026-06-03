@@ -15,6 +15,19 @@ secrets/
 .env.*
 !.env.example
 
+# ---------- SOPS / age safety net ----------
+# secrets.enc.yaml files ARE encrypted and SHOULD be committed.
+# Everything below catches the plaintext mistakes:
+secrets.yaml
+secrets.dec.yaml
+*.dec.yaml
+*.dec.yml
+# Defense-in-depth: never commit an age private key, even though the
+# canonical location is outside the repo at ~/.config/sops/age/keys.txt
+**/age/keys.txt
+*.age.key
+age-keys.txt
+
 # ---------- Ephemeral cluster state ----------
 # Regenerated on each cluster build, no need to track
 k3d/devlab.host-alias-ip

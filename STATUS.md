@@ -1,9 +1,9 @@
 # Homelab Build Status
 
 **Active phase:** Phase 2 — Chat baseline as catalog-pattern Helm charts
-**Status:** P2.1–P2.5 + P2.12 done (Ollama wired end-to-end, repo on GitHub, cluster rebuilt from declarative YAML with real per-node memory caps, Portainer reattached). Next batch (P2.6–P2.11) is the chart-writing marathon.
-**Next action:** Start with P2.6 — write `catalog/README.md` defining the directory convention and label schema (`needs-sso`, `llm-traffic`, `wants-vector`, `exposes-mcp`). These labels are what later phases automate against, so think before typing.
-**Last updated:** 2026-05-17
+**Status:** P2.1–P2.6 + P2.12 done. Catalog contract is live: README defines six-label schema with chart-level vs release-level split, `_template/` skeleton chart smoke-tested on cluster (labels propagate, selectors work), SOPS+age installed with helm-secrets plugin, encrypt/decrypt round-trip verified. **Owner action item before next session: back up `~/.config/sops/age/keys.txt` to a password manager.** Next batch (P2.7–P2.11) is the three real charts.
+**Next action:** P2.7 — write `catalog/postgres/` chart by copying `_template/`. Decide persistent-storage strategy at the same time (hostPath mount so `k3d cluster delete` doesn't wipe DB state — see backlog item).
+**Last updated:** 2026-06-02
 
 **GitHub remote:** https://github.com/itdan-com/homelab (private). Three commits on `main`.
 
@@ -27,6 +27,7 @@ Every new Claude session in this repo:
 
 _Append-only. Newest at top. One line per significant event. Date in ISO format._
 
+- 2026-06-02 — P2.6 closed out. `catalog/README.md` (231 lines) lands the six-label schema (four chart-level annotations + two release-level values for `tier`/`data-class`, enabling sandbox→dev→prod GitOps promotion) and the SOPS-secrets-with-Phase-6-migration-plan. `catalog/_template/` scaffolded with `_helpers.tpl` carrying the label-propagation contract; smoke-tested live (pod went 1/1 Running, IngressRoute live under `traefik.io/v1alpha1`, label selectors return the right deployments). SOPS+age installed (age 1.1.1, sops 3.13.1, helm-secrets 4.6.5); encrypt/decrypt round-trip verified via both `sops` and `helm secrets`. `.sops.yaml` at repo root with `encrypted_regex` so only secret VALUES are encrypted (key names stay diff-readable). `.gitignore` hardened with SOPS plaintext safety net. Trust-gradient design saved to memory.
 - 2026-05-17 — Phase 2 groundwork session: P2.1 verified Ollama end-to-end (Windows binding fixed via `setx OLLAMA_HOST`, generation through pod->host.docker.internal->qwen3.5:9b returns in <5s). P2.2 `git init` + first commit. P2.3 declarative cluster config at `k3d/devlab-cluster.yaml`. P2.4 cluster rebuilt — scheduler-visible RAM dropped from 124 GiB to 28.7 GiB (the win). P2.5 Portainer auto-reattached. P2.12 pushed to private GitHub: itdan-com/homelab. Two new operational gotchas captured in commits: k3d memory suffix uses `g` not `Gi`; CoreDNS needs a post-create pod-delete to honor hostAliases (race against upstream cache).
 - 2026-05-17 — Phase 1 closed out. systemd verified pre-enabled; docker-ce 29.5.0 + kubectl 1.32 + helm 3.21 + k3d 5.8.3 installed; Portainer CE 2.39 deployed and wired to the 4-node devlab cluster via the Portainer Agent (CE doesn't have kubeconfig import). Three architecture gaps surfaced and parked in backlog: Flannel→Cilium CNI swap before Phase 5.5, k3d node resource over-reporting, missing `.wslconfig`. Operator cheatsheet written at `docs/operator-cheatsheet.md` covering health checks, log inspection, Slack-diff decision protocol, and recovery.
 - 2026-05-16 — Build scaffolding bootstrapped: STATUS.md + 8 phase docs created. "How sessions work" section added to CLAUDE.md.

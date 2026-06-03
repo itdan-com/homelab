@@ -2,7 +2,7 @@
 
 **Goal:** Establish the `catalog/` directory convention; deploy OpenWebUI + LiteLLM + Postgres as the first three catalog entries; `git init` and push to GitHub.
 
-**Status:** Not started. Blocked on Phase 1.
+**Status:** In progress. P2.1–P2.5 + P2.12 done; P2.6–P2.11 remaining.
 
 ---
 
@@ -14,6 +14,33 @@
 4. Write `catalog/openwebui/` Helm chart; point it at LiteLLM.
 5. `helm install` each into a `chat` namespace; verify OpenWebUI reachable in browser; verify a prompt round-trips through LiteLLM to Ollama.
 6. `git init` in `~/homelab`; first commit; create GitHub repo and push.
+
+## Granular checklist
+
+Tracked across sessions. Tick as you go.
+
+### Groundwork (done in prior session, 2026-05-17)
+
+- [x] **P2.1** Verify Ollama path end-to-end: pod → `host.docker.internal:11434` → host Ollama returns a generation. Fixed Windows-side binding via `setx OLLAMA_HOST "0.0.0.0:11434"` + tray-relaunch.
+- [x] **P2.2** `git init` in `~/homelab`; first commit landing CLAUDE.md + STATUS.md + phase docs + operator cheatsheet.
+- [x] **P2.3** Declarative cluster config at `k3d/devlab-cluster.yaml` (replaces the imperative `k3d cluster create` from Phase 1).
+- [x] **P2.4** Rebuild cluster from the YAML with per-node memory caps; scheduler-visible RAM dropped 124 GiB → 28.7 GiB (the win — prevents overcommit catastrophes once we have real workloads).
+- [x] **P2.5** Reattach Portainer to the rebuilt cluster (Portainer Agent re-deployed via `kubectl apply`).
+- [x] **P2.12** Push to private GitHub: `itdan-com/homelab`. Three commits on `main`.
+
+### Chart-writing marathon (next batch)
+
+- [x] **P2.6** Write `catalog/README.md`: directory convention, label schema, secrets strategy, ingress decision. **This is the contract every later chart and every later phase keys off** — design before typing. Sub-items:
+  - [x] Confirm label set: six labels — `needs-sso`, `llm-traffic`, `wants-vector`, `exposes-mcp` (chart-level annotations) + `tier`, `data-class` (release-level values). Trust-gradient design (sandbox auto-approves, dev requires tap, prod max friction) saved to memory.
+  - [x] Decide label propagation pattern: chart-level in `Chart.yaml.annotations` AND release-level in `values.yaml`, both emitted as Kubernetes `labels:` on every rendered object via a shared `_helpers.tpl` (lives in `catalog/_template/`).
+  - [x] Decide secrets approach for Phase 2 (pre-Sentinel): SOPS + age. `.sops.yaml` at repo root encrypts only VALUES (key names stay diff-readable). Phase 6 migration plan documented in README: bootstrap secrets stay in SOPS, external-system credentials graduate to Sentinel-issued short-lived tokens.
+  - [x] Decide ingress approach: Traefik IngressRoute + `*.lab.local` hosts entries on the Mac. cert-manager + TLS bolts on in Phase 5 with no chart changes.
+  - [x] Build `catalog/_template/` skeleton chart with `_helpers.tpl` carrying the label-propagation contract. Smoke-tested live on the cluster — labels propagate to Service/Deployment/Pod/IngressRoute, selectors return the right things, restricted PodSecurityStandard defaults work (using `nginxinc/nginx-unprivileged` as the placeholder image).
+- [ ] **P2.7** Write `catalog/postgres/` chart (Bitnami subchart base or thin wrapper). Decide persistent-storage strategy here — cluster recreate currently wipes state (see STATUS backlog). At minimum: hostPath volume mount so a `k3d cluster delete` doesn't lose data.
+- [ ] **P2.8** Write `catalog/litellm/` chart from scratch. Wire to Ollama via `host.docker.internal:11434`. Master key in a Secret following the P2.6 decision. Label set: `llm-traffic: true` (later: Sentinel proxy injection point).
+- [ ] **P2.9** Write `catalog/openwebui/` chart from scratch. Point `OPENAI_API_BASE` at the in-cluster LiteLLM Service. Persistence for chat history via PVC. Label set: `needs-sso: true` (later: Authentik picks it up).
+- [ ] **P2.10** `kubectl create namespace chat`; `helm install` Postgres → LiteLLM → OpenWebUI; `helm list -A` shows all three healthy; pods all `Running` with no crash loops.
+- [ ] **P2.11** End-to-end browser test: OpenWebUI reachable from Mac; send a prompt; verify it round-trips through LiteLLM to host Ollama. Commit the working catalog. Update STATUS to mark Phase 2 done.
 
 ## Open questions to resolve at the start
 
@@ -31,4 +58,8 @@
 
 ## Notes captured during execution
 
-- (empty)
+- 2026-05-17 — k3d memory suffix is `g` not `Gi` (cluster create silently rejects `Gi`).
+- 2026-05-17 — CoreDNS needs a post-create pod-delete to honor `hostAliases`; there's a race with the upstream cache otherwise.
+- 2026-06-02 — `kubectl get ingressroute` defaults to the OLD `traefik.containo.us/v1alpha1` API group, which is empty in current k3d. Charts use the current `traefik.io/v1alpha1` group. Use `kubectl get ingressroutes.traefik.io` explicitly to avoid the misleading "No resources found" answer.
+- 2026-06-02 — The standard nginx image cannot run under restricted PodSecurityStandard defaults (`runAsNonRoot: true`) because it binds port 80 as root. The `_template` chart ships with `nginxinc/nginx-unprivileged` (binds 8080) as a placeholder that actually runs under its own security policy. Real charts: pick images that respect non-root by default.
+- 2026-06-02 — Initial values.yaml had `image.tag: ""` with `appVersion: "0.1.0"` — caused `ErrImagePull` because there's no `nginx:0.1.0`. The Helm convention is "appVersion IS the default image tag" — set appVersion to a real upstream version, not the chart's semver.

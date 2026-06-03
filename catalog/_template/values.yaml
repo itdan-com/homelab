@@ -1,0 +1,83 @@
+# values.yaml — defaults for the skeleton chart.
+# Override per deployment with --set or -f your-values.yaml.
+
+# Two release-level labels — properties of THIS PARTICULAR DEPLOYMENT.
+# Overridable per release. The same chart can be sandbox in one
+# namespace and prod in another. This is what powers the GitOps
+# promotion flow (catalog/README.md → "Promotion flow").
+catalog:
+  # tier: trust gradient applied by Sentinel in Phase 5.5+.
+  # sandbox: auto-approves common capabilities, kill-switch off
+  # dev:     human tap required, relaxed cost/logging policies
+  # prod:    max friction, every external action prompts, kill-switch primed
+  tier: dev
+
+  # dataClass: drives secrets policy.
+  # none:     no data at all (e.g. a stateless proxy)
+  # internal: default; non-sensitive data
+  # secret:   PII or credentials; MUST use SOPS-encrypted values
+  dataClass: internal
+
+image:
+  # Skeleton ships with nginx-unprivileged as a runnable placeholder
+  # (runs as non-root on port 8080, so the restricted securityContext
+  # below actually works). Real charts: replace with your image.
+  repository: nginxinc/nginx-unprivileged
+  tag: ""  # defaults to .Chart.AppVersion if blank
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Resource requests/limits — REQUIRED by this catalog.
+# k3d nodes over-report resources (each node container sees the whole
+# WSL2 VM), so the scheduler will happily over-commit if charts lie.
+# See STATUS.md backlog: "k3d node resource over-reporting."
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+service:
+  type: ClusterIP
+  port: 80
+  # targetPort: the port the container actually listens on.
+  # nginx-unprivileged listens on 8080 because non-root processes can't
+  # bind ports < 1024. The Service still exposes 80 to the rest of the
+  # cluster, which is what clients expect.
+  targetPort: 8080
+
+# Ingress via Traefik IngressRoute (k3d's default ingress controller).
+# host defaults to "<release-name>.lab.local" — add the entry to your
+# Mac's /etc/hosts. Phase 5 adds cert-manager + TLS automatically.
+ingress:
+  enabled: true
+  host: ""  # defaults to "<release-name>.lab.local" if blank
+  # entrypoint: which Traefik entrypoint to listen on (web=80, websecure=443)
+  entrypoint: web
+
+# Pod-level security context — defaults follow restricted PodSecurityStandard.
+# Override if the workload genuinely needs to run as root (most don't).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false  # nginx needs to write to /var/cache; set true where possible
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Optional name overrides. Usually not needed.
+nameOverride: ""
+fullnameOverride: ""

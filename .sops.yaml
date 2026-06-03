@@ -1,0 +1,20 @@
+# SOPS configuration for the homelab repo.
+#
+# This file tells sops: "when you encrypt any file matching the
+# path_regex below, encrypt it to the age public key listed here."
+#
+# The PRIVATE key (~/.config/sops/age/keys.txt on the WSL2 host) is
+# what decrypts. That file is NOT in the repo and must be backed up
+# separately (password manager, secure offline storage). If we lose
+# it, every secret in git history is unrecoverable.
+#
+# See catalog/README.md for the per-chart usage pattern.
+
+creation_rules:
+  # Encrypt any secrets.enc.yaml under catalog/. The
+  # encrypted_regex says "only encrypt VALUES of keys that look like
+  # secrets" — the YAML structure (key names, comments, indentation)
+  # stays in cleartext so diffs are reviewable.
+  - path_regex: catalog/.*/secrets\.enc\.yaml$
+    encrypted_regex: "^(data|stringData|password|.*[Pp]assword|.*[Tt]oken|.*[Kk]ey|.*[Ss]ecret)$"
+    age: age13dr952jeym9vk9kr9fglgpj6n3rxznpuvtnr8hmvdsfn2w5r5aeqdwlhpf
