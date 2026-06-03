@@ -1,0 +1,29 @@
+apiVersion: v2
+name: litellm
+description: |
+  LiteLLM gateway for the homelab platform — a single OpenAI-compatible
+  API surface in front of every LLM the lab uses (host Ollama today,
+  cloud providers tomorrow). The labeled-catalog injection point for
+  cost tracking (Phase 7) and Sentinel-mediated cloud-LLM traffic
+  (Phase 5.5+).
+
+  Wires to host Ollama via host.docker.internal:11434 (provided by
+  k3d cluster hostAliases). Master key is SOPS-encrypted; OpenWebUI
+  uses it as a Bearer token to call LiteLLM.
+
+type: application
+version: 0.1.0
+# Pinning to main-stable for now. TODO: pin to a versioned tag
+# (e.g. v1.55-stable) once verified live in the cluster. Bump in
+# values.yaml; appVersion stays as the source-of-truth label.
+appVersion: "main-stable"
+
+annotations:
+  # Chart-level labels.
+  # llm-traffic: TRUE — this IS the LLM traffic plane. Phase 7 auto-adds
+  # to the LLM cost dashboard; Phase 5.5 may inject Sentinel mediation
+  # in front of cloud-LLM calls.
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "true"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

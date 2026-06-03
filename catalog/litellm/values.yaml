@@ -1,0 +1,106 @@
+# values.yaml for catalog/litellm.
+
+# Release-level catalog labels.
+catalog:
+  tier: dev
+  # LiteLLM holds the master key + any cloud-provider API keys, so
+  # this MUST be secret. Even with no cloud providers, the master
+  # key is sensitive (anyone with it can talk to host Ollama).
+  dataClass: secret
+
+image:
+  # Official LiteLLM gateway image.
+  repository: ghcr.io/berriai/litellm
+  tag: ""  # defaults to .Chart.AppVersion ("main-stable")
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# The LiteLLM config below is rendered into a ConfigMap and mounted
+# at /app/config.yaml. Add models by appending to modelList; LiteLLM
+# proxies them through its OpenAI-compatible API.
+#
+# Each model entry maps:
+#   model_name — what callers see (e.g. "qwen3.5")
+#   litellm_params.model — what LiteLLM routes to (e.g. "ollama/qwen3.5:9b")
+#   litellm_params.api_base — endpoint for the upstream
+#
+# Cloud providers: add entries like
+#   - model_name: gpt-4o
+#     litellm_params:
+#       model: openai/gpt-4o
+#       api_key: os.environ/OPENAI_API_KEY
+# and set the env var in the Secret (secrets.enc.yaml).
+config:
+  modelList:
+    - model_name: qwen3.5
+      litellm_params:
+        model: ollama/qwen3.5:9b
+        api_base: http://host.docker.internal:11434
+  # generalSettings: LiteLLM's own server config. master_key is
+  # consumed from env at startup (set via secrets.enc.yaml so the
+  # SOPS-encrypted value is what reaches the pod).
+  generalSettings:
+    master_key: os.environ/LITELLM_MASTER_KEY
+
+# Auth — master key (Bearer token) protecting LiteLLM's API.
+# Override via SOPS-encrypted secrets.enc.yaml at install time:
+#   helm secrets install litellm . -n chat -f secrets.enc.yaml
+auth:
+  masterKey: CHANGE_ME_VIA_SOPS_SECRETS
+
+# Optional cloud-provider API keys. Override via secrets.enc.yaml.
+# Leaving them empty by default is fine — LiteLLM only fails on
+# attempted use, not on startup.
+providerKeys:
+  openaiApiKey: ""
+  anthropicApiKey: ""
+  geminiApiKey: ""
+
+resources:
+  # LiteLLM is a Python gateway with optional connectors for many
+  # providers. At startup it loads ~800Mi-1.5Gi of Python dependencies
+  # even if only one model is configured. 2Gi limit is the floor
+  # that prevents OOMKill on default install. Bump higher if you
+  # add many cloud providers.
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+
+service:
+  type: ClusterIP
+  port: 4000
+  targetPort: 4000
+
+ingress:
+  enabled: true
+  host: ""  # defaults to "<release-name>.lab.local" if blank
+  entrypoint: web
+
+# LiteLLM image runs as root inside the container by default for
+# historical reasons. We force non-root via securityContext.
+# The litellm process binds 4000 — fine for non-root (>1024).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""
