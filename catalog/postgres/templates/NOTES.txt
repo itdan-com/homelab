@@ -1,0 +1,28 @@
+{{ include "catalog.fullname" . }} installed in namespace "{{ .Release.Namespace }}".
+
+Catalog labels for this release:
+  needs-sso:    {{ index .Chart.Annotations "catalog.homelab/needs-sso" }}
+  llm-traffic:  {{ index .Chart.Annotations "catalog.homelab/llm-traffic" }}
+  wants-vector: {{ index .Chart.Annotations "catalog.homelab/wants-vector" }}
+  exposes-mcp:  {{ index .Chart.Annotations "catalog.homelab/exposes-mcp" }}
+  tier:         {{ .Values.catalog.tier }}
+  data-class:   {{ .Values.catalog.dataClass }}
+
+CONNECTION INFO (in-cluster only — no Ingress on purpose):
+  Host:     {{ include "catalog.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local
+  Port:     {{ .Values.service.port }}
+  Database: {{ .Values.auth.database }}
+  Username: {{ .Values.auth.username }}
+  Password: (in Secret {{ include "catalog.fullname" . }}-auth, key POSTGRES_PASSWORD)
+
+To psql from another pod in the same namespace:
+  kubectl run psql --rm -it --image=postgres:16-alpine --env="PGPASSWORD=$(kubectl get secret {{ include "catalog.fullname" . }}-auth -n {{ .Release.Namespace }} -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d)" -- psql -h {{ include "catalog.fullname" . }} -U {{ .Values.auth.username }} -d {{ .Values.auth.database }}
+
+PERSISTENT STORAGE:
+  PV name:  {{ include "catalog.fullname" . }}-data
+  Host path: {{ .Values.storage.hostPathBase }}-{{ .Release.Name }}  (inside k3d nodes)
+  Real path on WSL2: ~/homelab-data/postgres-{{ .Release.Name }}
+  Survives k3d cluster delete: YES (data lives outside the cluster)
+
+Inspect:
+  kubectl get all,pv,pvc,secret -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}

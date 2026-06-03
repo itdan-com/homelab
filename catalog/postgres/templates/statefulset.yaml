@@ -1,0 +1,90 @@
+{{/*
+StatefulSet (not Deployment) because Postgres needs stable identity:
+the pod's PVC binding must be consistent across restarts. StatefulSet
+guarantees pod names like postgres-0 and stable PVC association.
+
+Single replica — we explicitly do NOT do HA at this layer. When we
+need real HA, migrate to CloudNativePG operator (Phase 7).
+*/}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "catalog.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "catalog.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "catalog.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: postgres
+          image: {{ include "catalog.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          envFrom:
+            # Pull all three auth env vars (POSTGRES_USER, POSTGRES_PASSWORD,
+            # POSTGRES_DB) from the Secret we render in secret.yaml.
+            # envFrom + secretRef means a Secret change forces a pod restart
+            # via the standard StatefulSet rollout (only if the StatefulSet
+            # spec itself is touched — Secret updates alone won't trigger).
+            - secretRef:
+                name: {{ include "catalog.fullname" . }}-auth
+          env:
+            # The official postgres image refuses to init data in a non-empty
+            # directory. PGDATA pointed at a subdirectory under the mount
+            # avoids "lost+found"-style noise on hostPath PVs.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          # Liveness: TCP probe. The official postgres image starts a TCP
+          # listener once it's ready for connections; pg_isready would be
+          # more thorough but TCP is enough to catch "process is dead."
+          livenessProbe:
+            tcpSocket:
+              port: postgres
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.auth.username | quote }}
+                - -d
+                - {{ .Values.auth.database | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "catalog.fullname" . }}-data
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

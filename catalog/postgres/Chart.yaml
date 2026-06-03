@@ -1,0 +1,24 @@
+apiVersion: v2
+name: postgres
+description: |
+  PostgreSQL for the homelab platform. Hand-rolled (not Bitnami / not
+  CNPG) for Phase 2 because the only workload is OpenWebUI session
+  state — no HA, no backup, no replication needed. Designed to migrate
+  to CloudNativePG (the operator pattern) at Phase 7 when we have a
+  real need for backups and HA.
+
+  Storage uses an explicit PV with hostPath pointing at the WSL2
+  host directory mounted into the k3d nodes via the cluster YAML.
+  Data therefore survives `k3d cluster delete`.
+
+type: application
+version: 0.1.0
+appVersion: "16-alpine"
+
+annotations:
+  # Chart-level labels. Postgres holds DB data but doesn't itself
+  # expose any of the catalog automation surfaces.
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

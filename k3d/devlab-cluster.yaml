@@ -61,6 +61,21 @@ hostAliases:
     hostnames:
       - host.docker.internal
 
+# Mount a WSL2-host directory into every k3d node. hostPath PVs
+# pointing inside /homelab-data therefore live in the real WSL2
+# filesystem (at ~/homelab-data on the host) and survive
+# `k3d cluster delete`. Without this, the k3d node containers ARE
+# the storage, and deleting the cluster wipes everything.
+#
+# nodeFilters server:* + agent:* applies the mount to every node so
+# stateful pods can be scheduled anywhere. The host directory must
+# exist BEFORE cluster create — k3d does not auto-create it.
+volumes:
+  - volume: /home/bob/homelab-data:/homelab-data
+    nodeFilters:
+      - server:*
+      - agent:*
+
 options:
   k3d:
     # Block on `k3d cluster create` until nodes are Ready

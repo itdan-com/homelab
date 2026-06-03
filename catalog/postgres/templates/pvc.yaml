@@ -1,0 +1,21 @@
+{{/*
+PersistentVolumeClaim — namespaced, binds explicitly to the PV above
+via volumeName. This bypasses storage-class dynamic provisioning
+and gives us deterministic PV-to-PVC matching.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "catalog.fullname" . }}-data
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}
+  storageClassName: {{ .Values.storage.storageClassName | quote }}
+  # volumeName pins this PVC to the specific PV we render above.
+  # Without it, k3d's default local-path provisioner would intercept.
+  volumeName: {{ include "catalog.fullname" . }}-data

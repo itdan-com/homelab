@@ -1,0 +1,104 @@
+# values.yaml for catalog/postgres.
+# Override per deployment with --set or -f your-values.yaml.
+
+# Release-level catalog labels — overridable per deployment.
+catalog:
+  # Postgres is in dev tier by default — change to sandbox for the
+  # auto-approving Sentinel gradient, or prod for the high-friction one.
+  tier: dev
+  # IMPORTANT: dataClass MUST be `secret` for postgres. The pod stores
+  # both credentials (in env) and data (on the PV). Setting this any
+  # lower than `secret` violates the catalog README's secrets policy.
+  dataClass: secret
+
+image:
+  # Official Postgres image, alpine variant for size. tag defaults to
+  # .Chart.AppVersion ("16-alpine") — pin a different Postgres major
+  # by overriding appVersion in Chart.yaml, not by overriding image.tag,
+  # so the appVersion label stays accurate.
+  repository: postgres
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Auth & database settings.
+# IMPORTANT: postgresPassword IS the literal default; for any real
+# install, OVERRIDE this via a SOPS-encrypted secrets.enc.yaml:
+#   helm secrets install postgres . -n chat -f secrets.enc.yaml
+# The default value below is only here so `helm template` renders
+# without errors during chart development.
+auth:
+  username: postgres
+  postgresPassword: CHANGE_ME_VIA_SOPS_SECRETS
+  database: openwebui
+
+# Storage — explicit PV with hostPath pointing at the WSL2 directory
+# mounted into the k3d nodes (see k3d/devlab-cluster.yaml `volumes:`).
+# This is what makes the data survive `k3d cluster delete`.
+#
+# IMPORTANT — host-side chown required BEFORE first install:
+#
+#   sudo chown -R 999:999 ~/homelab-data/postgres-<release-name>
+#
+# The postgres container runs as uid 999. k3s/hostPath PVs do NOT
+# honor fsGroup automatically (the kubelet won't recurse-chown
+# arbitrary host paths — too dangerous). So we chown manually once
+# per release. CNPG (Phase 7) handles this internally — this is one
+# of the things that makes the operator pattern less brittle.
+storage:
+  # size: how big the PV claims to be. hostPath PVs don't enforce
+  # quotas — this is just the claim metadata. The actual disk usage
+  # is bounded by the WSL2 filesystem.
+  size: 5Gi
+  # hostPathBase: the prefix INSIDE the k3d nodes for the data
+  # directory. The full path becomes <hostPathBase>/<release-name>
+  # so two releases of this chart (e.g. postgres-sandbox + postgres-dev)
+  # get isolated directories.
+  hostPathBase: /homelab-data/postgres
+  # storageClassName: empty string disables k3d's default local-path
+  # provisioner. The PVC will bind to our explicit PV via volumeName.
+  storageClassName: ""
+  # reclaimPolicy: Retain means the host data is NOT deleted when
+  # the PVC is released. We want this — the whole point is data survival.
+  reclaimPolicy: Retain
+
+# Resource requests/limits.
+# Postgres needs more memory than the skeleton default — even a quiet
+# instance benefits from 256Mi for shared_buffers / WAL / sort area.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+service:
+  type: ClusterIP
+  port: 5432
+  targetPort: 5432
+
+# Pod-level security context. Postgres official image runs as uid 999
+# (the `postgres` user) when initialized correctly. fsGroup matters
+# here because the PV gets created with whatever uid the kubelet runs
+# as; fsGroup tells K8s to chown the volume to postgres' group.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 999
+  runAsGroup: 999
+  fsGroup: 999
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""
