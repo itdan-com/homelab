@@ -1,0 +1,4 @@
+# Never commit real secrets or decrypted material for this stack.
+.env
+*.dec
+*.dec.*

@@ -1,0 +1,67 @@
+# Mullvad Workstation — a VPN-isolated Ubuntu desktop.
+#
+# Launch:   cp .env.example .env   # then fill .env
+#           docker compose up -d
+# Off/on:   docker compose stop  /  docker compose start
+# Logs:     docker compose logs -f gluetun
+#
+# Two services:
+#   gluetun  — holds the Mullvad WireGuard tunnel + a kill-switch firewall.
+#   desktop  — an Ubuntu XFCE desktop (web GUI) that SHARES gluetun's network
+#              namespace, so it has no network of its own: every packet exits
+#              via Mullvad, and if the tunnel drops the desktop goes offline.
+
+services:
+  gluetun:
+    image: qmcgaw/gluetun:latest          # TODO(pin): pin to a digest after first successful run
+    container_name: mullvad-gluetun
+    cap_add:
+      - NET_ADMIN                          # required to build the WireGuard tunnel + firewall
+    devices:
+      - /dev/net/tun:/dev/net/tun          # userspace WireGuard needs the tun device
+    environment:
+      VPN_SERVICE_PROVIDER: mullvad
+      VPN_TYPE: wireguard
+      WIREGUARD_PRIVATE_KEY: ${WIREGUARD_PRIVATE_KEY:?put it in .env}
+      WIREGUARD_ADDRESSES: ${WIREGUARD_ADDRESSES:?put it in .env}
+      SERVER_CITIES: ${MULLVAD_CITIES:-}         # optional exit city, e.g. "Zurich"; blank = auto
+      SERVER_COUNTRIES: ${MULLVAD_COUNTRIES:-}   # optional exit country filter, e.g. "Switzerland,Sweden"
+      # Kill-switch is ON by default (FIREWALL=on). We allow ONLY your LAN
+      # through, so the desktop can reach the file server AND you can reach
+      # the web GUI. Everything else is forced through the tunnel or dropped.
+      FIREWALL_OUTBOUND_SUBNETS: ${LAN_SUBNET:?put it in .env}
+      FIREWALL_INPUT_PORTS: "3001"         # allow inbound to the desktop's web GUI
+      DOT: "on"   # encrypted DNS-over-TLS (Cloudflare upstream), tunneled out via Mullvad
+      TZ: ${TZ:-Etc/UTC}
+    ports:
+      # The desktop's KasmVNC web GUI is published HERE (it shares this netns).
+      - "${GUI_PORT:-3001}:3001"           # HTTPS, self-signed cert
+    restart: unless-stopped
+
+  desktop:
+    image: lscr.io/linuxserver/webtop:ubuntu-xfce   # TODO(pin): pin after first run
+    container_name: mullvad-desktop
+    network_mode: "service:gluetun"        # <-- ALL traffic rides gluetun -> Mullvad
+    depends_on:
+      gluetun:
+        condition: service_healthy         # desktop won't start until the VPN is up
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: ${TZ:-Etc/UTC}
+      CUSTOM_USER: ${GUI_USER:-mullvad}
+      PASSWORD: ${GUI_PASSWORD:?put it in .env}   # web login for the desktop
+      TITLE: "Mullvad Workstation"
+      DOCKER_MODS: linuxserver/mods:universal-package-install
+      INSTALL_PACKAGES: "gvfs-backends|smbclient|cifs-utils"
+    volumes:
+      - desktop-config:/config             # home dir: Mullvad Browser + downloads persist here
+    security_opt:
+      - seccomp:unconfined                 # KasmVNC/Chromium sandbox needs this
+    shm_size: "1gb"
+    mem_limit: ${MEM_LIMIT:-8g}
+    cpus: ${CPU_LIMIT:-4}
+    restart: unless-stopped
+
+volumes:
+  desktop-config:
