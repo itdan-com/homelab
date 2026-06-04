@@ -11,13 +11,44 @@ does not type git.
 
 | Thing | URL | Notes |
 |---|---|---|
+| **OpenWebUI (chat)** | `http://openwebui.lab.local:8080` | From the Windows browser. Needs the hosts entry below. First account you create = **admin**. Pick model **qwen3.5**. |
 | Portainer | `https://localhost:9443` | From Windows browser. Self-signed cert → click "Advanced → Proceed". |
 | Portainer (from Mac) | `https://<windows-LAN-ip>:9443` | Get the Windows IP via `ipconfig` in PowerShell. |
+| LiteLLM (API only) | `http://litellm.lab.local:8080/v1` | OpenAI-compatible gateway. Needs a Bearer key; not a browser page. |
 | k3d cluster API | `https://0.0.0.0:39093` | Only from inside WSL. `kubectl` already knows this. |
 
 If you forgot the Portainer admin password, the only recovery is to
 restart the container with the password-reset flag (ask Claude to do
 this — one command).
+
+### Reaching `*.lab.local` services in a browser
+
+The `openwebui.lab.local` / `litellm.lab.local` names route through the
+cluster's ingress (Traefik). Two things make them work:
+
+1. **A hosts entry** on whichever machine's browser you're using. On the
+   Windows box, edit `C:\Windows\System32\drivers\etc\hosts` — open
+   Notepad via **right-click → Run as administrator** first, or it won't
+   save — and add:
+   ```
+   127.0.0.1 openwebui.lab.local
+   127.0.0.1 litellm.lab.local
+   ```
+2. **The port is `:8080`.** k3d maps the WSL2 host's port 8080 to the
+   cluster ingress (and 8443 → HTTPS, once cert-manager lands in Phase
+   5). So the URL is always `http://<name>.lab.local:8080`.
+
+**No-hosts-file fallback** (quick test, bypasses ingress — tunnels
+straight to the Service):
+```
+kubectl port-forward -n chat svc/openwebui 8888:8080
+```
+then browse `http://localhost:8888`.
+
+**From the Mac (not the Windows box):** WSL2 ports aren't on your LAN by
+default. Until that's wired up (Windows `netsh portproxy`, or WSL2
+mirrored networking — see STATUS backlog), use the Windows box's browser
+via RDP.
 
 ---
 
