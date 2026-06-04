@@ -37,7 +37,8 @@ spec:
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
           envFrom:
-            # LITELLM_MASTER_KEY + any provider API keys.
+            # LITELLM_MASTER_KEY, DATABASE_URL (when the DB is enabled), and
+            # any provider API keys — all from the SOPS-backed Secret.
             - secretRef:
                 name: {{ include "catalog.fullname" . }}-auth
           volumeMounts:
@@ -45,6 +46,15 @@ spec:
               mountPath: /app/config.yaml
               subPath: config.yaml
               readOnly: true
+          # startupProbe gives first boot room to apply Prisma migrations on a
+          # fresh database before liveness/readiness take over (both are gated
+          # until startup succeeds). 30 x 5s = 150s budget.
+          startupProbe:
+            httpGet:
+              path: /health/readiness
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /health/liveness

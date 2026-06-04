@@ -57,6 +57,30 @@ providerKeys:
   anthropicApiKey: ""
   geminiApiKey: ""
 
+# Database connection for LiteLLM's key store + spend tracking.
+# When database.password is set, LiteLLM connects on startup, runs its
+# Prisma migrations to create its schema, and enables virtual-key
+# management (POST /key/generate etc.). Leave the password empty to run the
+# gateway stateless (master-key only: no virtual keys, no spend store).
+#
+# Only the password is secret: set it via secrets.enc.yaml. The key name
+# `password` matches the repo's encrypted_regex, so SOPS encrypts it while
+# host/port/name/user stay readable here (the DSN is reviewable in diffs).
+# templates/secret.yaml assembles DATABASE_URL from these fields.
+#
+# NOTE: the password is interpolated into the URL as-is (no percent-encoding),
+# so it must be URL-safe (no @ : / ? # ...). Generated keys are; a hand-picked
+# password with reserved chars must be percent-encoded before storing.
+#
+# The `litellm` database itself is provisioned by the postgres chart's
+# auth.extraDatabases (see catalog/postgres/values.yaml).
+database:
+  host: postgres        # in-cluster Service (same namespace as litellm)
+  port: 5432
+  name: litellm
+  user: postgres
+  password: ""          # set via secrets.enc.yaml (encrypted by SOPS)
+
 resources:
   # LiteLLM is a Python gateway with optional connectors for many
   # providers. At startup it loads ~800Mi-1.5Gi of Python dependencies
@@ -80,18 +104,27 @@ ingress:
   host: ""  # defaults to "<release-name>.lab.local" if blank
   entrypoint: web
 
-# LiteLLM image runs as root inside the container by default for
-# historical reasons. We force non-root via securityContext.
-# The litellm process binds 4000 — fine for non-root (>1024).
+# SECURITY POSTURE — hardened root.
+# The LiteLLM image bakes its Prisma DB engine into root-only /root/.cache at
+# build time, so running as a non-root UID breaks the database-backed features
+# (virtual keys, spend tracking): the query engine can't resolve and fails with
+# "Not connected to the query engine". Running as root is also how LiteLLM's
+# official image/Helm chart ship. So we run as root but HARDEN everything else
+# (see securityContext below). For a gateway, the load-bearing least-privilege
+# controls are the scoped virtual key, NetworkPolicy, and SSO — not the UID.
+# Backlog: revisit true non-root via a custom image that stages the engine into
+# a world-readable path.
 podSecurityContext:
-  runAsNonRoot: true
-  runAsUser: 1000
-  runAsGroup: 1000
-  fsGroup: 1000
+  runAsNonRoot: false
+  runAsUser: 0
+  runAsGroup: 0
   seccompProfile:
     type: RuntimeDefault
 
 securityContext:
+  # Root, but stripped of what makes root dangerous: no privilege escalation,
+  # ALL Linux capabilities dropped, default seccomp. A compromised process
+  # gains no extra kernel powers and cannot escalate.
   allowPrivilegeEscalation: false
   capabilities:
     drop:
