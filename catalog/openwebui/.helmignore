@@ -1,0 +1,17 @@
+# Patterns to ignore when building Helm packages.
+# Files matching these patterns are excluded from the chart tarball.
+.DS_Store
+.git/
+.gitignore
+.idea/
+.vscode/
+*.tmproj
+*.swp
+*.bak
+*.tgz
+.project
+.tox/
+.tags*
+# Local SOPS plaintext files (should never exist; this is a belt-and-suspenders)
+*.dec.yaml
+secrets.yaml

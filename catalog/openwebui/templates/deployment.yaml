@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  # Single replica: OpenWebUI persists to a ReadWriteOnce hostPath PV
+  # (SQLite DB), so it cannot scale horizontally as-is. Horizontal
+  # scaling is a Phase-3 concern and needs Postgres-backed state first.
+  replicas: {{ .Values.replicaCount }}
+  # Recreate, not RollingUpdate: the RWO PV can attach to only one pod
+  # at a time, so a rolling update would deadlock (new pod Pending on
+  # the volume the old pod still holds).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "catalog.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "catalog.labels" . | nindent 8 }}
+      {{- if .Values.litellm.apiKey }}
+      annotations:
+        # checksum forces a pod rollout when the LiteLLM key changes.
+        # Guarded because secret.yaml only renders when the key is set.
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      {{- end }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ include "catalog.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          env:
+            # OpenAI-compatible endpoint pointed at the in-cluster
+            # LiteLLM Service. Plain (non-secret) value from values.yaml.
+            - name: OPENAI_API_BASE_URL
+              value: {{ .Values.config.openaiApiBaseUrl | quote }}
+          {{- if .Values.litellm.apiKey }}
+          envFrom:
+            # OPENAI_API_KEY (the LiteLLM virtual key) from the
+            # SOPS-backed Secret. Only attached when the key is set.
+            - secretRef:
+                name: {{ include "catalog.fullname" . }}-auth
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.targetPort }}
+              protocol: TCP
+          volumeMounts:
+            # OpenWebUI persists everything (SQLite DB, uploads, the
+            # auto-generated WEBUI_SECRET_KEY, embedding caches) here.
+            - name: data
+              mountPath: /app/backend/data
+          # /health is OpenWebUI's liveness endpoint (it's the path the
+          # image's own baked HEALTHCHECK probes; returns {"status":true}).
+          # startupProbe gives first boot room: on a fresh PV OpenWebUI
+          # runs DB migrations and may fetch an embedding model before it
+          # serves. 30 x 5s = 150s budget; liveness/readiness are gated
+          # until startup succeeds.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "catalog.fullname" . }}-data
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

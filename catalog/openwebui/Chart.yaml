@@ -1,0 +1,40 @@
+apiVersion: v2
+name: openwebui
+description: |
+  OpenWebUI for the homelab platform — the chat frontend users actually
+  talk to. Points at the in-cluster LiteLLM gateway via its
+  OpenAI-compatible API (OPENAI_API_BASE_URL=http://litellm:4000/v1),
+  so every model LiteLLM exposes shows up here automatically.
+
+  The Phase-5 SSO target: needs-sso=true means Authentik's onboarding
+  controller will mint an OIDC client and inject the ingress middleware.
+  Until then OpenWebUI's own built-in auth (WEBUI_AUTH, on by default)
+  guards it — the UI is NOT left wide open.
+
+  Persists to /app/backend/data (SQLite DB, uploads, and the
+  auto-generated WEBUI_SECRET_KEY that signs session JWTs) on an
+  explicit hostPath PV, so chats survive `k3d cluster delete`.
+
+type: application
+version: 0.1.0
+# Pinned to the latest stable OpenWebUI release tag (verified live on
+# GHCR: ghcr.io/open-webui/open-webui:v0.9.6 returns HTTP 200 with a
+# linux/amd64 manifest; v0.9.6 is the current GitHub "latest" release).
+# Bump the image by bumping appVersion here, NOT by setting image.tag —
+# appVersion is the source-of-truth label that catalog.image falls back
+# to, so the app.kubernetes.io/version label stays accurate.
+appVersion: "v0.9.6"
+
+annotations:
+  # Chart-level labels.
+  # needs-sso: TRUE — OpenWebUI is the Phase-5 SSO target. Authentik
+  # creates an OIDC client + injects the ingress middleware off this.
+  # llm-traffic: FALSE — counterintuitive but correct. This is a
+  # frontend; it does NOT itself carry the cost-tracked LLM traffic
+  # plane. LiteLLM owns llm-traffic=true (it's the gateway Phase 7's
+  # cost dashboard scrapes). OpenWebUI only calls LiteLLM; double-
+  # counting it here would inflate the cost dashboard.
+  catalog.homelab/needs-sso: "true"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

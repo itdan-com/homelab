@@ -1,0 +1,45 @@
+{{ include "catalog.fullname" . }} installed in namespace "{{ .Release.Namespace }}".
+
+Catalog labels for this release:
+  needs-sso:    {{ index .Chart.Annotations "catalog.homelab/needs-sso" }}
+  llm-traffic:  {{ index .Chart.Annotations "catalog.homelab/llm-traffic" }}
+  wants-vector: {{ index .Chart.Annotations "catalog.homelab/wants-vector" }}
+  exposes-mcp:  {{ index .Chart.Annotations "catalog.homelab/exposes-mcp" }}
+  tier:         {{ .Values.catalog.tier }}
+  data-class:   {{ .Values.catalog.dataClass }}
+
+{{- if .Values.ingress.enabled }}
+
+Open the chat UI at:
+  http://{{ include "catalog.ingressHost" . }}
+
+(Add "<WSL2-host-IP>  {{ include "catalog.ingressHost" . }}" to your
+Mac's /etc/hosts — same line you used for litellm/portainer.)
+On first visit, create the initial admin account — OpenWebUI's built-in
+auth (WEBUI_AUTH) is ON, so the UI is not open to the world.
+{{- end }}
+
+LLM backend:
+  OPENAI_API_BASE_URL = {{ .Values.config.openaiApiBaseUrl }}
+{{- if .Values.litellm.apiKey }}
+  OPENAI_API_KEY      = (set from secrets.enc.yaml -> litellm.apiKey)
+{{- else }}
+  OPENAI_API_KEY      = NOT SET — install with the SOPS secret so
+                        OpenWebUI can reach LiteLLM:
+                          helm secrets install {{ .Release.Name }} . \
+                            -n {{ .Release.Namespace }} -f secrets.enc.yaml
+{{- end }}
+Install LiteLLM into THIS namespace first so the `litellm` Service
+resolves; the models LiteLLM exposes then appear in OpenWebUI's picker.
+
+Persistence:
+  Data dir /app/backend/data is on a hostPath PV at
+  {{ .Values.storage.hostPathBase }}-{{ .Release.Name }} (inside the k3d
+  nodes; the WSL2 host path is ~/homelab-data/openwebui-{{ .Release.Name }}).
+  ONE-TIME host chown before first install (image runs as root, k3s
+  hostPath PVs don't honor fsGroup):
+    sudo chown -R 0:0 ~/homelab-data/openwebui-{{ .Release.Name }}
+  Data survives `k3d cluster delete` (reclaimPolicy: {{ .Values.storage.reclaimPolicy }}).
+
+Inspect:
+  kubectl get all,pvc,secret -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}

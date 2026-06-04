@@ -1,0 +1,33 @@
+{{/*
+PersistentVolume — cluster-scoped, hostPath-backed.
+
+The hostPath points inside the k3d node containers at
+<hostPathBase>-<release-name>. Because k3d/devlab-cluster.yaml mounts
+the WSL2 host directory /home/bob/homelab-data into every node at
+/homelab-data, this path resolves to a real WSL2 filesystem location
+that survives `k3d cluster delete`. The volume is mounted into the pod
+at /app/backend/data (OpenWebUI's data dir: SQLite DB, uploads, the
+auto-generated WEBUI_SECRET_KEY, embedding caches).
+
+Reclaim policy is Retain: when the PVC is released (helm uninstall),
+the host directory is preserved. Manual cleanup needed if you want a
+truly fresh install; the trade-off vs Delete is worth it for safety.
+*/}}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  # PV name includes release-name so multiple releases of this chart
+  # (e.g. openwebui-sandbox + openwebui-dev) get independent PVs.
+  name: {{ include "catalog.fullname" . }}-data
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  capacity:
+    storage: {{ .Values.storage.size }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: {{ .Values.storage.reclaimPolicy }}
+  storageClassName: {{ .Values.storage.storageClassName | quote }}
+  hostPath:
+    path: {{ .Values.storage.hostPathBase }}-{{ .Release.Name }}
+    type: DirectoryOrCreate

@@ -1,0 +1,144 @@
+# values.yaml for catalog/openwebui.
+# Override per deployment with --set or -f your-values.yaml.
+
+# Release-level catalog labels — overridable per deployment.
+catalog:
+  # OpenWebUI is dev tier by default — change to sandbox for the
+  # auto-approving Sentinel gradient, or prod for the high-friction one.
+  tier: dev
+  # dataClass: secret. OpenWebUI's PV holds real user chat history,
+  # uploaded files, and the auto-generated WEBUI_SECRET_KEY that signs
+  # session tokens — plus this chart injects the LiteLLM virtual key as
+  # an env var. Per catalog/README.md, anything storing user content +
+  # holding a credential is `secret`, and `secret` REQUIRES the
+  # SOPS-encrypted secrets.enc.yaml (which exists alongside this file).
+  dataClass: secret
+
+image:
+  # Official OpenWebUI image. tag defaults to .Chart.AppVersion
+  # ("v0.9.6") via the catalog.image helper — pin a different version
+  # by overriding appVersion in Chart.yaml, NOT image.tag, so the
+  # app.kubernetes.io/version label stays accurate.
+  repository: ghcr.io/open-webui/open-webui
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Connection to the in-cluster LiteLLM gateway.
+# OpenWebUI speaks the OpenAI-compatible protocol; these two env var
+# names are what it reads for an OpenAI-style endpoint:
+#   OPENAI_API_BASE_URL — the /v1 base of the gateway
+#   OPENAI_API_KEY      — the Bearer token (LiteLLM virtual key)
+# baseUrl points at LiteLLM's in-cluster Service. Install both into the
+# SAME namespace (the `chat` namespace) so `litellm` resolves; the
+# Service is named after LiteLLM's release ("litellm") on port 4000.
+config:
+  openaiApiBaseUrl: "http://litellm:4000/v1"
+
+# Auth — the LiteLLM virtual key OpenWebUI presents as its Bearer token
+# to LiteLLM. This is NOT the LiteLLM master key; it's the scoped
+# virtual key minted in P2.9.
+# Override via the SOPS-encrypted secrets.enc.yaml at install time:
+#   helm secrets install openwebui . -n chat -f secrets.enc.yaml
+# The key lives under litellm.apiKey there (matches secrets.enc.yaml's
+# shape) and is rendered into OPENAI_API_KEY by templates/secret.yaml.
+# Left blank here, the Secret is rendered without OPENAI_API_KEY and
+# OpenWebUI starts but can't reach LiteLLM until the key is supplied.
+litellm:
+  apiKey: ""
+
+# Storage — explicit PV with hostPath pointing at the WSL2 directory
+# mounted into the k3d nodes (see k3d/devlab-cluster.yaml `volumes:`).
+# This is what makes the data (SQLite DB, uploads, WEBUI_SECRET_KEY)
+# survive `k3d cluster delete`.
+#
+# IMPORTANT — host-side chown required BEFORE first install:
+#
+#   sudo chown -R 0:0 ~/homelab-data/openwebui-<release-name>
+#
+# OpenWebUI's official image runs as root (uid 0 — confirmed from the
+# image config; it writes both /app/backend/data AND $HOME=/root for HF
+# embedding caches, and the entrypoint chowns data at boot expecting to
+# be root). k3s/hostPath PVs do NOT honor fsGroup automatically (the
+# kubelet won't recurse-chown arbitrary host paths — too dangerous), so
+# the host directory must already be owned by the runtime uid. Since we
+# run as root (see SECURITY POSTURE below), chown to 0:0. The directory
+# is auto-created by the PV's DirectoryOrCreate as root anyway, so on a
+# fresh host this is usually a no-op — but run it explicitly if the
+# directory pre-exists with another owner.
+storage:
+  # size: how big the PV claims to be. hostPath PVs don't enforce
+  # quotas — this is just claim metadata. Actual usage is bounded by
+  # the WSL2 filesystem. 5Gi is ample for SQLite + modest uploads;
+  # bump if users upload large files for RAG.
+  size: 5Gi
+  # hostPathBase: the prefix INSIDE the k3d nodes for the data
+  # directory. The full path becomes <hostPathBase>-<release-name>
+  # so two releases (e.g. openwebui-sandbox + openwebui-dev) get
+  # isolated directories.
+  hostPathBase: /homelab-data/openwebui
+  # storageClassName: empty string disables k3d's default local-path
+  # provisioner. The PVC binds to our explicit PV via volumeName.
+  storageClassName: ""
+  # reclaimPolicy: Retain means host data is NOT deleted when the PVC
+  # is released. We want this — the whole point is data survival.
+  reclaimPolicy: Retain
+
+resources:
+  # OpenWebUI is a FastAPI/Svelte app that bundles sentence-transformers
+  # for built-in RAG embedding. Even idle it loads a few hundred Mi of
+  # Python deps; first use of RAG pulls an embedding model into the PV
+  # cache. 1Gi limit is a comfortable floor for the chat path; raise it
+  # if heavy local-embedding RAG is used.
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  host: ""  # defaults to "<release-name>.lab.local" if blank
+  entrypoint: web
+
+# SECURITY POSTURE — hardened root.
+# OpenWebUI's official image is built to run as root (USER 0:0) with
+# HOME=/root: its entrypoint (start.sh) chowns /app/backend/data on boot
+# and writes embedding caches under $HOME, both of which break under an
+# arbitrary non-root UID. Combined with k3s hostPath PVs not honoring
+# fsGroup, forcing non-root here would mean a broken first boot. So we
+# run as root but HARDEN everything else (mirrors the litellm chart):
+# no privilege escalation, ALL capabilities dropped, default seccomp. A
+# compromised process gains no extra kernel powers and cannot escalate.
+# The load-bearing least-privilege controls for this frontend are SSO
+# (Phase 5), NetworkPolicy, and the scoped LiteLLM virtual key — not the
+# UID. Backlog: revisit true non-root via PUID/PGID or a custom image.
+podSecurityContext:
+  runAsNonRoot: false
+  runAsUser: 0
+  runAsGroup: 0
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  # Root, but stripped of what makes root dangerous: no privilege
+  # escalation, ALL Linux capabilities dropped, default seccomp.
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""
