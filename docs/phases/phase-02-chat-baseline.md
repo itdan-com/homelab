@@ -2,7 +2,7 @@
 
 **Goal:** Establish the `catalog/` directory convention; deploy OpenWebUI + LiteLLM + Postgres as the first three catalog entries; `git init` and push to GitHub.
 
-**Status:** In progress. P2.1–P2.5 + P2.12 done; P2.6–P2.11 remaining.
+**Status:** ✅ COMPLETE (2026-06-03). All checklist items done; all exit criteria met (chat verified in browser, repo pushed). Phase 3 is next.
 
 ---
 
@@ -40,7 +40,7 @@ Tracked across sessions. Tick as you go.
 - [x] **P2.8** Write `catalog/litellm/` chart from scratch. ConfigMap renders the model list from `values.yaml` (data-driven, not template-driven) so adding a model is a 1-line edit. Cloud-provider key slots (OpenAI/Anthropic/Gemini) pre-wired in `values.yaml`; activate via `secrets.enc.yaml`. SOPS-encrypted master key. Six catalog labels propagate; `llm-traffic: "true"` confirmed. **End-to-end verified:** chat-completion request to `qwen3.5` returned a real response from Ollama on the host RTX 4070. The Sentinel proxy injection point for Phase 5.5 now exists at exactly one place (the `llm-traffic: true` selector).
 - [x] **P2.9** Wrote `catalog/openwebui/` chart. `OPENAI_API_BASE_URL` → in-cluster LiteLLM Service (`http://litellm:4000/v1`); chat-history PVC (hostPath under `/homelab-data`) at `/app/backend/data`; `needs-sso: true`. Image pinned to `v0.9.6`; `strategy: Recreate` (RWO PV can't rolling-update). **Pivoted to a scoped virtual key** (owner's least-privilege choice over the master key) — required wiring LiteLLM→Postgres; see notes for the non-root/prisma saga and the hardened-root resolution.
 - [x] **P2.10** `chat` namespace pre-existed; `helm secrets install` all three. `helm list -n chat` shows postgres + litellm + openwebui all `deployed`, pods `Running`, no crash loops. **In-cluster e2e:** `PONG` round-trips from OpenWebUI's own pod → LiteLLM (virtual key) → Ollama.
-- [ ] **P2.11** End-to-end browser test: OpenWebUI reachable from Mac; send a prompt; verify it round-trips through LiteLLM to host Ollama. Commit the working catalog. Update STATUS to mark Phase 2 done.
+- [x] **P2.11** Browser test PASSED — OpenWebUI reached at `http://openwebui.lab.local:8080` (from the Windows box via RDP; Mac-direct access backlogged), first-user signup + `qwen3.5` chat round-tripped through LiteLLM (scoped virtual key) to host Ollama. Catalog committed + pushed to `main`. STATUS updated. **Phase 2 complete.**
 
 ## Open questions to resolve at the start
 
