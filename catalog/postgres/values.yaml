@@ -30,6 +30,17 @@ auth:
   username: postgres
   postgresPassword: CHANGE_ME_VIA_SOPS_SECRETS
   database: openwebui
+  # Additional databases beyond `database` above. The official postgres
+  # image's POSTGRES_DB env auto-creates only ONE database; these extras
+  # are created by an initdb script (templates/initdb-configmap.yaml)
+  # mounted into /docker-entrypoint-initdb.d/.
+  # IMPORTANT: initdb scripts run ONLY when initializing a fresh (empty)
+  # data directory — i.e. a brand-new PV. An already-initialized instance
+  # will NOT pick these up; create those manually, e.g.:
+  #   kubectl exec -n chat postgres-0 -- psql -U postgres -c 'CREATE DATABASE litellm'
+  # `litellm` holds LiteLLM's virtual-key + spend store (wired in P2.9).
+  extraDatabases:
+    - litellm
 
 # Storage — explicit PV with hostPath pointing at the WSL2 directory
 # mounted into the k3d nodes (see k3d/devlab-cluster.yaml `volumes:`).

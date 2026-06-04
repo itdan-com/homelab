@@ -52,6 +52,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            {{- if .Values.auth.extraDatabases }}
+            # Init scripts that create extraDatabases on a fresh PV. The
+            # postgres entrypoint ignores this dir once the data dir is
+            # already initialized, so mounting it on an existing instance
+            # is a harmless no-op.
+            - name: initdb
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+            {{- end }}
           # Liveness: TCP probe. The official postgres image starts a TCP
           # listener once it's ready for connections; pg_isready would be
           # more thorough but TCP is enough to catch "process is dead."
@@ -76,6 +85,11 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "catalog.fullname" . }}-data
+        {{- if .Values.auth.extraDatabases }}
+        - name: initdb
+          configMap:
+            name: {{ include "catalog.fullname" . }}-initdb
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
