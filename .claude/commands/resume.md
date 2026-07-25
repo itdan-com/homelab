@@ -13,7 +13,11 @@ first and report PASS/FAIL on each line before reading further:
 4. LLM path from inside the cluster (deploy name is the current
    gateway — `litellm` until Phase 2.5 replaces it with `ai-gateway`):
    `kubectl exec -n chat deploy/litellm -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://host.docker.internal:11434', timeout=5).read().decode())"`
-   → must print "Ollama is running".
+   → must print "Ollama is running". If the chain works but
+   generation is glacially slow, check GPU contention from Windows
+   games/apps: `powershell.exe nvidia-smi` — a game + the model can
+   exceed the 4070's 12 GB and trigger the NVIDIA driver's silent
+   system-RAM fallback (~0.05 tok/s; observed 2026-07-25).
 5. Ingress: `curl -s -o /dev/null -w '%{http_code}' -H 'Host: openwebui.lab.local' localhost:8080` → 200.
 
 Any FAIL: diagnose and fix (or log to STATUS.md Backlog) before phase

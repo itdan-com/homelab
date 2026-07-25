@@ -318,6 +318,19 @@ unchanged. Enable the cluster autoscaler. Then `terraform destroy` it.
   teardown step.
 - If a step fails, diagnose and explain the fix rather than silently
   working around it.
+- **Build for adopters (owner input 2026-07-25).** This repo will be
+  public and must be *stupid-easy for a human* to install, maintain,
+  and update — not just easy for Claude. Concretely: docs live
+  in-repo and version with the code (no wiki drift); `README.md` is
+  the front door (skeleton lands with Phase 4 when the install story
+  is real, demo GIF at Phase 4.5); `docs/adr/` holds the whys;
+  `docs/operator-cheatsheet.md` grows into day-2 operations docs.
+  From Phase 2.5 onward, nothing new may hardcode owner-specific
+  values (paths, IPs, usernames) — bootstrap detects or
+  parameterizes them; sweeping the existing hardcoded values is
+  backlogged. Updating the platform must reduce to `git pull` +
+  ArgoCD sync; a one-command idempotent bootstrap script is a
+  Phase 4 deliverable.
 - **No agent action without a paper trail.** Every control-plane Claude
   action must (a) produce a git commit, (b) post to Slack for approval
   unless explicitly pre-authorized for the namespace, and (c) log to
