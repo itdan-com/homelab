@@ -1,0 +1,28 @@
+apiVersion: v2
+name: monitoring
+description: >-
+  kube-prometheus-stack wrapped for the catalog: Prometheus (scrapes the
+  AI gateway's gen_ai_* token metrics — KEDA's Phase 3 signal), Grafana
+  (dashboards), Alertmanager (future #claude-alerts), node-exporter and
+  kube-state-metrics for cluster health. Umbrella chart — the heavy
+  lifting is the pinned upstream dependency; our own templates add the
+  catalog-labeled extras (ServiceMonitors etc.).
+type: application
+version: 0.1.0
+# appVersion tracks the wrapped prometheus-operator release.
+appVersion: "v0.92.1"
+
+dependencies:
+  - name: kube-prometheus-stack
+    # Pinned — never a rolling tag. Bump deliberately and record in the
+    # phase Notes / commit message.
+    version: 87.19.1
+    repository: https://prometheus-community.github.io/helm-charts
+
+annotations:
+  # needs-sso TRUE: Grafana is a Phase-5 Authentik target (alongside
+  # OpenWebUI). Until then: SOPS-encrypted admin password.
+  catalog.homelab/needs-sso: "true"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

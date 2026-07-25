@@ -1,0 +1,25 @@
+{{- if .Values.metrics.enabled }}
+# Scrapes the AI-gateway extproc's token metrics (gen_ai_* series) for
+# Prometheus. A PodMonitor (not ServiceMonitor) because port 1064
+# (`aigw-admin`) is a container port on the EG-provisioned Envoy pods —
+# no Service exposes it. Discovered by the monitoring release because
+# it runs with serviceMonitor/podMonitor nil-selectors disabled.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "catalog.fullname" . }}-extproc
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.service.controllerNamespace }}
+  selector:
+    matchLabels:
+      gateway.envoyproxy.io/owning-gateway-name: {{ include "catalog.fullname" . }}
+      gateway.envoyproxy.io/owning-gateway-namespace: {{ .Release.Namespace }}
+  podMetricsEndpoints:
+    - port: aigw-admin
+      path: /metrics
+      interval: {{ .Values.metrics.interval }}
+{{- end }}

@@ -1,0 +1,114 @@
+nameOverride: ""
+fullnameOverride: ""
+
+catalog:
+  tier: dev
+  # dataClass secret: this release holds a real credential (Grafana
+  # admin password, SOPS-encrypted in secrets.enc.yaml).
+  dataClass: secret
+
+# ---------------------------------------------------------------------------
+# UMBRELLA-CHART LABEL EXCEPTION: resources rendered by the dependency
+# below can't use our _helpers.tpl include, so the six catalog labels are
+# duplicated statically into commonLabels (best-effort — some sub-subchart
+# resources only get a subset). Templates WE add to this chart (e.g. the
+# ai-gateway ServiceMonitor) use the full helper as normal. Keep the two
+# blocks in sync when tier/dataClass change.
+# ---------------------------------------------------------------------------
+kube-prometheus-stack:
+  commonLabels:
+    catalog.homelab/needs-sso: "true"
+    catalog.homelab/llm-traffic: "false"
+    catalog.homelab/wants-vector: "false"
+    catalog.homelab/exposes-mcp: "false"
+    catalog.homelab/tier: "dev"
+    catalog.homelab/data-class: "secret"
+
+  # k3s embeds controller-manager/scheduler/proxy/etcd inside the k3s
+  # process — there are no separate endpoints to scrape. Leaving these
+  # on produces permanently-firing TargetDown alerts (noise, not signal).
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+
+  prometheusOperator:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+  prometheus:
+    prometheusSpec:
+      # Small footprint for the 31 GB WSL2 budget: short retention with a
+      # hard size cap; metrics are ephemeral ops data — losing them on a
+      # cluster rebuild is acceptable (unlike postgres/openwebui PVs).
+      retention: 3d
+      retentionSize: 4GB
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          memory: 1Gi
+      storageSpec:
+        volumeClaimTemplate:
+          spec:
+            storageClassName: local-path
+            accessModes: ["ReadWriteOnce"]
+            resources:
+              requests:
+                storage: 5Gi
+      # CRITICAL for the catalog pattern: nil-selectors default to
+      # "only ServiceMonitors installed by THIS release". false = watch
+      # all ServiceMonitors/PodMonitors cluster-wide, so the ai-gateway
+      # monitor (and any future labeled chart's) is discovered without
+      # touching this release.
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+
+  alertmanager:
+    alertmanagerSpec:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+
+  grafana:
+    # Real value injected from secrets.enc.yaml (SOPS) at install time.
+    adminPassword: ""
+    persistence:
+      # Keeps hand-tuned dashboards across pod restarts (local-path PVC;
+      # dashboards-as-code lands with the Phase 7 dashboard work).
+      enabled: true
+      size: 1Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 192Mi
+      limits:
+        memory: 512Mi
+
+  kube-state-metrics:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+
+  prometheus-node-exporter:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        memory: 64Mi

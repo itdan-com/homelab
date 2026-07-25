@@ -15,7 +15,7 @@ metadata:
     {{- include "catalog.labels" . | nindent 4 }}
 spec:
   type: ExternalName
-  externalName: envoy-{{ .Release.Namespace }}-{{ include "catalog.fullname" . }}-{{ printf "%s/%s" .Release.Namespace (include "catalog.fullname" .) | sha256sum | trunc 8 }}.{{ .Values.service.controllerNamespace }}.svc.cluster.local
+  externalName: {{ include "aigateway.dataplaneName" . }}.{{ .Values.service.controllerNamespace }}.svc.cluster.local
   ports:
     - name: http
       port: {{ .Values.service.port }}

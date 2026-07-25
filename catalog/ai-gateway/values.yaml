@@ -61,3 +61,35 @@ service:
 
 # Envoy's default 32KiB per-connection buffer truncates LLM request bodies.
 clientBufferLimit: 50Mi
+
+# Prometheus scrape of the extproc token metrics (gen_ai_* series).
+metrics:
+  enabled: true
+  interval: 15s
+
+# Autoscaling of the Envoy data plane.
+#   off  -> fixed replicas (EG default)
+#   hpa  -> EG-managed HPA on CPU (baseline; rendered into the EnvoyProxy CR)
+#   keda -> KEDA ScaledObject on the Prometheus token-rate signal
+# hpa and keda are mutually exclusive — both create an HPA under the
+# hood, and two HPAs fighting over one Deployment is a flapping mess.
+autoscaling:
+  # "off" | "hpa" | "keda" — quoted deliberately: bare `off` is YAML-1.1
+  # boolean false. keda = the Phase 3 end state (token-rate scaling).
+  mode: "keda"
+  minReplicas: 1
+  # Hard ceiling for the WSL2 budget.
+  maxReplicas: 3
+  hpa:
+    targetCPUUtilizationPercent: 70
+  keda:
+    pollingInterval: 15
+    # NOTE: cooldownPeriod only governs scale-TO-ZERO. With
+    # minReplicas >= 1, scale-down pace is the HPA's scaleDown
+    # stabilization window (default 300s) — verified live 2026-07-25.
+    cooldownPeriod: 120
+    prometheusUrl: http://monitoring-kube-prometheus-prometheus.monitoring:9090
+    # Output tokens/sec across the gateway; ~one active qwen3.5 stream
+    # is ~70 tok/s, so 30/replica scales a busy demo toward the ceiling.
+    query: sum(rate(gen_ai_client_token_usage_sum{gen_ai_token_type="output"}[1m]))
+    threshold: "30"

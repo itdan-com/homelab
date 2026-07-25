@@ -43,6 +43,11 @@ resources:
 service:
   type: ClusterIP
   port: 80
+  # portName: the NAME of the Service/container port (K8s convention:
+  # name it after the protocol — "http", "postgres", "grpc", …).
+  # Parameterized so non-HTTP services don't fork the template
+  # (postgres previously had to inline-override this).
+  portName: http
   # targetPort: the port the container actually listens on.
   # nginx-unprivileged listens on 8080 because non-root processes can't
   # bind ports < 1024. The Service still exposes 80 to the rest of the

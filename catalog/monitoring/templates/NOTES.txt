@@ -1,0 +1,23 @@
+{{ .Chart.Name }} deployed as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Wrapped dependency: kube-prometheus-stack {{ (index .Chart.Dependencies 0).Version }}
+(Prometheus + Grafana + Alertmanager + node-exporter + kube-state-metrics).
+
+Quick access (until Phase 5 SSO + ingress):
+  Grafana    -> kubectl port-forward -n {{ .Release.Namespace }} svc/{{ .Release.Name }}-grafana 3000:80
+                then http://localhost:3000  (user: admin, password: SOPS —
+                `sops -d catalog/monitoring/secrets.enc.yaml`)
+  Prometheus -> kubectl port-forward -n {{ .Release.Namespace }} svc/{{ .Release.Name }}-kube-prometheus-st-prometheus 9090:9090
+                then http://localhost:9090
+
+Install/upgrade (from this directory; charts/ tarball via `helm dependency update`):
+  helm secrets upgrade --install {{ .Release.Name }} . -n {{ .Release.Namespace }} --create-namespace -f values.yaml -f secrets.enc.yaml
+
+Notes:
+  - k3s control-plane component scrapes are disabled on purpose (embedded
+    in the k3s binary; scraping them = permanent TargetDown noise).
+  - serviceMonitorSelectorNilUsesHelmValues=false: Prometheus discovers
+    ServiceMonitors from ANY namespace/release — drop a labeled monitor
+    next to your chart and it gets scraped.
+  - Retention 3d / 4GB cap: metrics are ephemeral ops data; cluster
+    rebuilds lose them by design.

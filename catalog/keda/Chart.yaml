@@ -1,0 +1,23 @@
+apiVersion: v2
+name: keda
+description: >-
+  KEDA (Kubernetes Event-Driven Autoscaling) wrapped for the catalog.
+  Provides the ScaledObject CRD and the Prometheus scaler that drives
+  the AI gateway's token-rate autoscaling (Phase 3). Umbrella chart —
+  pinned upstream dependency, catalog labels via commonLabels-style
+  values where upstream supports them.
+type: application
+version: 0.1.0
+appVersion: "2.20.1"
+
+dependencies:
+  - name: keda
+    # Pinned — bump deliberately, record in phase Notes.
+    version: 2.20.1
+    repository: https://kedacore.github.io/charts
+
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

@@ -1,0 +1,15 @@
+{{ .Chart.Name }} deployed as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Wrapped dependency: keda {{ (index .Chart.Dependencies 0).Version }}
+(operator + metrics API server + admission webhooks).
+
+Consumers declare their own ScaledObjects next to their charts — see
+catalog/ai-gateway/templates/scaledobject.yaml (Prometheus scaler on
+gen_ai_* token rate) for the house pattern.
+
+Install/upgrade (from this directory; charts/ via `helm dependency build`):
+  helm upgrade --install {{ .Release.Name }} . -n {{ .Release.Namespace }} --create-namespace -f values.yaml
+
+Inspect scalers:
+  kubectl get scaledobjects -A
+  kubectl get hpa -A          # KEDA creates and owns keda-hpa-* objects

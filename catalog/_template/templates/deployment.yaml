@@ -23,7 +23,7 @@ spec:
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
-            - name: http
+            - name: {{ .Values.service.portName | default "http" }}
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
           resources:

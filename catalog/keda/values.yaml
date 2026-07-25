@@ -1,0 +1,30 @@
+nameOverride: ""
+fullnameOverride: ""
+
+catalog:
+  tier: dev
+  # KEDA holds no data and no credentials (the Prometheus endpoint it
+  # queries is unauthenticated in-cluster).
+  dataClass: none
+
+# Explicit resources on all three KEDA components (WSL2 budget rule).
+keda:
+  resources:
+    operator:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+    metricServer:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+    webhooks:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi

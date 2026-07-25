@@ -1,0 +1,27 @@
+{{- if eq .Values.autoscaling.mode "keda" }}
+# Scales the EG-provisioned Envoy data plane on the AI-native signal:
+# output tokens/sec from the gateway's own gen_ai_* Prometheus metrics.
+# Rendered into the controller namespace — a ScaledObject must live
+# next to its target workload. KEDA creates and owns the underlying
+# HPA (which is why mode "hpa" and "keda" are mutually exclusive).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "catalog.fullname" . }}-tokens
+  namespace: {{ .Values.service.controllerNamespace }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "aigateway.dataplaneName" . }}
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  pollingInterval: {{ .Values.autoscaling.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.autoscaling.keda.cooldownPeriod }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.autoscaling.keda.prometheusUrl }}
+        query: {{ .Values.autoscaling.keda.query | quote }}
+        threshold: {{ .Values.autoscaling.keda.threshold | quote }}
+{{- end }}

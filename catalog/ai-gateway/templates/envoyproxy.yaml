@@ -16,3 +16,17 @@ spec:
         container:
           resources:
             {{- toYaml .Values.envoyProxy.resources | nindent 12 }}
+      {{- if eq .Values.autoscaling.mode "hpa" }}
+      # EG-managed HPA (the operator-sanctioned way to autoscale the
+      # data plane it provisions). Mutually exclusive with mode "keda".
+      envoyHpa:
+        minReplicas: {{ .Values.autoscaling.minReplicas }}
+        maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: {{ .Values.autoscaling.hpa.targetCPUUtilizationPercent }}
+      {{- end }}
