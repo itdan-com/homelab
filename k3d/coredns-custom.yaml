@@ -1,0 +1,39 @@
+# k3d/coredns-custom.yaml
+#
+# Declarative CoreDNS override: authoritative answer for
+# host.docker.internal -> WSL2 gateway (the path to Ollama on Windows).
+#
+# WHY THIS EXISTS: k3d injects this mapping into the CoreDNS `NodeHosts`
+# configmap at cluster create, but k3s OWNS NodeHosts and rewrote it
+# during a restart (~2026-06-28), silently dropping the entry. Lookups
+# then fell through to upstream Windows DNS, which answered with a stale
+# Docker Desktop remnant from the Windows hosts file (192.168.50.102,
+# unreachable) — so LiteLLM->Ollama died with "No route to host" while
+# every pod still showed Running/healthy. Diagnosed 2026-07-25; see
+# STATUS.md activity log.
+#
+# k3s never touches the `coredns-custom` configmap. The bundled Corefile
+# imports /etc/coredns/custom/*.server at file scope, so the dedicated
+# server block below answers authoritatively for this one zone and
+# survives NodeHosts rewrites and cluster rebuilds — as long as it is
+# re-applied after create.
+#
+# APPLY (after every cluster create, alongside k3d/portainer-agent.yaml):
+#   kubectl apply -f k3d/coredns-custom.yaml
+#   kubectl -n kube-system rollout restart deploy/coredns
+#
+# IF THE WSL2 GATEWAY IP CHANGES (check: `ip route show default`):
+#   update the IP below, re-apply, restart coredns. It has been stable
+#   at 172.19.80.1 since 2026-05-17 across multiple reboots.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  host-docker-internal.server: |
+    host.docker.internal:53 {
+        hosts {
+            172.19.80.1 host.docker.internal
+        }
+    }

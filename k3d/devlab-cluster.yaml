@@ -5,11 +5,13 @@
 #
 #   k3d cluster delete devlab
 #   k3d cluster create --config k3d/devlab-cluster.yaml
-#   # IMPORTANT: bounce CoreDNS once so it re-reads NodeHosts with
-#   # the hostAliases k3d just injected. Without this, host.docker.internal
-#   # transiently resolves to whatever upstream DNS returns (often the
-#   # Windows LAN IP) for ~60s+ until cache expires.
-#   kubectl -n kube-system delete pod -l k8s-app=kube-dns
+#   # IMPORTANT (updated 2026-07-25): apply the durable DNS override —
+#   # k3s can rewrite NodeHosts on restart and silently drop the
+#   # hostAliases entry below (this actually happened; see STATUS.md).
+#   kubectl apply -f k3d/coredns-custom.yaml
+#   kubectl apply -f k3d/portainer-agent.yaml
+#   # Then bounce CoreDNS once so it re-reads its config cleanly:
+#   kubectl -n kube-system rollout restart deploy/coredns
 #
 # Why these choices:
 #   - Per-node memory cap (7Gi x 4 = 28Gi) tames K8s scheduler
@@ -53,9 +55,12 @@ ports:
 # from inside pods as host.docker.internal. CoreDNS gets this written
 # into its NodeHosts on cluster create.
 #
-# 172.19.80.1 = WSL2 default gateway as of 2026-05-17. If WSL reboots
-# and the gateway IP shifts, this file needs updating + cluster recreate.
-# See STATUS.md backlog: "WSL2 default-gateway IP is fragile".
+# 172.19.80.1 = WSL2 default gateway (stable since 2026-05-17 across
+# multiple reboots). NOTE 2026-07-25: this hostAliases entry is NOT
+# durable — k3s rewrote NodeHosts on a restart and dropped it. The
+# durable mapping lives in k3d/coredns-custom.yaml (a configmap k3s
+# never touches). If the gateway IP ever shifts, update BOTH files;
+# only coredns-custom needs re-applying (no cluster recreate).
 hostAliases:
   - ip: "172.19.80.1"
     hostnames:
