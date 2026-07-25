@@ -2,7 +2,7 @@
 
 **Goal:** Establish the `catalog/` directory convention; deploy OpenWebUI + LiteLLM + Postgres as the first three catalog entries; `git init` and push to GitHub.
 
-**Status:** ✅ COMPLETE (2026-06-03). All checklist items done; all exit criteria met (chat verified in browser, repo pushed). Phase 3 is next.
+**Status:** ✅ COMPLETE (2026-06-03). All checklist items done; all exit criteria met (chat verified in browser, repo pushed). **Post-completion note (2026-07-25):** LiteLLM was judged not production-grade and is replaced by `catalog/ai-gateway/` in Phase 2.5 (ADR-001); the catalog pattern, Postgres, and OpenWebUI carry forward unchanged.
 
 ---
 
@@ -42,11 +42,11 @@ Tracked across sessions. Tick as you go.
 - [x] **P2.10** `chat` namespace pre-existed; `helm secrets install` all three. `helm list -n chat` shows postgres + litellm + openwebui all `deployed`, pods `Running`, no crash loops. **In-cluster e2e:** `PONG` round-trips from OpenWebUI's own pod → LiteLLM (virtual key) → Ollama.
 - [x] **P2.11** Browser test PASSED — OpenWebUI reached at `http://openwebui.lab.local:8080` (from the Windows box via RDP; Mac-direct access backlogged), first-user signup + `qwen3.5` chat round-tripped through LiteLLM (scoped virtual key) to host Ollama. Catalog committed + pushed to `main`. STATUS updated. **Phase 2 complete.**
 
-## Open questions to resolve at the start
+## Open questions to resolve at the start — ALL RESOLVED during execution
 
-- Use Bitnami charts as a base, or write from scratch for learning value? (Recommendation: scratch for openwebui/litellm since they're the heart of the lab; Bitnami for Postgres which is a commodity.)
-- Where does the LiteLLM master key live in Phase 2 (pre-Sentinel)? Likely a Kubernetes Secret with a TODO to migrate to Sentinel-issued ephemeral tokens in Phase 6.
-- Ingress: NodePort for now (simple), or Traefik (k3d's default) with `/etc/hosts` entries?
+- ~~Bitnami vs scratch?~~ → Scratch for everything, including Postgres (Bitnami's `commonLabels` workaround would have warted the label contract — see P2.7).
+- ~~Where does the master key live pre-Sentinel?~~ → SOPS-encrypted Secret; clients got a scoped virtual key instead of the master key (P2.9).
+- ~~NodePort or Traefik?~~ → Traefik IngressRoute + `*.lab.local` hosts entries (P2.6).
 
 ## Phase exit criteria
 

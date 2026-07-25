@@ -2,7 +2,9 @@
 
 **Goal:** A trust-domain-separated security broker on the WSL2 host that mints short-lived per-flow capability tokens, gates every MCP call, and provides a one-screen GUI + global kill switch — all unreachable from inside the k3d cluster.
 
-**Status:** Not started. Blocked on Phase 5. **Non-negotiable before Phase 6.**
+**Status:** Not started. Blocked on Phase 5. **Non-negotiable before any non-PR external power** (ADR-001 wording — the PR-only Control-Plane v0 of Phase 4.5 may precede this; nothing else may).
+
+**Entry criteria (do immediately before this phase):** cluster rebuild from `k3d/devlab-cluster.yaml` with **Cilium** CNI (Flannel does not enforce the NetworkPolicy this phase depends on), per-node CPU caps added, and `k3d/coredns-custom.yaml` + `k3d/portainer-agent.yaml` reapplied. The rebuild doubles as the from-git disaster-recovery proof.
 
 ---
 
@@ -40,7 +42,7 @@ Sentinel is a systemd unit on the WSL2 host. The k3d cluster has no path to its 
 
 ### 5.5.4 Sentinel proxy
 
-- [ ] HTTP proxy that intercepts MCP traffic. Each request must carry `X-Sentinel-Token` and `X-Flow-Id` headers.
+- [ ] Built as **Envoy `ext_authz`** (ADR-001 — reuse the Phase 2.5 Envoy investment, don't hand-roll a proxy): an Envoy listener in front of MCP traffic whose ext_authz filter calls Sentinel `/capability-check`. Each request must carry `X-Sentinel-Token` and `X-Flow-Id` headers.
 - [ ] On every request: call `/capability-check`; forward to MCP server only if allowed.
 - [ ] NetworkPolicy in k3d: MCP server pods refuse traffic except from the Sentinel proxy's source IP/identity.
 
@@ -89,7 +91,7 @@ These layer on after Phase 7 without architectural change.
 
 ## Open questions to resolve at the start
 
-- Sentinel proxy placement: sits *on the host* (cluster pods reach out via `host.docker.internal`)? or runs *as a Deployment in cluster* that calls back out to Sentinel's admin API on the host? **Recommendation: proxy-as-Deployment-in-cluster** — more standard pattern, NetworkPolicy is straightforward, and the admin API stays untouched on the host.
+- ~~Sentinel proxy placement~~ **DECIDED (ADR-001):** proxy-as-Deployment-in-cluster, implemented as Envoy with an `ext_authz` filter calling out to Sentinel's `/capability-check` on the host. NetworkPolicy is straightforward; the admin API stays untouched on the host; one-way trust preserved (the proxy holds no grant-issuing power — it only asks).
 - mTLS between Sentinel proxy and Sentinel admin: private CA generated at install time; certs rotate every 90 days.
 - Where do MCP server upstream secrets (OAuth tokens for Gmail, GitHub, etc.) actually live? **Recommendation: encrypted at rest in `/var/lib/sentinel/secrets/`, read only by Sentinel — never mounted into pods.** MCP servers get short-lived service tokens from Sentinel, not the upstream secret.
 

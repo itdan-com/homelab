@@ -2,7 +2,10 @@
 
 **Goal:** WSL2 + docker-ce + kubectl/helm/k3d installed, Portainer running, `devlab` k3d cluster up with host-gateway mapping wired in, and the owner has minimum read-only git literacy.
 
-**Status:** Not started.
+**Status:** ✅ COMPLETE (2026-05-17). All items done except 1.7 (git
+primer), deliberately deferred into `docs/operator-cheatsheet.md` —
+its unchecked boxes are kept for reference only. (Status line was
+stale until 2026-07-25 doc-hygiene pass.)
 
 **Why this phase exists:** Every phase that follows depends on docker-ce + a working cluster. Portainer gives a Docker-level GUI (replacing what Docker Desktop's GUI used to show). The git primer is small but essential — the owner will read diffs in every Slack approval message from Phase 6 onward.
 

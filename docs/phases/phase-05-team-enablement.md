@@ -1,8 +1,8 @@
 # Phase 5 — Team enablement layer
 
-**Goal:** Authentik (SSO), a prompt/skill gallery + LLM observability service (Langfuse is the likely fit, treat as swappable), MinIO (S3-compatible object storage for uploads/artifacts), cert-manager + Traefik for TLS on `*.lab.local`. After this phase a friend or teammate could be onboarded end-to-end with one SSO identity.
+**Goal (slimmed per ADR-001):** Authentik (SSO — OpenWebUI and Grafana first, Portainer later) + cert-manager + Traefik for TLS on `*.lab.local`. MinIO and the prompt-gallery/LLM-observability service (Langfuse or similar) move to **on-demand**: deploy when something concretely needs them, not by default — the Phase 2.5 gateway swap changes the LLM-observability integration anyway. After this phase a friend or teammate could be onboarded end-to-end with one SSO identity.
 
-**Status:** Not started. Blocked on Phase 4.
+**Status:** Not started. Blocked on Phase 4.5.
 
 ---
 

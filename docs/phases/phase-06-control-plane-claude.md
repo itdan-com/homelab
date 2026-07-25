@@ -1,8 +1,8 @@
 # Phase 6 — Control-plane Claude
 
-**Goal:** A long-running Claude Agent SDK workload in the `platform-control` namespace that observes the cluster and proposes actions via GitOps PRs + Slack approval, with every external access gated through Sentinel.
+**Goal:** Graduate Control-Plane v0 (the PR-only operator from Phase 4.5) to full powers: a long-running Claude Agent SDK workload in the `platform-control` namespace that observes the cluster and proposes actions via GitOps PRs + **Slack** approval, with every external access gated through Sentinel. The delta over v0 is exactly the parts that need Sentinel: Slack ChatOps, the MCP server catalog, and any non-PR external action.
 
-**Status:** Not started. Blocked on Phase 5.5 (Sentinel) — **non-negotiable.**
+**Status:** Not started. Blocked on Phase 5.5 (Sentinel) — **non-negotiable for every capability in this phase** (they are all non-PR powers; ADR-001).
 
 ---
 

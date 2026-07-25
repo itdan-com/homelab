@@ -9,7 +9,10 @@ most enterprises haven't combined yet: **one Claude orchestrating a
 multi-service AI platform under a ChatOps+GitOps approval gate, with
 cross-stack control (K8s + external SaaS) via MCP**. The owner uses a
 Mac day-to-day and operates a dedicated Windows 11 Pro box (via Remote
-Desktop) as the lab server.
+Desktop) as the lab server. The end product is also meant to be
+**packaged and open-sourced** as a reference implementation (revenue
+an optional upside) — build with adopters in mind: parameterized
+paths, decisions recorded in `docs/adr/`, a demo asset per milestone.
 
 This is a **learning exercise**. Explain concepts as you implement them —
 do not just produce files silently. The owner wants to understand
@@ -21,8 +24,8 @@ handles all git writes.
 
 The end-state platform has these load-bearing properties:
 
-- **Pluggable service catalog.** Every workload (OpenWebUI, LiteLLM, a
-  prompt/skill gallery, a vector DB, external SaaS adapters, anything
+- **Pluggable service catalog.** Every workload (OpenWebUI, the AI
+  gateway, a prompt/skill gallery, a vector DB, external SaaS adapters, anything
   the owner wants to add later — Dust, other LLMs, etc.) lives as a Helm
   chart in `catalog/`. Adding a new service is dropping in a new chart;
   no bespoke wiring.
@@ -127,7 +130,10 @@ durable lessons and preferences not specific to any single phase.
   Docker Desktop did, containers and the k3d cluster must be created
   with `host-gateway` mapping (e.g. `--add-host=host.docker.internal:host-gateway`
   on `docker run`, and the equivalent k3d flag on cluster create) for
-  in-container traffic to reach the Windows host.
+  in-container traffic to reach the Windows host. Caveat learned
+  2026-07-25: k3s can rewrite CoreDNS's `NodeHosts` on restart and
+  silently drop the k3d-injected entry — `k3d/coredns-custom.yaml`
+  is the durable fix; apply it after every cluster create.
 - Ollama runs on the Windows host (native app, uses the RTX 4070).
   In-cluster pods reach it at `host.docker.internal:11434` once the
   host-gateway mapping above is in place.
@@ -157,13 +163,26 @@ with self-declared labels (`needs-sso`, `llm-traffic`, `wants-vector`,
 `exposes-mcp`) that downstream automation will key off. First three
 catalog entries: **OpenWebUI**, **LiteLLM** (gateway, pointed at host
 Ollama and any cloud LLMs), **Postgres**. Get the chat stack reachable
-in a browser. `git init` in `~/homelab`, push to GitHub.
+in a browser. `git init` in `~/homelab`, push to GitHub. *(Done.
+LiteLLM was subsequently judged not production-grade — see ADR-001 —
+and is replaced in Phase 2.5.)*
 
-**Phase 3 — AI-aware autoscaling.** Install `metrics-server` and CPU-
-based HPA on OpenWebUI as a baseline. Then install **KEDA** (Kubernetes
-Event-Driven Autoscaling) and demonstrate scaling LiteLLM on a more
-AI-relevant signal — tokens/sec or request queue depth — not just CPU.
-Drive load with `k6` and observe both HPA and KEDA reacting.
+**Phase 2.5 — gateway swap (ADR-001).** Replace LiteLLM with **Envoy
+AI Gateway** (CNCF Envoy Gateway's AI extension): production data
+plane, Gateway API CRDs (GitOps-native), token-aware rate limiting,
+Prometheus token metrics (Phase 3's KEDA signal), and `ext_authz`
+reuse as the Sentinel enforcement point in Phase 5.5. Pre-1.0 risk is
+managed by a one-session timebox with **Bifrost** as fallback. Chart
+lives at `catalog/ai-gateway/` — implementation stays swappable.
+Scoped per-consumer keys (SOPS) preserve the least-privilege property.
+
+**Phase 3 — AI-aware autoscaling, metrics-first.** k3s's bundled
+`metrics-server` covers CPU. Install **kube-prometheus-stack** core
+(pulled forward from Phase 7 — KEDA's scaler needs it). CPU-based HPA
+on OpenWebUI as the baseline, then **KEDA** scaling the AI gateway on
+an AI-relevant signal from Prometheus — tokens/sec or in-flight
+requests — with hard replica ceilings for the WSL2 budget. Drive load
+with a bursty `k6` profile and capture the scale event in Grafana.
 
 **Phase 4 — GitOps with app-of-apps.** Install ArgoCD. Configure the
 **app-of-apps** pattern so a single root Application points at the
@@ -171,17 +190,32 @@ Drive load with `k6` and observe both HPA and KEDA reacting.
 This is what makes adding a service later as simple as "drop a chart in
 `catalog/`." Demonstrate a manual commit auto-syncing.
 
-**Phase 5 — team enablement layer.** Add to `catalog/`: **Authentik**
-(SSO/OIDC in front of OpenWebUI, Portainer, Grafana, and the gallery),
-a **prompt/skill gallery + LLM observability** service (Langfuse is the
-likely fit but treat as swappable), **MinIO** (S3-compatible object
-storage for uploads/artifacts), **cert-manager** + Traefik routing for
-TLS on `*.lab.local`. After this phase a friend or teammate could be
-given an SSO account and use the platform end-to-end.
+**Phase 4.5 — Control-Plane v0 (PR-only, ADR-001).** The goal's magic
+moment pulled forward: a dedicated **operator Claude Code instance**
+with read-only cluster access (`view` RBAC) and a fine-grained GitHub
+token that can only open PRs on this repo. Scale / stop / start /
+onboard / rollback all happen as PRs with plain-English summaries;
+the owner's merge is the approval gate; ArgoCD applies. Zero non-git
+credentials — which is why it may precede Sentinel under the amended
+rule (see Phase 5.5). Deliverable: the working demo loop + GIF.
+
+**Phase 5 — team enablement layer (slimmed, ADR-001).** Add to
+`catalog/`: **Authentik** (SSO/OIDC — OpenWebUI and Grafana first,
+Portainer later) and **cert-manager** + Traefik for TLS on
+`*.lab.local`. **MinIO** and the prompt-gallery/LLM-observability
+service (Langfuse or similar) deploy on demand when something needs
+them rather than by default. After this phase a friend or teammate
+could be given an SSO account and use the platform end-to-end.
 
 **Phase 5.5 — Sentinel (security broker, the load-bearing piece).**
 This is the security backbone that must exist before the control-plane
-Claude in Phase 6 has any write capability. Sentinel lives in a
+Claude has **any external capability beyond opening PRs** (ADR-001
+amendment: the PR-only v0 of Phase 4.5 may precede it; everything
+else — Slack, MCP, SaaS, direct cluster writes — may not). It is
+immediately preceded by the planned cluster rebuild: **Cilium** CNI
+(Flannel does not enforce NetworkPolicy, which Sentinel requires),
+per-node CPU caps, and `k3d/coredns-custom.yaml` reapplied.
+Sentinel lives in a
 *separate trust domain*: a small Python or Node service running as a
 **systemd unit on the WSL2 host directly** — not inside k3d. The
 cluster has no kubectl path, NetworkPolicy, or service account that
@@ -195,8 +229,10 @@ Tight MVP scope for Phase 5.5:
   `GET /capability-check` (called by the Sentinel proxy on every MCP
   invocation). Issued tokens are short-lived (default 5 min) and
   scope-locked to a single MCP tool name + flow-id.
-- **Sentinel proxy.** Sits in front of every MCP server (sidecar or
-  gateway). Validates flow-id + token + scope on every request.
+- **Sentinel proxy.** Sits in front of every MCP server. Built as an
+  **Envoy `ext_authz` filter calling `/capability-check`** (ADR-001 —
+  reuses the Phase 2.5 Envoy investment instead of hand-rolling a
+  proxy). Validates flow-id + token + scope on every request.
   NetworkPolicy + mTLS ensure MCP servers refuse traffic that did not
   come through the proxy.
 - **One-screen web GUI.** Shown when a capability request lands. Lists
@@ -224,9 +260,10 @@ long-lived external credentials. They all request, get gated, and
 release. This is the property that makes the platform safe to put
 real powers behind.
 
-**Phase 6 — the control-plane Claude.** Create namespace
-`platform-control`. Deploy a long-running Claude Agent SDK workload
-that:
+**Phase 6 — the control-plane Claude (full powers).** Control-Plane
+v0 (Phase 4.5) already proposes PRs; Phase 6 graduates it to the
+end-state. Create namespace `platform-control`. Deploy a long-running
+Claude Agent SDK workload that:
 - Reads from Prometheus, Loki, and the Kubernetes API to observe state.
 - Proposes actions by auto-committing PRs to the GitOps repo.
 - Posts each PR to `#claude-approvals` in Slack with ✅/❌ buttons; on
@@ -252,15 +289,15 @@ would refuse. Three independent layers (Sentinel grant → MCP
 allowlist → upstream OAuth scope) must all align for an action to
 succeed.
 
-**Phase 7 — observability for the platform AND the agent.** Install
-**kube-prometheus-stack** (Prometheus + Grafana + Alertmanager), then
-add **Loki** for logs and **Tempo** for traces (the "LGTM" stack).
-Grafana dashboards for: cluster health, app metrics, LLM cost and
-usage (from LiteLLM + the gallery service), and a dedicated **Claude
-actions dashboard** showing what the agent did, when, and how often
-each MCP server was invoked. Wire Alertmanager → `#claude-alerts` for
-anomalies: secret reuse, abnormal action rate, unexpected namespaces
-touched, kill-switch flips.
+**Phase 7 — observability completion.** kube-prometheus-stack already
+landed in Phase 3; this phase completes the stack: **Loki** for logs
+(+ **Tempo** for traces if budget allows). Grafana dashboards for:
+cluster health, app metrics, LLM cost and usage (from the AI gateway's
+token metrics), and a dedicated **Claude actions dashboard** showing
+what the agent did, when, and how often each MCP server was invoked.
+Wire Alertmanager → `#claude-alerts` for anomalies: secret reuse,
+abnormal action rate, unexpected namespaces touched, kill-switch
+flips.
 
 **Phase 8 — cloud.** Provision a DigitalOcean Kubernetes (DOKS) cluster
 using Terraform — not the web console; the IaC is the point. Apply the
@@ -310,13 +347,17 @@ unchanged. Enable the cluster autoscaler. Then `terraform destroy` it.
 ## Priority order if time runs short
 
 Host + Docker (Phase 1) → chat baseline as catalog charts (Phase 2) →
-AI-aware autoscaling (Phase 3) → GitOps app-of-apps (Phase 4) → team
-enablement (Phase 5) → **Sentinel security broker (Phase 5.5,
-non-negotiable before Phase 6)** → control-plane Claude + MCP catalog
-(Phase 6) → observability (Phase 7) → cloud (Phase 8). Phases 1–4
-alone are already a respectable platform-engineering portfolio result;
+gateway swap (Phase 2.5) → autoscaling + Prometheus (Phase 3) →
+GitOps app-of-apps (Phase 4) → **Control-Plane v0, PR-only (Phase
+4.5** — the demoable product) → team enablement (Phase 5) →
+**Sentinel security broker (Phase 5.5, non-negotiable before any
+non-PR external power)** → control-plane Claude full powers + MCP
+catalog (Phase 6) → observability completion (Phase 7) → cloud
+(Phase 8). Phases 1–4.5 are the demoable open-source core and a
+respectable platform-engineering portfolio result on their own;
 Phases 5–7 are what make this *cutting-edge* and where the novel work
 lives. **Sentinel is the load-bearing security piece — if scope ever
-gets cut, never deploy Phase 6 without Phase 5.5 in place.** Phase 8
-is the cloud-portability proof and should run only after a successful
+gets cut, never grant any non-PR external power without Phase 5.5 in
+place.** Phase 8 is the cloud-portability proof (and where replica
+scaling becomes physically real) — run it only after a successful
 local Phase 7.
