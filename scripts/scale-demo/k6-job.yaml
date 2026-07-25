@@ -1,0 +1,38 @@
+# Ephemeral load-test rig (torn down after the run; not part of the
+# catalog — recorded in phase-03 Notes).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: k6-burst
+  namespace: chat
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: k6-burst
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: k6
+          image: grafana/k6
+          args: ["run", "/scripts/burst.js"]
+          env:
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: k6-gateway-key
+                  key: API_KEY
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: k6-burst-script

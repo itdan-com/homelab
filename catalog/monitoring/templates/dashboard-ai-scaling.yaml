@@ -1,0 +1,94 @@
+# Provisioned dashboard (dashboards-as-code): the Grafana sidecar loads any
+# ConfigMap labeled `grafana_dashboard: "1"` in this namespace. This is THE
+# demo view: the KEDA trigger signal (output tokens/sec, threshold line at
+# 30) above the data plane's replica staircase responding to it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "catalog.fullname" . }}-dashboard-ai-scaling
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  ai-gateway-scaling.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "graphTooltip": 1,
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "tags": ["homelab", "ai-gateway"],
+      "templating": { "list": [] },
+      "time": { "from": "now-30m", "to": "now" },
+      "timezone": "browser",
+      "title": "AI Gateway — Token-Rate Autoscaling",
+      "uid": "ai-gateway-scaling",
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "KEDA trigger signal — output tokens/sec (threshold 30/replica)",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 1,
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 2,
+                "fillOpacity": 15,
+                "thresholdsStyle": { "mode": "line" }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 30 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\"}[1m]))",
+              "legendFormat": "output tokens/sec",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Envoy data plane replicas (the response)",
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 10 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "decimals": 0,
+              "min": 0,
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "stepAfter",
+                "lineWidth": 2,
+                "fillOpacity": 10
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_ready{namespace=\"envoy-gateway-system\", deployment=~\".*ai-gateway.*\"}",
+              "legendFormat": "ready",
+              "refId": "A"
+            },
+            {
+              "expr": "kube_deployment_spec_replicas{namespace=\"envoy-gateway-system\", deployment=~\".*ai-gateway.*\"}",
+              "legendFormat": "desired",
+              "refId": "B"
+            }
+          ]
+        }
+      ]
+    }
