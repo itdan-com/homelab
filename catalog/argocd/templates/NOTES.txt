@@ -1,0 +1,18 @@
+{{ .Chart.Name }} deployed as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Wrapped dependency: argo-cd {{ (index .Chart.Dependencies 0).Version }}.
+
+UI access (until Phase 5 SSO + ingress):
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ .Release.Name }}-argo-cd-server 8081:80
+  -> http://localhost:8081  (user: admin; initial password:
+     kubectl get secret argocd-initial-admin-secret -n {{ .Release.Namespace }} -o jsonpath='{.data.password}' | base64 -d)
+
+Onboard a service to GitOps:
+  1. Chart lives in catalog/<name>/ with the six labels.
+  2. Add catalog/<name>/argo.yaml:  {name: <helm release name>, namespace: <ns>}
+  3. Commit. The ApplicationSet generates the Application; auto-sync applies it.
+  Remove the argo.yaml (or the chart) to offboard — with gitops.prune=true
+  the resources are removed too.
+
+This release itself is helm-CLI-managed (self-management deferred):
+  helm secrets upgrade --install {{ .Release.Name }} . -n {{ .Release.Namespace }} --create-namespace -f values.yaml -f secrets.enc.yaml

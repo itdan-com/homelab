@@ -1,0 +1,25 @@
+apiVersion: v2
+name: argocd
+description: >-
+  Argo CD wrapped for the catalog: the GitOps engine. Watches this repo
+  (read-only deploy key) and reconciles the cluster to match main. The
+  bundled ApplicationSet auto-discovers every chart in catalog/ that
+  ships an argo.yaml self-declaration — presence of that file IS the
+  deploy switch. This release itself stays helm-CLI-managed (see the
+  phase-04 doc: ArgoCD self-management deferred on purpose).
+type: application
+version: 0.1.0
+appVersion: "v3.4.5"
+
+dependencies:
+  - name: argo-cd
+    # Pinned — bump deliberately, record in phase Notes.
+    version: 10.2.1
+    repository: https://argoproj.github.io/argo-helm
+
+annotations:
+  # ArgoCD UI is a Phase-5 SSO target (alongside Grafana/OpenWebUI).
+  catalog.homelab/needs-sso: "true"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

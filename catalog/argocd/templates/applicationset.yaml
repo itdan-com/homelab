@@ -1,0 +1,53 @@
+{{- if .Values.gitops.applicationSetEnabled }}
+# The catalog auto-discovery engine. Scans catalog/*/argo.yaml in git;
+# every chart that ships that file becomes an Application. No file, no
+# deploy — which is also how _template stays excluded by construction.
+#
+# argo.yaml schema (per chart):
+#   name: <application/release name — MUST equal the existing helm
+#          release name so adopted resource names line up>
+#   namespace: <destination namespace>
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: catalog
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: {{ .Values.gitops.repoURL }}
+        revision: {{ .Values.gitops.revision }}
+        files:
+          - path: "catalog/*/argo.yaml"
+  template:
+    metadata:
+      name: '{{`{{ .name }}`}}'
+    spec:
+      project: default
+      source:
+        repoURL: {{ .Values.gitops.repoURL }}
+        targetRevision: {{ .Values.gitops.revision }}
+        path: 'catalog/{{`{{ .name }}`}}'
+        helm:
+          releaseName: '{{`{{ .name }}`}}'
+          valueFiles:
+            - values.yaml
+            - secrets.enc.yaml
+          # Charts without a secrets file just skip it.
+          ignoreMissingValueFiles: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{`{{ .namespace }}`}}'
+      syncPolicy:
+        automated:
+          selfHeal: true
+          prune: {{ .Values.gitops.prune }}
+        syncOptions:
+          - CreateNamespace=true
+          # kube-prometheus-stack CRDs overflow client-side apply's
+          # last-applied annotation; server-side apply avoids it.
+          - ServerSideApply=true
+{{- end }}

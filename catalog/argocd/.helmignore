@@ -1,0 +1,21 @@
+# Patterns to ignore when building Helm packages.
+# Files matching these patterns are excluded from the chart tarball.
+.DS_Store
+.git/
+.gitignore
+.idea/
+.vscode/
+*.tmproj
+*.swp
+*.bak
+# Rooted pattern: ignores stray `helm package` output at the chart root
+# but NOT charts/*.tgz — dependency tarballs must stay loadable, or every
+# umbrella chart fails with "missing in charts/ directory" (learned the
+# hard way with catalog/monitoring, 2026-07-25).
+/*.tgz
+.project
+.tox/
+.tags*
+# Local SOPS plaintext files (should never exist; this is a belt-and-suspenders)
+*.dec.yaml
+secrets.yaml

@@ -1,0 +1,77 @@
+nameOverride: ""
+fullnameOverride: ""
+
+catalog:
+  tier: dev
+  # Holds the repo deploy key (SOPS'd in secrets.enc.yaml).
+  dataClass: secret
+
+# ---------------------------------------------------------------------------
+# GitOps wiring consumed by templates/applicationset.yaml.
+# ---------------------------------------------------------------------------
+gitops:
+  # false only for the very first install pass (the ApplicationSet CRD
+  # ships in the same release and helm validates manifests up front);
+  # the bootstrap runs install → upgrade, so the committed value is true.
+  applicationSetEnabled: true
+  repoURL: git@github.com:itdan-com/homelab.git
+  revision: main
+  # prune=false during adoption of pre-existing releases; flipped to true
+  # once every app shows Synced/Healthy with zero destructive diff.
+  prune: false
+
+argo-cd:
+  # SSO comes with Authentik in Phase 5; local admin until then.
+  dex:
+    enabled: false
+  # Enable when Phase 4.5 wants Slack/PR notifications.
+  notifications:
+    enabled: false
+
+  configs:
+    cm:
+      # Track resources by ANNOTATION, not the app.kubernetes.io/instance
+      # label — our charts set that label via catalog.selectorLabels and
+      # Deployment selectors are immutable; letting ArgoCD rewrite it
+      # would break adoption.
+      application.instanceLabelKey: argocd.argoproj.io/instance
+    params:
+      # TLS terminates elsewhere (port-forward now, Traefik+cert-manager
+      # in Phase 5); plain HTTP inside the cluster.
+      server.insecure: true
+
+  controller:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+  server:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+  repoServer:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+  applicationSet:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+  redis:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
