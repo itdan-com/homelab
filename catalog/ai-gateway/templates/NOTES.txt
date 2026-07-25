@@ -1,0 +1,27 @@
+{{ .Chart.Name }} deployed as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Unified OpenAI-compatible endpoint (in-namespace):
+  http://{{ include "catalog.fullname" . }}/v1
+
+Prerequisite controllers (cluster-wide, installed once — see
+docs/phases/phase-02-5-gateway-swap.md Notes for pinned versions):
+  - Envoy Gateway v1.8.1 (envoy-gateway-system), installed with the
+    AI-extension values file pinned to the ai-gateway v1.0.0 tag
+  - Envoy AI Gateway CRDs + controller v1.0.0 (envoy-ai-gateway-system)
+
+Day-2 operations:
+  Add a model     -> edit .Values.models (and pull it in Ollama), helm upgrade
+  Add a backend   -> edit .Values.backends
+  Add a consumer  -> sops catalog/ai-gateway/secrets.enc.yaml (append to
+                     consumers), helm upgrade; hand the client its key
+  Token metrics   -> extproc container :1064/metrics (gen_ai_* series)
+
+Install/upgrade (from this directory):
+  helm secrets upgrade --install {{ .Release.Name }} . -n {{ .Release.Namespace }} -f values.yaml -f secrets.enc.yaml
+
+Smoke test (expects 200 with a valid consumer key, 401 without):
+  curl -s -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+    -d '{"model":"qwen3.5:9b","messages":[{"role":"user","content":"In one short sentence, what is Kubernetes?"}],"max_tokens":2000}' \
+    http://{{ include "catalog.fullname" . }}/v1/chat/completions
+  (Reasoning models: use plain short questions, never "reply with exactly
+  one word" canaries — see phase 2.5 Notes on qwen3.5 think-loops.)

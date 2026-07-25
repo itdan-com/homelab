@@ -14,7 +14,7 @@
 4. Build Grafana dashboards:
    - **Cluster health** (CPU, memory, pod counts, restarts).
    - **App metrics** (request rate, latency, error rate per service).
-   - **LLM cost** (tokens/sec, $/min, per-user attribution — sourced from LiteLLM + Langfuse).
+   - **LLM cost** (tokens/sec, $/min, per-consumer attribution — sourced from the AI gateway's `gen_ai_*` metrics + Langfuse).
    - **Claude actions** (actions/hr, MCP-server-invocation rate, grant request latency, denial rate, kill-switch events).
 5. Wire Alertmanager → Slack `#claude-alerts`.
 6. Define anomaly rules:

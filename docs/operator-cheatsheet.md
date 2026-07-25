@@ -14,7 +14,7 @@ does not type git.
 | **OpenWebUI (chat)** | `http://openwebui.lab.local:8080` | From the Windows browser. Needs the hosts entry below. First account you create = **admin**. Pick model **qwen3.5**. |
 | Portainer | `https://localhost:9443` | From Windows browser. Self-signed cert → click "Advanced → Proceed". |
 | Portainer (from Mac) | `https://<windows-LAN-ip>:9443` | Get the Windows IP via `ipconfig` in PowerShell. |
-| LiteLLM (API only) | `http://litellm.lab.local:8080/v1` | OpenAI-compatible gateway. Needs a Bearer key; not a browser page. |
+| AI Gateway (API only) | `http://ai-gateway/v1` — in-cluster only | OpenAI-compatible LLM gateway (Envoy AI Gateway). Needs a per-consumer Bearer key; deliberately NOT reachable from a browser — OpenWebUI is the only user-facing door. |
 | k3d cluster API | `https://0.0.0.0:39093` | Only from inside WSL. `kubectl` already knows this. |
 
 If you forgot the Portainer admin password, the only recovery is to
@@ -23,8 +23,8 @@ this — one command).
 
 ### Reaching `*.lab.local` services in a browser
 
-The `openwebui.lab.local` / `litellm.lab.local` names route through the
-cluster's ingress (Traefik). Two things make them work:
+The `openwebui.lab.local`-style names route through the cluster's
+ingress (Traefik). Two things make them work:
 
 1. **A hosts entry** on whichever machine's browser you're using. On the
    Windows box, edit `C:\Windows\System32\drivers\etc\hosts` — open
@@ -32,7 +32,6 @@ cluster's ingress (Traefik). Two things make them work:
    save — and add:
    ```
    127.0.0.1 openwebui.lab.local
-   127.0.0.1 litellm.lab.local
    ```
 2. **The port is `:8080`.** k3d maps the WSL2 host's port 8080 to the
    cluster ingress (and 8443 → HTTPS, once cert-manager lands in Phase
@@ -123,8 +122,9 @@ k3d cluster start devlab
 
 Wait ~30 seconds, then do the health check above. If the host alias
 broke (because WSL's IP shifted), the symptom is: pods can't reach
-`host.docker.internal` anymore. Fix: ask Claude to recreate the
-cluster — it's a 30-second cost.
+`host.docker.internal` anymore. Fix: the mapping lives declaratively in
+`k3d/coredns-custom.yaml` — update the IP there, `kubectl apply` it,
+restart CoreDNS (ask Claude). No cluster recreate needed.
 
 ---
 

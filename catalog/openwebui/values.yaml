@@ -8,8 +8,8 @@ catalog:
   tier: dev
   # dataClass: secret. OpenWebUI's PV holds real user chat history,
   # uploaded files, and the auto-generated WEBUI_SECRET_KEY that signs
-  # session tokens — plus this chart injects the LiteLLM virtual key as
-  # an env var. Per catalog/README.md, anything storing user content +
+  # session tokens — plus this chart injects its ai-gateway consumer
+  # key as an env var. Per catalog/README.md, anything storing user content +
   # holding a credential is `secret`, and `secret` REQUIRES the
   # SOPS-encrypted secrets.enc.yaml (which exists alongside this file).
   dataClass: secret
@@ -25,27 +25,30 @@ image:
 
 replicaCount: 1
 
-# Connection to the in-cluster LiteLLM gateway.
+# Connection to the in-cluster AI gateway (catalog/ai-gateway).
 # OpenWebUI speaks the OpenAI-compatible protocol; these two env var
 # names are what it reads for an OpenAI-style endpoint:
 #   OPENAI_API_BASE_URL — the /v1 base of the gateway
-#   OPENAI_API_KEY      — the Bearer token (LiteLLM virtual key)
-# baseUrl points at LiteLLM's in-cluster Service. Install both into the
-# SAME namespace (the `chat` namespace) so `litellm` resolves; the
-# Service is named after LiteLLM's release ("litellm") on port 4000.
+#   OPENAI_API_KEY      — the Bearer token (per-consumer gateway key)
+# baseUrl points at the ai-gateway release's stable Service. Install
+# both into the SAME namespace (the `chat` namespace) so `ai-gateway`
+# resolves; the Service listens on port 80.
 config:
-  openaiApiBaseUrl: "http://litellm:4000/v1"
+  openaiApiBaseUrl: "http://ai-gateway/v1"
 
-# Auth — the LiteLLM virtual key OpenWebUI presents as its Bearer token
-# to LiteLLM. This is NOT the LiteLLM master key; it's the scoped
-# virtual key minted in P2.9.
+# Auth — the per-consumer gateway key OpenWebUI presents as its Bearer
+# token to the AI gateway. Minted for client id "openwebui"; the
+# matching server-side entry lives in catalog/ai-gateway's
+# secrets.enc.yaml (same key value, so the gateway can attribute every
+# request to this consumer). Same least-privilege stance as P2.9's
+# virtual key: no client ever holds a master credential.
 # Override via the SOPS-encrypted secrets.enc.yaml at install time:
 #   helm secrets install openwebui . -n chat -f secrets.enc.yaml
-# The key lives under litellm.apiKey there (matches secrets.enc.yaml's
+# The key lives under gateway.apiKey there (matches secrets.enc.yaml's
 # shape) and is rendered into OPENAI_API_KEY by templates/secret.yaml.
 # Left blank here, the Secret is rendered without OPENAI_API_KEY and
-# OpenWebUI starts but can't reach LiteLLM until the key is supplied.
-litellm:
+# OpenWebUI starts but can't reach the gateway until a key is supplied.
+gateway:
   apiKey: ""
 
 # Storage — explicit PV with hostPath pointing at the WSL2 directory
@@ -118,8 +121,8 @@ ingress:
 # no privilege escalation, ALL capabilities dropped, default seccomp. A
 # compromised process gains no extra kernel powers and cannot escalate.
 # The load-bearing least-privilege controls for this frontend are SSO
-# (Phase 5), NetworkPolicy, and the scoped LiteLLM virtual key — not the
-# UID. Backlog: revisit true non-root via PUID/PGID or a custom image.
+# (Phase 5), NetworkPolicy, and the scoped gateway consumer key — not
+# the UID. Backlog: revisit true non-root via PUID/PGID or custom image.
 podSecurityContext:
   runAsNonRoot: false
   runAsUser: 0

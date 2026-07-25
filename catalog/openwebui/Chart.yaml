@@ -2,9 +2,10 @@ apiVersion: v2
 name: openwebui
 description: |
   OpenWebUI for the homelab platform — the chat frontend users actually
-  talk to. Points at the in-cluster LiteLLM gateway via its
-  OpenAI-compatible API (OPENAI_API_BASE_URL=http://litellm:4000/v1),
-  so every model LiteLLM exposes shows up here automatically.
+  talk to. Points at the in-cluster AI gateway (catalog/ai-gateway,
+  Envoy AI Gateway) via its OpenAI-compatible API
+  (OPENAI_API_BASE_URL=http://ai-gateway/v1), so every model the
+  gateway exposes shows up here automatically.
 
   The Phase-5 SSO target: needs-sso=true means Authentik's onboarding
   controller will mint an OIDC client and inject the ingress middleware.
@@ -31,9 +32,9 @@ annotations:
   # creates an OIDC client + injects the ingress middleware off this.
   # llm-traffic: FALSE — counterintuitive but correct. This is a
   # frontend; it does NOT itself carry the cost-tracked LLM traffic
-  # plane. LiteLLM owns llm-traffic=true (it's the gateway Phase 7's
-  # cost dashboard scrapes). OpenWebUI only calls LiteLLM; double-
-  # counting it here would inflate the cost dashboard.
+  # plane. catalog/ai-gateway owns llm-traffic=true (it's the gateway
+  # Phase 7's cost dashboard scrapes). OpenWebUI only calls the
+  # gateway; double-counting it here would inflate the cost dashboard.
   catalog.homelab/needs-sso: "true"
   catalog.homelab/llm-traffic: "false"
   catalog.homelab/wants-vector: "false"

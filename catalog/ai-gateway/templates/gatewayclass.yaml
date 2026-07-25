@@ -1,0 +1,12 @@
+{{- if .Values.gateway.createClass }}
+# Cluster-scoped: one release owns the class; additional releases (e.g. a
+# sandbox-tier deployment) set gateway.createClass=false and reuse it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gateway.className }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+{{- end }}

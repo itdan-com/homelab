@@ -14,23 +14,24 @@ Open the chat UI at:
   http://{{ include "catalog.ingressHost" . }}
 
 (Add "<WSL2-host-IP>  {{ include "catalog.ingressHost" . }}" to your
-Mac's /etc/hosts — same line you used for litellm/portainer.)
+Mac's /etc/hosts — same line you used for portainer.)
 On first visit, create the initial admin account — OpenWebUI's built-in
 auth (WEBUI_AUTH) is ON, so the UI is not open to the world.
 {{- end }}
 
 LLM backend:
   OPENAI_API_BASE_URL = {{ .Values.config.openaiApiBaseUrl }}
-{{- if .Values.litellm.apiKey }}
-  OPENAI_API_KEY      = (set from secrets.enc.yaml -> litellm.apiKey)
+{{- if .Values.gateway.apiKey }}
+  OPENAI_API_KEY      = (set from secrets.enc.yaml -> gateway.apiKey)
 {{- else }}
   OPENAI_API_KEY      = NOT SET — install with the SOPS secret so
-                        OpenWebUI can reach LiteLLM:
+                        OpenWebUI can reach the AI gateway:
                           helm secrets install {{ .Release.Name }} . \
                             -n {{ .Release.Namespace }} -f secrets.enc.yaml
 {{- end }}
-Install LiteLLM into THIS namespace first so the `litellm` Service
-resolves; the models LiteLLM exposes then appear in OpenWebUI's picker.
+Install the ai-gateway chart into THIS namespace first so the
+`ai-gateway` Service resolves; the models it exposes then appear in
+OpenWebUI's picker.
 
 Persistence:
   Data dir /app/backend/data is on a hostPath PV at

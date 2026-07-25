@@ -1,0 +1,24 @@
+# One routing rule per entry in .Values.models. The gateway's ext-proc
+# extracts `model` from the request body and stamps it into the
+# x-ai-eg-model header — clients just send normal OpenAI JSON.
+apiVersion: aigateway.envoyproxy.io/v1beta1
+kind: AIGatewayRoute
+metadata:
+  name: {{ include "catalog.fullname" . }}-models
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "catalog.fullname" . }}
+      kind: Gateway
+      group: gateway.networking.k8s.io
+  rules:
+    {{- range .Values.models }}
+    - matches:
+        - headers:
+            - type: Exact
+              name: x-ai-eg-model
+              value: {{ .name | quote }}
+      backendRefs:
+        - name: {{ include "catalog.fullname" $ }}-{{ .backend }}
+    {{- end }}

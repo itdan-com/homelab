@@ -1,0 +1,17 @@
+apiVersion: v2
+name: ai-gateway
+description: >-
+  Envoy AI Gateway — the platform's LLM data plane. Routes OpenAI-compatible
+  traffic to local (Ollama) and cloud model backends, meters tokens for
+  autoscaling and cost dashboards (extproc :1064/metrics), and authenticates
+  consumers with per-client API keys. Wraps Gateway API + aigateway.envoyproxy.io
+  CRs only — the controllers are installed cluster-wide (see NOTES.txt).
+type: application
+version: 0.1.0
+# appVersion tracks the Envoy AI Gateway CR API generation this chart targets.
+appVersion: "1.0.0"
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "true"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

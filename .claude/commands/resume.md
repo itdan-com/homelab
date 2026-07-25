@@ -10,10 +10,14 @@ first and report PASS/FAIL on each line before reading further:
 1. `docker ps` — k3d node containers + portainer up.
 2. `kubectl get nodes` — 4 nodes Ready.
 3. `kubectl get pods -A` — nothing CrashLooping or Pending.
-4. LLM path from inside the cluster (deploy name is the current
-   gateway — `litellm` until Phase 2.5 replaces it with `ai-gateway`):
-   `kubectl exec -n chat deploy/litellm -- python3 -c "import urllib.request; print(urllib.request.urlopen('http://host.docker.internal:11434', timeout=5).read().decode())"`
-   → must print "Ollama is running". If the chain works but
+4. LLM path from inside the cluster, through the AI gateway with the
+   real consumer key (reads OpenWebUI's own env — tests the exact
+   production path: DNS → ExternalName → Envoy → auth → route):
+   `kubectl exec -n chat deploy/openwebui -- python3 -c "import urllib.request, os, json; req = urllib.request.Request(os.environ['OPENAI_API_BASE_URL'] + '/models', headers={'Authorization': 'Bearer ' + os.environ['OPENAI_API_KEY']}); print([m['id'] for m in json.loads(urllib.request.urlopen(req, timeout=10).read())['data']])"`
+   → must list `qwen3.5:9b`. If it fails, isolate the hop: swap the
+   URL for `http://host.docker.internal:11434` with no auth header —
+   "Ollama is running" means host path OK, gateway broken; a timeout
+   means the host path itself is down. If the chain works but
    generation is glacially slow, check GPU contention from Windows
    games/apps: `powershell.exe nvidia-smi` — a game + the model can
    exceed the 4070's 12 GB and trigger the NVIDIA driver's silent

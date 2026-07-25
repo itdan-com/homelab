@@ -1,0 +1,22 @@
+# Stable, human-named entrypoint: http://<fullname>/v1 in-namespace.
+#
+# A selector Service can't work here — Services only select pods in
+# their OWN namespace, and Envoy Gateway provisions the proxy pods into
+# the controller namespace. Instead this is an ExternalName alias (a
+# DNS CNAME) to the EG-generated Service, whose name is deterministic:
+#   envoy-<gateway-ns>-<gateway-name>-<first 8 hex of sha256("<ns>/<name>")>
+# The chart computes the hash, so consumers never track EG's naming and
+# the alias survives reinstalls in any namespace.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: envoy-{{ .Release.Namespace }}-{{ include "catalog.fullname" . }}-{{ printf "%s/%s" .Release.Namespace (include "catalog.fullname" .) | sha256sum | trunc 8 }}.{{ .Values.service.controllerNamespace }}.svc.cluster.local
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      protocol: TCP

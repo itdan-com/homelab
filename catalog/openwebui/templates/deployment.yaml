@@ -21,9 +21,9 @@ spec:
     metadata:
       labels:
         {{- include "catalog.labels" . | nindent 8 }}
-      {{- if .Values.litellm.apiKey }}
+      {{- if .Values.gateway.apiKey }}
       annotations:
-        # checksum forces a pod rollout when the LiteLLM key changes.
+        # checksum forces a pod rollout when the gateway key changes.
         # Guarded because secret.yaml only renders when the key is set.
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       {{- end }}
@@ -38,12 +38,12 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           env:
             # OpenAI-compatible endpoint pointed at the in-cluster
-            # LiteLLM Service. Plain (non-secret) value from values.yaml.
+            # AI gateway Service. Plain (non-secret) value from values.
             - name: OPENAI_API_BASE_URL
               value: {{ .Values.config.openaiApiBaseUrl | quote }}
-          {{- if .Values.litellm.apiKey }}
+          {{- if .Values.gateway.apiKey }}
           envFrom:
-            # OPENAI_API_KEY (the LiteLLM virtual key) from the
+            # OPENAI_API_KEY (this consumer's gateway key) from the
             # SOPS-backed Secret. Only attached when the key is set.
             - secretRef:
                 name: {{ include "catalog.fullname" . }}-auth

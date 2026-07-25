@@ -1,0 +1,18 @@
+# Data-plane knobs for the provisioned Envoy fleet (referenced by the
+# Gateway's infrastructure.parametersRef).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: {{ include "catalog.fullname" . }}-proxy
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: {{ .Values.envoyProxy.serviceType }}
+      envoyDeployment:
+        container:
+          resources:
+            {{- toYaml .Values.envoyProxy.resources | nindent 12 }}

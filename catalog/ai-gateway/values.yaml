@@ -1,0 +1,63 @@
+nameOverride: ""
+fullnameOverride: ""
+
+catalog:
+  tier: dev
+  # Consumer API keys ride in this release's secrets.enc.yaml.
+  dataClass: secret
+
+# ---------------------------------------------------------------------------
+# Model catalog (data-driven: adding a model is a one-line entry).
+# Each entry exposes one model name on the unified /v1 endpoint and pins it
+# to a backend below. Adding a model = one entry here (+ pull it in Ollama
+# or add the cloud backend it lives on).
+# ---------------------------------------------------------------------------
+models:
+  - name: qwen3.5:9b
+    backend: ollama
+
+# Where model traffic goes. schema OpenAI = backend speaks the
+# OpenAI-compatible /v1 surface (Ollama does natively).
+backends:
+  - name: ollama
+    schema: OpenAI
+    # Resolves to the Windows host via the CoreDNS override
+    # (k3d/coredns-custom.yaml) — never hardcode the gateway IP.
+    fqdn: host.docker.internal
+    port: 11434
+
+# ---------------------------------------------------------------------------
+# Per-consumer API keys. NEVER put real values here — they live in
+# secrets.enc.yaml (SOPS). Shape per item:
+#   - name: openwebui        # client id, becomes the Secret key => audit trail
+#     apiKey: sk-...         # field MUST be named `apiKey` so .sops.yaml's
+#                            # encrypted_regex encrypts it
+# ---------------------------------------------------------------------------
+consumers: []
+
+gateway:
+  # GatewayClass is cluster-scoped: exactly one release should own it.
+  createClass: true
+  className: ai-gateway
+  listenerPort: 80
+
+envoyProxy:
+  # LoadBalancer would make k3s svclb fight Traefik for host ports 80/443.
+  serviceType: ClusterIP
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+
+# Stable in-namespace name (http://<fullname>/v1) for consumers: an
+# ExternalName alias to the EG-generated Service (see templates/service.yaml
+# for how the deterministic hash suffix is computed).
+service:
+  # Namespace Envoy Gateway provisions data-plane infra into.
+  controllerNamespace: envoy-gateway-system
+  port: 80
+
+# Envoy's default 32KiB per-connection buffer truncates LLM request bodies.
+clientBufferLimit: 50Mi

@@ -10,7 +10,7 @@
 
 1. Add `catalog/authentik/`; configure as OIDC provider.
 2. Wire OpenWebUI, Portainer, Grafana (when present in Phase 7), and the prompt gallery to authenticate via Authentik.
-3. Add `catalog/langfuse/` (or alternative); integrate LiteLLM as a tracing + cost backend.
+3. Add `catalog/langfuse/` (or alternative); integrate the AI gateway as a tracing + cost source (Envoy AI Gateway is OTel-native).
 4. Add `catalog/minio/`; configure as the upload/artifact store; create initial buckets.
 5. Add `cert-manager` + the existing Traefik (k3d ships with it) for `*.lab.local` TLS via a self-signed CA.
 6. Local DNS: add `/etc/hosts` entries on the Mac and Windows box pointing `openwebui.lab.local`, `portainer.lab.local`, etc. at the cluster's exposed IP.
@@ -18,7 +18,7 @@
 ## Open questions to resolve at the start
 
 - LDAP/SAML alternatives to Authentik if the OIDC story gets sticky? (Keycloak is the obvious fallback; Authentik chosen for lighter footprint.)
-- Langfuse vs. Helicone vs. a custom prompt gallery: Langfuse is the recommendation but verify it integrates with LiteLLM out of the box at the current version.
+- Langfuse vs. Helicone vs. a custom prompt gallery: Langfuse is the recommendation but verify it ingests the Envoy AI Gateway's OTel traces out of the box at the current version.
 - Self-signed CA UX: every browser will warn on first visit. Document the "trust this CA" step for the Mac, since that's the daily-driver browser.
 
 ## Phase exit criteria

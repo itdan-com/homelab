@@ -1,0 +1,24 @@
+{{- if .Values.consumers }}
+# Gateway-wide API-key auth: no key, no route. Keys are per-consumer
+# (the Secret's key IS the client id → attributable by construction).
+# Clients send the standard OpenAI `Authorization: Bearer <key>` header.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "catalog.fullname" . }}-consumer-auth
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ include "catalog.fullname" . }}
+  apiKeyAuth:
+    credentialRefs:
+      - group: ""
+        kind: Secret
+        name: {{ include "catalog.fullname" . }}-consumer-keys
+    extractFrom:
+      - headers:
+          - Authorization
+{{- end }}

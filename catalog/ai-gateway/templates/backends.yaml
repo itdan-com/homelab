@@ -1,0 +1,30 @@
+# An AIServiceBackend (API schema) + Backend (network endpoint) pair per
+# entry in .Values.backends.
+{{- range .Values.backends }}
+---
+apiVersion: aigateway.envoyproxy.io/v1beta1
+kind: AIServiceBackend
+metadata:
+  name: {{ include "catalog.fullname" $ }}-{{ .name }}
+  labels:
+    {{- include "catalog.labels" $ | nindent 4 }}
+spec:
+  schema:
+    name: {{ .schema }}
+  backendRef:
+    name: {{ include "catalog.fullname" $ }}-{{ .name }}-ep
+    kind: Backend
+    group: gateway.envoyproxy.io
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata:
+  name: {{ include "catalog.fullname" $ }}-{{ .name }}-ep
+  labels:
+    {{- include "catalog.labels" $ | nindent 4 }}
+spec:
+  endpoints:
+    - fqdn:
+        hostname: {{ .fqdn | quote }}
+        port: {{ .port }}
+{{- end }}

@@ -17,8 +17,8 @@ behavior of the whole platform. Read carefully before editing.
 
 Most internal platforms grow as a series of bespoke integrations:
 "OpenWebUI needs an Authentik client, so someone manually edits the
-Authentik config; LiteLLM needs to be in the LLM cost dashboard, so
-someone manually adds it to Grafana; etc." Every new service is a
+Authentik config; the AI gateway needs to be in the LLM cost dashboard,
+so someone manually adds it to Grafana; etc." Every new service is a
 multi-place patch.
 
 The catalog inverts that. Every chart **self-declares** what it needs
@@ -41,7 +41,7 @@ Then in later phases:
   of any chart with `exposes-mcp: true`.
 - **Phase 6 (control-plane Claude):** Claude reads the label set to
   decide what an action affects (e.g. "scaling this means more LLM
-  traffic — check the LiteLLM HPA too").
+  traffic — check the ai-gateway autoscaling too").
 - **Phase 7 (observability):** Charts with `llm-traffic: true`
   auto-register with the LLM cost dashboard.
 
@@ -58,7 +58,7 @@ catalog/
 ├── README.md             # this file — the contract
 ├── _template/            # canonical skeleton chart; copy this when adding a service
 ├── postgres/             # Phase 2: dependency for the others
-├── litellm/              # Phase 2: LLM gateway
+├── ai-gateway/           # Phase 2.5: LLM gateway (Envoy AI Gateway)
 ├── openwebui/            # Phase 2: chat UI
 ├── authentik/            # Phase 5: SSO
 ├── langfuse/             # Phase 5: LLM observability + prompt gallery
@@ -111,7 +111,7 @@ Labels split into two groups based on where they live:
 | Label | Scope | Type | Values | What it does |
 |---|---|---|---|---|
 | `needs-sso` | chart-level | bool | `"true"` / `"false"` | Authentik (Phase 5) creates an OIDC client and injects the ingress middleware. |
-| `llm-traffic` | chart-level | bool | `"true"` / `"false"` | The chart talks to LiteLLM (or another LLM gateway). Phase 7 auto-adds it to the LLM cost dashboard. Phase 5.5 may insert Sentinel mediation in front of cloud-LLM traffic. |
+| `llm-traffic` | chart-level | bool | `"true"` / `"false"` | The chart carries LLM traffic (is, or talks through, the AI gateway). Phase 7 auto-adds it to the LLM cost dashboard. Phase 5.5 may insert Sentinel mediation in front of cloud-LLM traffic. |
 | `wants-vector` | chart-level | bool | `"true"` / `"false"` | The chart needs the cluster vector DB (deployed later). Phase 4+ wires the connection automatically. |
 | `exposes-mcp` | chart-level | bool | `"true"` / `"false"` | The chart runs a Model Context Protocol server. Phase 5.5 inserts the Sentinel proxy in front; Phase 6 control-plane Claude auto-discovers it. **Setting this label commits the chart to Sentinel gating — don't set it on workloads that aren't MCP servers.** |
 | `tier` | release-level | enum | `sandbox` / `dev` / `prod` | Sentinel (Phase 5.5+) applies different trust gradients per tier. `sandbox`: auto-approves common capabilities, no human tap for routine actions, kill-switch off. `dev`: human tap required but cost caps relaxed, verbose logging on. `prod`: every external action prompts the human; kill-switch primed; may be disconnected from external SaaS by default. Promotion is "deploy the same chart to the next-tier namespace via a git commit." |
@@ -213,19 +213,22 @@ A chart that needs secrets has a `secrets.enc.yaml` alongside its
 regular `values.yaml`:
 
 ```yaml
-# catalog/litellm/secrets.enc.yaml (encrypted in git)
-masterKey: ENC[AES256_GCM,data:...,tag:...,type:str]
-openaiApiKey: ENC[AES256_GCM,data:...,tag:...,type:str]
+# catalog/ai-gateway/secrets.enc.yaml (encrypted in git)
+consumers:
+    - name: openwebui                                  # key NAMES stay readable
+      apiKey: ENC[AES256_GCM,data:...,tag:...,type:str] # VALUES encrypt (per .sops.yaml regex)
 ```
 
 Apply with:
 
 ```bash
-helm secrets upgrade --install litellm . -n chat -f values.yaml -f secrets.enc.yaml
+helm secrets upgrade --install ai-gateway . -n chat -f values.yaml -f secrets.enc.yaml
 ```
 
-Edit with `sops catalog/litellm/secrets.enc.yaml` — opens an editor with
-the plaintext; re-encrypts on save.
+Edit with `sops catalog/ai-gateway/secrets.enc.yaml` — opens an editor
+with the plaintext; re-encrypts on save. NOTE: only keys matching
+`.sops.yaml`'s `encrypted_regex` (`apiKey`, `*password`, `*Token`,
+`*Secret`, …) get encrypted — name your secret fields accordingly.
 
 ### Phase 6 migration plan
 
@@ -255,7 +258,7 @@ Traefik as its default ingress controller. Every chart gets an
 the Mac's `/etc/hosts`:
 
 ```
-192.168.1.42  openwebui.lab.local litellm.lab.local portainer.lab.local
+192.168.1.42  openwebui.lab.local portainer.lab.local
 ```
 
 (Replace with the actual WSL2 host IP visible from the Mac. On Windows
