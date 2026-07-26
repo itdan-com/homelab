@@ -6,11 +6,12 @@ changes it ONLY by opening PRs against this repo. The owner's merge
 is the approval gate; ArgoCD applies. Start / stop / scale / onboard /
 rollback on demand — with zero non-git credentials.
 
-**Status:** **IN PROGRESS — paused 2026-07-26 ~01:15.** 4.5.1 + 4.5.2
-done; demo loop 1 (warm spare, PR #1) merged + applied end-to-end.
-**Resume point: demo loop 2** — launch the operator
-(`bash ~/homelab/ops/operator/launch.sh`) and paste the rollback
-prompt from the Notes below. Then loop 3 (onboard), then the GIF.
+**Status:** **IN PROGRESS — 2026-07-26 session 2.** 4.5.1 + 4.5.2 done;
+demo loops 1 (warm spare, PR #1) and 2 (rollback, PR #2) merged +
+applied end-to-end. Approval gate negative-tested 3/3 pre-merge of
+PR #2 (see Notes); evidence issue #3 filed by the operator, answered
+by the builder, kept open as the hardening tracker.
+**Next: demo loop 3 (onboard)**, then the GIF, then phase close.
 NOTE: the repo went **PUBLIC** this session (free-tier rulesets
 require it; pre-publication history sweep came back clean), and the
 "fine-grained PAT" item was superseded by a **GitHub App** — better
@@ -79,12 +80,19 @@ beyond PR-authoring waits for Sentinel (Phase 5.5 → 6).
       `itdan-homelab-operator[bot]`, exemplary plain-English body,
       one-line diff → owner approved + merged (merge commit) →
       ArgoCD applied → 2/2 warm in ~2 min. DONE 2026-07-26.
-- [ ] **Rollback:** "undo that" → revert PR → merge → back to 1.
-      *(Resume here. Prompt for the operator: "Actually, undo that
-      warm spare for now — revert your PR so the KEDA minimum goes
-      back to 1. Same process: propose it as a pull request and I'll
-      review it on GitHub." Expect the drain to take ~5 min after
-      sync — HPA scale-down stabilization, not a failure.)*
+- [x] **Rollback:** "undo that" → revert PR → merge → back to 1.
+      DONE 2026-07-26 — **PR #2** (`revert(ai-gateway): drop the warm
+      spare`) authored by the operator, owner merged 16:38:47Z; KEDA
+      HPA `SuccessfulRescale → New size: 1` at ~16:39:16Z —
+      **~29 s merge→cluster**, not the predicted ~5 min. Lesson: the
+      HPA scale-down stabilization window holds the highest *metric*
+      recommendation over 5 min; overnight-quiet metrics meant every
+      stored recommendation was already at floor, so only
+      `minReplicaCount` held 2 replicas — dropping the floor rescales
+      instantly. Stabilization delay applies after a *traffic* drop
+      (Phase-3 k6 demo), not a *floor* drop during quiet. Pre-merge,
+      the owner negative-tested the gate on this very PR (charter /
+      422 / 405 — see the 2026-07-26 Notes entry and issue #3).
 - [ ] **Onboard:** a trivial new catalog service lands end-to-end by
       PR (template chart → PR → merge → ArgoCD discovers it).
 - [ ] Record the demo GIF — this is the open-source pitch asset.
