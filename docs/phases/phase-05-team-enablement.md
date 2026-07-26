@@ -40,9 +40,12 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 
 ### A — TLS foundation (cert-manager + lab CA)
 
-- [ ] **A1. `catalog/cert-manager/`** — umbrella chart over upstream
+- [x] **A1. `catalog/cert-manager/`** — umbrella chart over upstream
   cert-manager (CRDs enabled, resources capped for the WSL2 budget,
   catalog labels) + `argo.yaml`; ArgoCD app appears, Synced/Healthy.
+  *(Done 2026-07-26, commit `c0a6623`: pinned v1.21.0; discovered as
+  app #7 and Synced/Healthy ~3 min after push, zero commands typed;
+  3/3 pods Running, 6 CRDs, 6/6 labels live-verified.)*
 - [ ] **A2. Lab CA** — bootstrap self-signed `Issuer` → long-lived CA
   `Certificate` (`lab-local-ca`) → `ClusterIssuer` signing leaf certs
   for `*.lab.local`. Rotation basics recorded in the cheatsheet.
@@ -136,6 +139,15 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-26 (A1): upstream cert-manager chart defaults `crds.enabled:
+  false` — the flip to `true` is load-bearing, and `crds.keep: true`
+  is the safety net (app deletion can't cascade-delete Certificates).
+  `startupapicheck` disabled: it's a Helm hook Job, pure noise under
+  ArgoCD's own health checks. Labels via `global.commonLabels` render
+  unquoted upstream (`tier: dev` not `tier: "dev"`) — same parsed
+  values; assert labels with a YAML parser, not grep. dataClass chose
+  `internal` over keda's `none`: cert-manager mints/stores private-key
+  Secrets even though it ships none.
 - 2026-07-26 (kickoff): doc reconciled — old exit criteria (Langfuse
   trace + MinIO upload + Portainer SSO) contradicted the ADR-001
   slimmed goal; replaced with the criteria above. TLS staged before
