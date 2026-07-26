@@ -11,10 +11,11 @@ short-lived, per-task capability grants issued by a broker it cannot
 reach. Built on deliberately boring rails — k3d, Helm, ArgoCD, Envoy —
 because a novel trust model deserves battle-tested plumbing.
 
-> Status: phases 1–4 complete (chat stack, AI gateway, AI-aware
-> autoscaling, GitOps). The PR-proposing operator (4.5) and the
-> Sentinel capability broker (5.5) are the next milestones. See
-> [STATUS.md](STATUS.md) for the live cursor.
+> Status: phases 1–4.5 complete (chat stack, AI gateway, AI-aware
+> autoscaling, GitOps, and the PR-proposing operator shown in the demo
+> below). Next: team enablement — SSO + TLS (5), then the Sentinel
+> capability broker (5.5). See [STATUS.md](STATUS.md) for the live
+> cursor.
 
 ## What's running today
 
@@ -33,6 +34,53 @@ because a novel trust model deserves battle-tested plumbing.
   including the token-rate/replica dashboard the demo uses.
 - **GitOps** — ArgoCD with a read-only deploy key. Write access to this
   repo does not exist inside the cluster, by construction.
+
+## Where it runs
+
+The whole platform is **one home PC** — no cloud account required.
+Kubernetes here is the manager, not a place; the same catalog deploys
+unchanged to any cluster (phase 8 proves it on DigitalOcean, then
+tears it down). This is the reference topology:
+
+```text
+Mac (daily driver)
+ └─ Remote Desktop ──► Windows 11 Pro box — the lab server
+                        (i5-13400F · 64 GB RAM · RTX 4070)
+      ├─ Ollama — native Windows app on the GPU; serves qwen3.5:9b
+      │           on :11434 (the actual LLM behind every chat)
+      └─ WSL2 · Ubuntu (capped at 32 GB RAM / 8 CPUs)
+           ├─ operator Claude — Claude Code + a GitHub App identity;
+           │    read-only kubeconfig, proposes changes as PRs
+           ├─ Sentinel — capability broker + kill switch, outside the
+           │    cluster by design                     [planned, ph 5.5]
+           └─ docker-ce (Docker Engine)
+                ├─ portainer — Portainer CE, Docker-level dashboard
+                └─ k3d cluster "devlab" — Kubernetes (k3s), 4 nodes
+                     k3d-devlab-server-0 · -agent-0/1/2
+                     + k3d-devlab-serverlb (host :8080 → ingress)
+                     └─ everything in the table below
+```
+
+| Namespace | What runs there | Role |
+|---|---|---|
+| `chat` | OpenWebUI · Postgres · the `ai-gateway` Gateway | The chat stack users touch (Postgres idle, reserved for SSO) |
+| `envoy-gateway-system` | Envoy Gateway control plane + the generated Envoy data-plane pods | The proxy fleet that actually carries LLM traffic (KEDA scales these) |
+| `envoy-ai-gateway-system` | Envoy AI Gateway controller | Teaches Envoy the OpenAI protocol + per-token metering |
+| `monitoring` | Prometheus · Grafana · Alertmanager · exporters | Metrics and dashboards; source of KEDA's scaling signal |
+| `keda` | KEDA operator | Watches tokens/sec in Prometheus, scales the gateway |
+| `argocd` | Argo CD | Watches this repo's `catalog/`; the only deployer |
+| `sandbox` | echo | Template-born demo service (the PR #4 onboarding) |
+| `portainer` | Portainer agent | Links the cluster into the Portainer UI |
+| `kube-system` | Traefik · CoreDNS (+ durable host override) · metrics-server | k3s built-ins: ingress, DNS, resource metrics |
+
+Two paths explain the whole system:
+
+- **A chat message:** browser → `openwebui.lab.local` (hosts entry →
+  k3d serverlb :8080) → Traefik → OpenWebUI → AI gateway (Envoy, API
+  key + token metering) → `host.docker.internal:11434` → Ollama on the
+  Windows GPU.
+- **A change:** operator Claude opens a PR → a human merges (the only
+  write path to `main`) → ArgoCD pulls and the cluster converges.
 
 ## Seen, not told
 
