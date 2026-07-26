@@ -1,0 +1,84 @@
+# values.yaml — hashicorp/http-echo, the smallest possible catalog service.
+#
+# It answers every HTTP request with one fixed string and does nothing
+# else. That is the point: it exercises onboarding (chart -> argo.yaml ->
+# ArgoCD -> ingress -> label propagation) with no dependencies that could
+# fail and confuse the result.
+
+# Two release-level labels — properties of THIS PARTICULAR DEPLOYMENT.
+catalog:
+  # sandbox: the lowest trust gradient. Sentinel (Phase 5.5+) auto-approves
+  # routine capabilities here and leaves the kill-switch off. Correct for a
+  # demo workload that holds nothing and can reach nothing.
+  tier: sandbox
+
+  # none: no data at all — not even non-sensitive data. It reads no secret,
+  # mounts no volume, and writes nothing to disk. Hence no secrets.enc.yaml,
+  # and argo.yaml declares secrets: "false".
+  dataClass: none
+
+image:
+  repository: hashicorp/http-echo
+  tag: ""  # defaults to .Chart.AppVersion (1.0.0)
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Container args. http-echo is configured ONLY by flags — it reads no
+# environment variables — so the response body has to be passed here.
+# -listen is already the image default; stated explicitly per the catalog's
+# explicit-default-over-implicit rule, and so the port appears in exactly
+# one place a reader will look.
+args:
+  - "-text=hello from the platform"
+  - "-listen=:5678"
+
+# Deliberately tiny: a small static Go binary serving a constant string,
+# measured locally at ~11µs/request. Sized so it can schedule anywhere
+# without competing with real workloads for the WSL2 budget.
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    cpu: 50m
+    memory: 64Mi
+
+service:
+  type: ClusterIP
+  port: 80          # what the rest of the cluster calls
+  portName: http
+  targetPort: 5678  # what http-echo actually listens on (the image default)
+
+# Ingress via Traefik IngressRoute. host blank -> "echo.lab.local".
+ingress:
+  enabled: true
+  host: ""
+  entrypoint: web
+
+# The image ships its own nonroot user (uid 65532, the distroless
+# convention) and a WorkingDir of /home/nonroot owned by it. Matching that
+# uid instead of the template's generic 1000 keeps filesystem ownership
+# coherent with what upstream built.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  # A static binary that writes nothing, so unlike the nginx-based template
+  # default this one can genuinely run with a read-only root filesystem.
+  readOnlyRootFilesystem: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""

@@ -1,0 +1,22 @@
+apiVersion: v2
+name: echo
+description: |
+  Tiny always-on demo service. Answers every HTTP request with one fixed
+  string and does nothing else — no database, no secrets, no state, no
+  outbound calls. It exists to exercise the onboarding path end to end
+  (chart -> argo.yaml -> ArgoCD -> ingress -> label propagation) with
+  nothing else in the way that could fail.
+type: application
+version: 0.1.0
+# Upstream hashicorp/http-echo release. Used as the default image tag via
+# the catalog.image helper, since values.yaml leaves image.tag blank.
+appVersion: "1.0.0"
+
+# Four chart-level labels — properties of WHAT THE CHART IS.
+# All four are false here: this workload has no user identity, carries no
+# LLM traffic, needs no vector DB, and is emphatically not an MCP server.
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"
