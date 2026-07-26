@@ -3,7 +3,7 @@
 Wrapped dependency: argo-cd {{ (index .Chart.Dependencies 0).Version }}.
 
 UI access (until Phase 5 SSO + ingress):
-  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ .Release.Name }}-argo-cd-server 8081:80
+  kubectl port-forward -n {{ .Release.Namespace }} svc/argocd-server 8081:80
   -> http://localhost:8081  (user: admin; initial password:
      kubectl get secret argocd-initial-admin-secret -n {{ .Release.Namespace }} -o jsonpath='{.data.password}' | base64 -d)
 

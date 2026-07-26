@@ -83,7 +83,7 @@ ships an argo.yaml — watch it happen:
 
   kubectl get applications -n argocd -w
 
-UI:   kubectl port-forward -n argocd svc/argocd-argo-cd-server 8081:80
+UI:   kubectl port-forward -n argocd svc/argocd-server 8081:80
       admin / $(kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d)
 
 If Applications show repo auth errors: register the READ-ONLY deploy key
