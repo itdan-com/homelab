@@ -1,0 +1,12 @@
+# The chicken-and-egg breaker. A certificate authority has to start
+# somewhere: this namespaced Issuer signs exactly one thing — the lab
+# CA certificate below — and is referenced by nothing else. Leaf certs
+# never touch it; they go through the ClusterIssuer.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: selfsigned-bootstrap
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}

@@ -1,0 +1,28 @@
+# The lab CA itself: a long-lived, self-signed root whose keypair
+# lands in the Secret named below (this namespace). Client machines
+# import its ca.crt once (SETUP.md / cheatsheet); every *.lab.local
+# leaf cert chains up to it. Rotation is a deliberate re-trust event —
+# see "TLS: the lab CA" in docs/operator-cheatsheet.md.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lab-local-ca
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: {{ .Values.labCA.commonName | quote }}
+  secretName: lab-local-ca
+  duration: {{ .Values.labCA.duration }}
+  renewBefore: {{ .Values.labCA.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    # Never: a renewal must not silently mint a new private key — the
+    # CA's key IS the trust anchor clients imported. (Upstream's
+    # default flipped to Always in v1.18; explicit beats drift.)
+    rotationPolicy: Never
+  issuerRef:
+    name: selfsigned-bootstrap
+    kind: Issuer
+    group: cert-manager.io

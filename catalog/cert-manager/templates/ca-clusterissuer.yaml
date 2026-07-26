@@ -1,0 +1,14 @@
+# The platform-wide signing endpoint. Any chart in any namespace
+# requests TLS by creating a Certificate whose issuerRef points here;
+# cert-manager signs it with the lab CA keypair (read from the
+# lab-local-ca Secret in the controller's cluster-resource namespace —
+# this one). First consumer: OpenWebUI's cert in A3.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: lab-local-ca
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: lab-local-ca

@@ -214,6 +214,42 @@ Portainer isn't running. Start Portainer first, then prune.
 
 ---
 
+## TLS: the lab CA (Phase 5)
+
+The platform signs its own `*.lab.local` certificates. The trust
+anchor is a 10-year CA managed by cert-manager:
+
+- **Where it lives:** Secret `lab-local-ca` in namespace
+  `cert-manager` (keypair), created by the `lab-local-ca` Certificate
+  in `catalog/cert-manager/`. The `lab-local-ca` **ClusterIssuer** is
+  what every chart's Certificate references.
+- **Leaf certs renew themselves** (cert-manager default ~90 days,
+  re-issued ~30 days early). Nothing to do, ever. Only the CA is
+  special.
+- **Export the CA cert for a client machine** (the file you import
+  into a trust store):
+  ```
+  kubectl get secret lab-local-ca -n cert-manager \
+    -o jsonpath='{.data.ca\.crt}' | base64 -d > lab-local-ca.crt
+  ```
+- **Check CA expiry:**
+  ```
+  kubectl get certificate lab-local-ca -n cert-manager \
+    -o jsonpath='{.status.notAfter}'
+  ```
+- **Rotation = planned migration, not maintenance.** The CA's private
+  key is pinned (`rotationPolicy: Never`); auto-renewal fires once a
+  decade and any rotation changes what clients trust. To rotate
+  deliberately: delete the `lab-local-ca` Secret, let cert-manager
+  re-issue (new key), then **re-import the new `ca.crt` on every
+  client machine** (list of clients: SETUP.md). Every leaf cert
+  re-issues automatically afterward.
+- **Something won't get a cert?** `kubectl describe certificate
+  <name> -n <ns>` — the Events section says why; then `kubectl get
+  clusterissuer lab-local-ca` (READY must be True).
+
+---
+
 ## kubectl quick reference (read-only operations)
 
 You probably won't type these often, but if Claude tells you to "run

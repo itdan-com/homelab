@@ -1,6 +1,19 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# The lab CA (A2) — trust anchor for every *.lab.local certificate.
+# Long-lived by design: each client machine imports it once; leaf
+# certs renew automatically underneath it. Rotating the CA is a
+# deliberate re-trust event on every client (cheatsheet: "TLS: the
+# lab CA") — hence 10 years, not cert-manager's 90-day default.
+labCA:
+  commonName: "homelab lab.local CA"
+  duration: 87600h # 10 years
+  # Window before expiry in which cert-manager re-issues. Fires once a
+  # decade; when it does, clients must re-import — treat as a planned
+  # migration, not routine renewal.
+  renewBefore: 720h # 30 days
+
 catalog:
   tier: dev
   # dataClass internal (not none): the chart ships no SOPS values, but
