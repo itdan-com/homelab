@@ -89,6 +89,10 @@ resources:
 service:
   type: ClusterIP
   port: 5432
+  # portName: non-HTTP services name their port after the protocol
+  # (K8s convention). Feeds the shared service.yaml template — this
+  # value is why the chart no longer forks that file (issue #5).
+  portName: postgres
   targetPort: 5432
 
 # Pod-level security context. Postgres official image runs as uid 999

@@ -2,7 +2,8 @@
 
 **Goal (slimmed per ADR-001):** Authentik (SSO — OpenWebUI and Grafana first, Portainer later) + cert-manager + Traefik for TLS on `*.lab.local`. MinIO and the prompt-gallery/LLM-observability service (Langfuse or similar) move to **on-demand**: deploy when something concretely needs them, not by default — the Phase 2.5 gateway swap changes the LLM-observability integration anyway. After this phase a friend or teammate could be onboarded end-to-end with one SSO identity.
 
-**Status:** Not started. Blocked on Phase 4.5.
+**Status:** Not started — unblocked 2026-07-26 (Phase 4.5 closed;
+carry-in catalog-contract v2 from issue #5 landed first).
 
 ---
 

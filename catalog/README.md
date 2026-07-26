@@ -153,10 +153,12 @@ metadata:
 
 The `catalog.labels` helper reads `Chart.yaml.annotations` and emits
 matching K8s labels. It lives in `_template/templates/_helpers.tpl` and
-is copied verbatim into each real chart. **Do not hand-edit the helper
-inside a real chart.** If the helper needs to change, edit
+is copied verbatim into each real chart — it is **the only file the
+contract requires to stay byte-identical in every chart** (see "Drift
+discipline" under the `_template/` section). Do not hand-edit the
+helper inside a real chart. If the helper needs to change, edit
 `_template/templates/_helpers.tpl` and `cp` the updated version into
-every chart — the catalog should drift toward consistency, not away.
+every chart in the same commit, `diff`-ing each copy to prove it.
 
 ---
 
@@ -290,11 +292,30 @@ annotation block (label schema), and the `.metadata.labels` stanza
 on every resource — are pre-wired so you can't accidentally break
 the contract by forgetting to propagate a label.
 
-**Drift discipline.** When `_template` changes, every existing chart
-needs the same change reflected. There is no symlink magic — Helm
-doesn't support cross-chart includes. Discipline > cleverness here.
-A future helper script (`scripts/template-sync.sh`) may automate this
-once we have 3+ charts to keep in sync.
+**Drift discipline (contract v2 — issue #5).** Helm has no cross-chart
+include, so `_template` is a copy source, not a live dependency. The
+contract distinguishes two kinds of file:
+
+- **`_helpers.tpl` must stay byte-identical** in every real chart — it
+  carries the six-label propagation, which is the catalog's actual
+  API. Change it only in `_template` and copy it to every chart in
+  the same commit.
+- **`deployment.yaml` / `service.yaml` are a starting point charts
+  are expected to outgrow.** Real workloads legitimately add probes,
+  volumes, update strategies, checksum annotations (`openwebui/`) or
+  replace the Deployment entirely (`postgres/`'s StatefulSet).
+  Divergence there is normal — *unnecessary* forks are the drift to
+  avoid: the skeleton deployment supports `command`, `args`, `env`,
+  and `envFrom` as with-guarded passthroughs (rendering nothing when
+  unset), so a chart that only needs those knobs should not fork at
+  all. Probes stay chart-local by design — too app-specific to
+  template well.
+
+v2 exists because a 2026-07-26 survey (issue #5) found every real
+chart had forked `deployment.yaml` for exactly those knobs, while two
+charts sat behind an earlier skeleton improvement. If the passthrough
+surface ever grows past those four fields, that is the trigger to
+build `scripts/template-sync.sh` rather than extend the copy tax.
 
 ---
 

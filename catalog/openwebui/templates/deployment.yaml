@@ -49,7 +49,7 @@ spec:
                 name: {{ include "catalog.fullname" . }}-auth
           {{- end }}
           ports:
-            - name: http
+            - name: {{ .Values.service.portName | default "http" }}
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
           volumeMounts:
@@ -66,19 +66,19 @@ spec:
           startupProbe:
             httpGet:
               path: /health
-              port: http
+              port: {{ .Values.service.portName | default "http" }}
             periodSeconds: 5
             failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /health
-              port: http
+              port: {{ .Values.service.portName | default "http" }}
             initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /health
-              port: http
+              port: {{ .Values.service.portName | default "http" }}
             initialDelaySeconds: 10
             periodSeconds: 10
           resources:

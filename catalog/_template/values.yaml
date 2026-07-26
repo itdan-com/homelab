@@ -28,6 +28,15 @@ image:
 
 replicaCount: 1
 
+# Optional container knobs — each renders ONLY when set (with-guarded
+# in templates/deployment.yaml), so leaving them out changes nothing.
+# These are the most common reasons charts forked the skeleton
+# (issue #5) — use them before forking deployment.yaml:
+# command: []   # entrypoint override (rare; images usually ship the right one)
+# args: []      # flags, for images configured on the command line (echo's -text)
+# env: []       # plain non-secret environment (k8s EnvVar list form)
+# envFrom: []   # bulk env from configMapRef/secretRef — the SOPS-Secret hook
+
 # Resource requests/limits — REQUIRED by this catalog.
 # k3d nodes over-report resources (each node container sees the whole
 # WSL2 VM), so the scheduler will happily over-commit if charts lie.
