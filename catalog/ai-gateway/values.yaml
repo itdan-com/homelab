@@ -77,7 +77,10 @@ autoscaling:
   # "off" | "hpa" | "keda" — quoted deliberately: bare `off` is YAML-1.1
   # boolean false. keda = the Phase 3 end state (token-rate scaling).
   mode: "keda"
-  minReplicas: 1
+  # 2 = one warm spare. The data plane cold-starts when a burst arrives
+  # with only a single replica up; the spare absorbs the first requests
+  # while KEDA scales toward the ceiling.
+  minReplicas: 2
   # Hard ceiling for the WSL2 budget.
   maxReplicas: 3
   hpa:
