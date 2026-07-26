@@ -84,4 +84,10 @@ Decisions and their whys live in [`docs/adr/`](docs/adr/).
 
 ## License
 
-TBD (landing with the 4.5 release).
+**AGPL-3.0-or-later** — Copyright (C) 2026 Bob Slosing. Use it, run it,
+learn from it freely; if you modify it and offer it as a product or
+service, your modifications must be published under the same license.
+The copyright is held solely by the author, which keeps dual licensing
+open: commercial exceptions to AGPL's sharing requirement are available
+by arrangement. Outside contributions require a CLA (see
+[CONTRIBUTING.md](CONTRIBUTING.md)) so that property is preserved.

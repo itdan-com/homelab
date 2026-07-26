@@ -15,6 +15,8 @@ does not type git.
 | Portainer | `https://localhost:9443` | From Windows browser. Self-signed cert → click "Advanced → Proceed". |
 | Portainer (from Mac) | `https://<windows-LAN-ip>:9443` | Get the Windows IP via `ipconfig` in PowerShell. |
 | AI Gateway (API only) | `http://ai-gateway/v1` — in-cluster only | OpenAI-compatible LLM gateway (Envoy AI Gateway). Needs a per-consumer Bearer key; deliberately NOT reachable from a browser — OpenWebUI is the only user-facing door. |
+| **ArgoCD (GitOps UI)** | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` | user `admin`; password: `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' \| base64 -d`. Five green tiles = platform matches git. |
+| **Grafana (dashboards)** | `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → `http://localhost:3000` | user `admin`; password: `sops -d catalog/monitoring/secrets.enc.yaml`. Start with "AI Gateway — Token-Rate Autoscaling". |
 | k3d cluster API | `https://0.0.0.0:39093` | Only from inside WSL. `kubectl` already knows this. |
 
 If you forgot the Portainer admin password, the only recovery is to
