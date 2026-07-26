@@ -46,9 +46,13 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
   *(Done 2026-07-26, commit `c0a6623`: pinned v1.21.0; discovered as
   app #7 and Synced/Healthy ~3 min after push, zero commands typed;
   3/3 pods Running, 6 CRDs, 6/6 labels live-verified.)*
-- [ ] **A2. Lab CA** — bootstrap self-signed `Issuer` → long-lived CA
+- [x] **A2. Lab CA** — bootstrap self-signed `Issuer` → long-lived CA
   `Certificate` (`lab-local-ca`) → `ClusterIssuer` signing leaf certs
   for `*.lab.local`. Rotation basics recorded in the cheatsheet.
+  *(Done 2026-07-26, commit `582a363`: CA `CN=homelab lab.local CA`
+  valid to 2036, ECDSA P-256, key pinned `rotationPolicy: Never`;
+  cross-namespace smoke leaf issued in seconds, `openssl verify` OK,
+  test residue deleted; cheatsheet gained "TLS: the lab CA".)*
 - [ ] **A3. HTTPS path to the browser** — expose the cluster's 443 at
   the host (prefer `k3d cluster edit --port-add`; fallback: documented
   recreate via `k3d/devlab-cluster.yaml`), issue OpenWebUI's cert,
@@ -139,6 +143,13 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-26 (A2): the CA chain self-converges with no ordering
+  machinery — ClusterIssuer applied before its Secret existed, went
+  Ready ~90 s later when the CA Certificate issued (cert-manager
+  watches; no sync waves needed, consistent with the contract's
+  no-ordering rule). Leaf default confirmed 90 d / renew ~30 d early.
+  `rotationPolicy: Never` pinned on the CA (upstream default became
+  Always in v1.18 — a rotating trust anchor would strand clients).
 - 2026-07-26 (A1): upstream cert-manager chart defaults `crds.enabled:
   false` — the flip to `true` is load-bearing, and `crds.keep: true`
   is the safety net (app deletion can't cascade-delete Certificates).
