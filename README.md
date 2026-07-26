@@ -82,6 +82,31 @@ Two paths explain the whole system:
 - **A change:** operator Claude opens a PR → a human merges (the only
   write path to `main`) → ArgoCD pulls and the cluster converges.
 
+### The doors — every UI and how to open it
+
+Two access styles today: services meant for end users get a
+`*.lab.local` hostname through Traefik; operator consoles are reached
+with `kubectl port-forward` — a temporary private tunnel from your
+terminal into the cluster that lives until you Ctrl-C it. Phase 5
+(TLS + SSO) promotes the consoles to proper `https://*.lab.local`
+doors.
+
+| Service | What it's for | Open it |
+|---|---|---|
+| **OpenWebUI** | The chat UI | `http://openwebui.lab.local:8080` (hosts file: `127.0.0.1 openwebui.lab.local`) |
+| **Argo CD** | The GitOps board — platform vs. git, every sync and diff | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` |
+| **Grafana** | Dashboards — cluster health, token-rate autoscaling | `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → `http://localhost:3000` |
+| **Prometheus** | Raw metrics + PromQL console | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090` → `http://localhost:9090` |
+| **Alertmanager** | Alert routing (chat channels in Phase 7) | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093` → `http://localhost:9093` |
+| **Portainer** | Docker/Kubernetes visual manager | `https://localhost:9443` |
+| **echo** | Template-born demo service | `http://echo.lab.local:8080` (hosts entry likewise) |
+| **AI gateway** | OpenAI-compatible LLM API | Not a browser door — in-cluster only, `http://ai-gateway/v1` + consumer key |
+
+Usernames and where each password actually comes from:
+[SETUP.md § Part 2](SETUP.md#part-2--every-web-interface-and-where-its-password-lives).
+Day-2 health checks and recovery:
+[the operator cheatsheet](docs/operator-cheatsheet.md).
+
 ## Seen, not told
 
 ![One take: the ArgoCD board shows five apps; the operator is asked in plain English for a new service; PR #4 appears on GitHub; a human merges it; the board shows six — echo is live](docs/assets/pipeline-claude-github-argo.gif)
