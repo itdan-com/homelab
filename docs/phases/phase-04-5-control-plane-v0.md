@@ -93,8 +93,24 @@ beyond PR-authoring waits for Sentinel (Phase 5.5 → 6).
       (Phase-3 k6 demo), not a *floor* drop during quiet. Pre-merge,
       the owner negative-tested the gate on this very PR (charter /
       422 / 405 — see the 2026-07-26 Notes entry and issue #3).
-- [ ] **Onboard:** a trivial new catalog service lands end-to-end by
+- [x] **Onboard:** a trivial new catalog service lands end-to-end by
       PR (template chart → PR → merge → ArgoCD discovers it).
+      DONE 2026-07-26 — **PR #4**: `catalog/echo/`
+      (hashicorp/http-echo:1.0.0, "hello from the platform", new
+      `sandbox` namespace, 9 new files, nothing existing touched).
+      Operator raised the bar again: pulled the image config from the
+      registry (entrypoint, port 5678, ships as uid 65532 → chart
+      overrides the skeleton's generic 1000), test-ran the container
+      locally under the chart's exact hardening (read-only root,
+      cap-drop ALL) before proposing, diffed every template
+      byte-for-byte against `_template/`, and flagged its one
+      deviation (a `{{- with }}`-guarded `args:` block) at the bottom
+      of the PR body instead of burying it. Promotion of that block
+      into `_template/` = architecture work → operator offered an
+      issue (link it here once filed). Builder e2e verify: 6th app
+      Synced/Healthy; contract query
+      `kubectl get deploy -A -l catalog.homelab/tier=sandbox` finds
+      it; `curl -H 'Host: echo.lab.local'` → HTTP 200, right body.
 - [ ] Record the demo GIF — this is the open-source pitch asset.
 
 ## Open questions to resolve at the start
