@@ -64,6 +64,12 @@ The script builds the cluster, plants ArgoCD, and stops — everything
 else self-assembles from the catalog. `kubectl get applications -n
 argocd -w` to watch it converge.
 
+**[SETUP.md](SETUP.md) is the full walkthrough** — the exact GitHub
+clicks (App, deploy key, ruleset — including the two form traps
+everyone hits), how to regenerate every secret with your own keys, and
+a table of **every web interface with its username and where the
+password actually comes from**.
+
 ## The security model (why this exists)
 
 Most agent deployments hand the model long-lived credentials and hope.
