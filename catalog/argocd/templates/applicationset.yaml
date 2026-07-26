@@ -3,10 +3,13 @@
 # every chart that ships that file becomes an Application. No file, no
 # deploy — which is also how _template stays excluded by construction.
 #
-# argo.yaml schema (per chart):
+# argo.yaml schema (per chart, all fields REQUIRED — explicit-default
+# over implicit, per the catalog contract):
 #   name: <application/release name — MUST equal the existing helm
 #          release name so adopted resource names line up>
 #   namespace: <destination namespace>
+#   secrets: "true" | "false" — whether the chart ships secrets.enc.yaml
+#          (adds the secrets:// value file via templatePatch below)
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -35,9 +38,6 @@ spec:
           releaseName: '{{`{{ .name }}`}}'
           valueFiles:
             - values.yaml
-            - secrets.enc.yaml
-          # Charts without a secrets file just skip it.
-          ignoreMissingValueFiles: true
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{`{{ .namespace }}`}}'
@@ -50,4 +50,15 @@ spec:
           # kube-prometheus-stack CRDs overflow client-side apply's
           # last-applied annotation; server-side apply avoids it.
           - ServerSideApply=true
+  # Conditional list items need the go-templated patch (per-field
+  # templating can't add array entries).
+  templatePatch: |
+    {{`{{- if eq .secrets "true" }}`}}
+    spec:
+      source:
+        helm:
+          valueFiles:
+            - values.yaml
+            - secrets://secrets.enc.yaml
+    {{`{{- end }}`}}
 {{- end }}

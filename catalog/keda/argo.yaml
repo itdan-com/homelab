@@ -3,3 +3,4 @@
 # helm release name so adopted resources line up.
 name: keda
 namespace: keda
+secrets: "false"

@@ -35,6 +35,9 @@ argo-cd:
       # Deployment selectors are immutable; letting ArgoCD rewrite it
       # would break adoption.
       application.instanceLabelKey: argocd.argoproj.io/instance
+      # Allow helm-secrets' downloader scheme in valueFiles
+      # (secrets://secrets.enc.yaml).
+      helm.valuesFileSchemes: secrets, https
     params:
       # TLS terminates elsewhere (port-forward now, Traefik+cert-manager
       # in Phase 5); plain HTTP inside the cluster.
@@ -61,6 +64,50 @@ argo-cd:
         memory: 256Mi
       limits:
         memory: 512Mi
+    # ------------------------------------------------------------------
+    # SOPS decryption (the Phase-4 bridge; Sentinel supersedes for
+    # external creds at 5.5). Tools are version-PINNED and fetched by an
+    # init container; the age private key mounts from the out-of-git
+    # bootstrap Secret `helm-secrets-age` (see bootstrap script).
+    # ------------------------------------------------------------------
+    env:
+      - name: HELM_PLUGINS
+        value: /custom-tools/helm-plugins/
+      - name: HELM_SECRETS_SOPS_PATH
+        value: /custom-tools/sops
+      - name: HELM_SECRETS_VALUES_ALLOW_SYMLINKS
+        value: "false"
+      - name: HELM_SECRETS_VALUES_ALLOW_ABSOLUTE_PATH
+        value: "false"
+      - name: HELM_SECRETS_VALUES_ALLOW_PATH_TRAVERSAL
+        value: "false"
+      - name: SOPS_AGE_KEY_FILE
+        value: /helm-secrets-private-keys/key.txt
+    volumes:
+      - name: custom-tools
+        emptyDir: {}
+      - name: helm-secrets-private-keys
+        secret:
+          secretName: helm-secrets-age
+    volumeMounts:
+      - name: custom-tools
+        mountPath: /custom-tools
+      - name: helm-secrets-private-keys
+        mountPath: /helm-secrets-private-keys
+        readOnly: true
+    initContainers:
+      - name: download-tools
+        image: alpine:3.20
+        command: [sh, -ec]
+        args:
+          - |
+            mkdir -p /custom-tools/helm-plugins/helm-secrets
+            wget -qO- https://github.com/jkroepke/helm-secrets/releases/download/v4.6.5/helm-secrets.tar.gz | tar -C /custom-tools/helm-plugins -xzf -
+            wget -qO /custom-tools/sops https://github.com/getsops/sops/releases/download/v3.13.1/sops-v3.13.1.linux.amd64
+            chmod +x /custom-tools/sops
+        volumeMounts:
+          - name: custom-tools
+            mountPath: /custom-tools
   applicationSet:
     resources:
       requests:
