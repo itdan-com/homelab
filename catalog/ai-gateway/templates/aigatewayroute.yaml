@@ -14,11 +14,17 @@ spec:
       group: gateway.networking.k8s.io
   rules:
     {{- range .Values.models }}
+    # weight/priority/modelsOwnedBy are the controller's defaults made
+    # explicit — the AI-gateway controller stamps them into live specs,
+    # and leaving them implicit puts ArgoCD in a permanent diff loop.
     - matches:
         - headers:
             - type: Exact
               name: x-ai-eg-model
               value: {{ .name | quote }}
+      modelsOwnedBy: Envoy AI Gateway
       backendRefs:
         - name: {{ include "catalog.fullname" $ }}-{{ .backend }}
+          weight: 1
+          priority: 0
     {{- end }}
