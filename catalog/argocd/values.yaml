@@ -17,8 +17,10 @@ gitops:
   repoURL: git@github.com:itdan-com/homelab.git
   revision: main
   # prune=false during adoption of pre-existing releases; flipped to true
-  # once every app shows Synced/Healthy with zero destructive diff.
-  prune: false
+  # 2026-07-25 once all five apps reached Synced/Healthy. With prune on,
+  # deleting a chart (or its argo.yaml) removes its resources — offboarding
+  # is a commit, same as onboarding.
+  prune: true
 
 argo-cd:
   # SSO comes with Authentik in Phase 5; local admin until then.
