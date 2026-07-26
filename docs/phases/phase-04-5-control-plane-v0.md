@@ -6,12 +6,13 @@ changes it ONLY by opening PRs against this repo. The owner's merge
 is the approval gate; ArgoCD applies. Start / stop / scale / onboard /
 rollback on demand — with zero non-git credentials.
 
-**Status:** **IN PROGRESS — 2026-07-26 session 2.** 4.5.1 + 4.5.2 done;
-demo loops 1 (warm spare, PR #1) and 2 (rollback, PR #2) merged +
-applied end-to-end. Approval gate negative-tested 3/3 pre-merge of
-PR #2 (see Notes); evidence issue #3 filed by the operator, answered
-by the builder, kept open as the hardening tracker.
-**Next: demo loop 3 (onboard)**, then the GIF, then phase close.
+**Status:** **CLOSED 2026-07-26.** All three demo loops merged and
+applied by PR only (PRs #1, #2, #4) — zero human git typing, zero
+operator credentials beyond the repo-scoped GitHub App. Approval gate
+negative-tested 3/3 (charter / 422 / 405). Operator issues stay open
+as scheduled trackers: **#3** (gate hardening → Phase 6/7) and **#5**
+(catalog-contract v2 → first item of the next session). Demo GIF
+(9.1 MB) leads the README. Exit criteria all met — annotated below.
 NOTE: the repo went **PUBLIC** this session (free-tier rulesets
 require it; pre-publication history sweep came back clean), and the
 "fine-grained PAT" item was superseded by a **GitHub App** — better
@@ -106,8 +107,11 @@ beyond PR-authoring waits for Sentinel (Phase 5.5 → 6).
       byte-for-byte against `_template/`, and flagged its one
       deviation (a `{{- with }}`-guarded `args:` block) at the bottom
       of the PR body instead of burying it. Promotion of that block
-      into `_template/` = architecture work → operator offered an
-      issue (link it here once filed). Builder e2e verify: 6th app
+      into `_template/` = architecture work → **issue #5**, which
+      grew into a full catalog-drift survey (every real chart forks
+      deployment.yaml; the Phase-3 portName backport never
+      propagated) — accepted as **catalog-contract v2**, scheduled
+      first thing next session, before Phase 5's first chart. Builder e2e verify: 6th app
       Synced/Healthy; contract query
       `kubectl get deploy -A -l catalog.homelab/tier=sandbox` finds
       it; `curl -H 'Host: echo.lab.local'` → HTTP 200, right body.
@@ -125,18 +129,24 @@ beyond PR-authoring waits for Sentinel (Phase 5.5 → 6).
 
 ## Open questions to resolve at the start
 
-- Does ArgoCD auto-sync on merge fast enough for a live demo, or
-  pin a sync-wave/refresh call into the flow?
-- PR body template: include rendered-manifest diff (`helm template`
-  before/after) or keep values-diff only? Owner readability decides.
+- ~~Does ArgoCD auto-sync on merge fast enough for a live demo?~~
+  **Resolved by the loops:** merge→cluster measured at ~29 s (loop 2)
+  and ~1 min (loop 3). No pinned refresh needed.
+- ~~PR body template: rendered-manifest diff or values-diff only?~~
+  **Resolved by PR #1:** plain-English body + values-diff is the
+  reference standard; rendered-manifest diff only where the change
+  warrants it (issue #5's backport PRs will use it as proof).
 
 ## Phase exit criteria
 
-- All three demo loops merged + applied with zero human git typing
-  and zero operator credentials beyond the PR-scoped PAT.
-- A refused direct write (RBAC denial) captured as evidence.
-- Demo GIF recorded and linked from the README.
-- `STATUS.md` updated.
+- [x] All three demo loops merged + applied with zero human git
+      typing and zero operator credentials beyond the PR-scoped
+      ~~PAT~~ GitHub App (its successor). *(PRs #1, #2, #4.)*
+- [x] A refused direct write (RBAC denial) captured as evidence.
+      *(4.5.1 capture, plus the 3-layer approval-gate test.)*
+- [x] Demo GIF recorded and linked from the README.
+      *(`docs/assets/pipeline-claude-github-argo.gif`, README lead.)*
+- [x] `STATUS.md` updated. *(2026-07-26 close.)*
 
 ## Notes captured during execution
 
