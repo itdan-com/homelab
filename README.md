@@ -36,6 +36,14 @@ because a novel trust model deserves battle-tested plumbing.
 
 ## Seen, not told
 
+![One take: the ArgoCD board shows five apps; the operator is asked in plain English for a new service; PR #4 appears on GitHub; a human merges it; the board shows six — echo is live](docs/assets/pipeline-claude-github-argo.gif)
+
+*The whole loop, one take (~85 s, build fast-forwarded): ask the
+operator for a service in plain English → it inspects the image,
+births a chart from the template, opens a PR → the human merges (the
+only write path to `main`) → ArgoCD discovers the chart and the board
+goes from five apps to six. No human typed git or kubectl.*
+
 ![The scale event: token rate crosses the threshold, the data plane climbs to its ceiling, then collapses back](docs/assets/scale-event.png)
 
 *A k6 burst pushes output tokens/sec over the 30/replica threshold (red

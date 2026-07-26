@@ -111,7 +111,17 @@ beyond PR-authoring waits for Sentinel (Phase 5.5 → 6).
       Synced/Healthy; contract query
       `kubectl get deploy -A -l catalog.homelab/tier=sandbox` finds
       it; `curl -H 'Host: echo.lab.local'` → HTTP 200, right body.
-- [ ] Record the demo GIF — this is the open-source pitch asset.
+- [x] Record the demo GIF — this is the open-source pitch asset.
+      DONE 2026-07-26 — owner recorded loop 3 live (ScreenToGif; 7000
+      raw frames self-edited to ~364 with delay pacing), builder
+      shrank 82 MB @2656px → **9.1 MB @1100px** (ffmpeg two-pass
+      palette, dither off — dither noise wrecks LZW on screencasts —
+      plus alternate-frame thinning of the 0.2 s fast-forward band
+      with merged delays, then gifsicle -O3 lossy). Three beats
+      verified frame-by-frame: five-app board + plain-English ask →
+      PR #4 Merged badge → six-app board with echo Healthy. Lives at
+      `docs/assets/pipeline-claude-github-argo.gif`, leads the
+      README's "Seen, not told".
 
 ## Open questions to resolve at the start
 
