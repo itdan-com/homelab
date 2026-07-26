@@ -1,0 +1,66 @@
+nameOverride: ""
+fullnameOverride: ""
+
+catalog:
+  tier: dev
+  # dataClass internal (not none): the chart ships no SOPS values, but
+  # the controller mints and stores private-key Secrets in-cluster —
+  # including the lab CA's key (A2). It handles key material even
+  # though none is committed here.
+  dataClass: internal
+
+# ---------------------------------------------------------------------------
+# UMBRELLA-CHART LABEL EXCEPTION: resources rendered by the dependency
+# below can't use our _helpers.tpl include, so the six catalog labels are
+# duplicated statically into global.commonLabels (best-effort). Templates
+# WE add to this chart (the A2 lab-CA issuers) use the full helper as
+# normal. Keep the two blocks in sync when tier/dataClass change.
+# ---------------------------------------------------------------------------
+cert-manager:
+  global:
+    commonLabels:
+      catalog.homelab/needs-sso: "false"
+      catalog.homelab/llm-traffic: "false"
+      catalog.homelab/wants-vector: "false"
+      catalog.homelab/exposes-mcp: "false"
+      catalog.homelab/tier: "dev"
+      catalog.homelab/data-class: "internal"
+
+  crds:
+    # The chart installs its own CRDs (Certificate, Issuer,
+    # ClusterIssuer, …). ArgoCD's global ServerSideApply=true absorbs
+    # their size.
+    enabled: true
+    # keep: CRDs survive an uninstall/prune, so deleting the app can
+    # never cascade-delete every Certificate (and its Secret) in the
+    # cluster in one motion.
+    keep: true
+
+  # One-shot post-install Job that polls the webhook until ready.
+  # Useful for `helm install --wait`, noise under ArgoCD (hook Jobs
+  # re-run every sync); ArgoCD's own health checks cover readiness.
+  startupapicheck:
+    enabled: false
+
+  # Explicit resources on all three components (WSL2 budget rule).
+  # controller
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  webhook:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
+  cainjector:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi

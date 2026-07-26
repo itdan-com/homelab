@@ -1,0 +1,25 @@
+apiVersion: v2
+name: cert-manager
+description: >-
+  cert-manager wrapped for the catalog: the in-cluster certificate
+  robot behind Phase 5's TLS story. Watches Certificate/Issuer CRs and
+  mints + renews TLS secrets — first for the private lab CA signing
+  `*.lab.local` (A2), later swappable to Let's Encrypt on a public
+  cluster (Phase 8) with only an issuer change. Umbrella chart —
+  pinned upstream dependency, catalog labels via global.commonLabels
+  where upstream supports them.
+type: application
+version: 0.1.0
+appVersion: "v1.21.0"
+
+dependencies:
+  - name: cert-manager
+    # Pinned — bump deliberately, record in phase Notes.
+    version: v1.21.0
+    repository: https://charts.jetstack.io
+
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

@@ -1,0 +1,16 @@
+{{ .Chart.Name }} deployed as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Wrapped dependency: cert-manager {{ (index .Chart.Dependencies 0).Version }}
+(controller + webhook + cainjector; startupapicheck disabled for GitOps).
+
+This chart carries the lab CA (Phase 5 A2): self-signed bootstrap
+Issuer -> CA Certificate -> ClusterIssuer `lab-local-ca` signing leaf
+certs for *.lab.local. Charts request TLS by referencing that
+ClusterIssuer — no per-chart CA wiring.
+
+Install/upgrade (from this directory; charts/ via `helm dependency build`):
+  helm upgrade --install {{ .Release.Name }} . -n {{ .Release.Namespace }} --create-namespace -f values.yaml
+
+Inspect certificates:
+  kubectl get clusterissuers,certificates,certificaterequests -A
+  kubectl describe certificate <name> -n <ns>   # renewal + conditions
