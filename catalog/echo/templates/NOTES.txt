@@ -1,0 +1,26 @@
+{{ include "catalog.fullname" . }} installed in namespace "{{ .Release.Namespace }}".
+
+Catalog labels for this release:
+  needs-sso:    {{ index .Chart.Annotations "catalog.homelab/needs-sso" }}
+  llm-traffic:  {{ index .Chart.Annotations "catalog.homelab/llm-traffic" }}
+  wants-vector: {{ index .Chart.Annotations "catalog.homelab/wants-vector" }}
+  exposes-mcp:  {{ index .Chart.Annotations "catalog.homelab/exposes-mcp" }}
+  tier:         {{ .Values.catalog.tier }}
+  data-class:   {{ .Values.catalog.dataClass }}
+
+{{- if .Values.ingress.enabled }}
+
+Reach it at:
+  http://{{ include "catalog.ingressHost" . }}
+
+(Make sure {{ include "catalog.ingressHost" . }} resolves to your
+WSL2 host IP — add an entry to your Mac's /etc/hosts if needed.)
+{{- end }}
+
+Inspect:
+  kubectl get all -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+  helm get values {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+Filter the whole platform by catalog label:
+  kubectl get deploy -A -l catalog.homelab/llm-traffic=true
+  kubectl get deploy -A -l catalog.homelab/tier=sandbox
