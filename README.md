@@ -29,11 +29,23 @@ because a novel trust model deserves battle-tested plumbing.
 - **AI-aware autoscaling** — KEDA scales the gateway on
   `gen_ai_client_token_usage` rate from Prometheus: the platform
   watches its own AI traffic and acts on it.
-  <!-- TODO: scale-event screenshot / GIF (scripts/scale-demo.sh re-creates it) -->
 - **Observability** — kube-prometheus-stack with dashboards-as-code,
   including the token-rate/replica dashboard the demo uses.
 - **GitOps** — ArgoCD with a read-only deploy key. Write access to this
   repo does not exist inside the cluster, by construction.
+
+## Seen, not told
+
+![The scale event: token rate crosses the threshold, the data plane climbs to its ceiling, then collapses back](docs/assets/scale-event.png)
+
+*A k6 burst pushes output tokens/sec over the 30/replica threshold (red
+line); KEDA walks the Envoy data plane 1→3; five minutes of quiet walks
+it back down. Re-create it anytime: `scripts/scale-demo.sh`.*
+
+![ArgoCD: five catalog applications, all Synced and Healthy](docs/assets/argocd-applications.png)
+
+*The whole platform as ArgoCD sees it — every service a chart, every
+chart discovered from git, nothing deployed any other way.*
 
 ## Quickstart
 
