@@ -1,0 +1,4 @@
+# GitOps self-declaration (see catalog/argocd ApplicationSet).
+name: openwebui
+namespace: chat
+secrets: "true"
