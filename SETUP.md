@@ -151,6 +151,38 @@ Tokens are minted on demand (1-hour TTL) by
 `ops/operator/bin/gh-app-token.sh`. Kill switch: uninstall the App
 (repo Settings → GitHub Apps).
 
+#### First flight: prove the gate
+
+When the operator opens its first PR, don't merge it yet — spend two
+minutes trying to defeat your own setup while it's cheap. From the repo
+root, become the App and attempt the two things the gate exists to
+prevent (one attempt each; **both must fail**):
+
+```bash
+source ~/.config/homelab-operator/env
+export GH_TOKEN=$(ops/operator/bin/gh-app-token.sh)   # you are now the App
+PR=<the PR number>
+
+# 1) the App approves its own PR — expect HTTP 422:
+#    "Can not approve your own pull request"
+gh api -X POST "repos/$GH_REPO/pulls/$PR/reviews" -f event=APPROVE
+
+# 2) the App merges with zero reviews — expect HTTP 405:
+#    "Repository rule violations found"
+gh api -X PUT "repos/$GH_REPO/pulls/$PR/merge" -f merge_method=merge
+
+unset GH_TOKEN                                        # back to being you
+```
+
+Read the two failures differently. The 422 is GitHub's unconditional
+author≠approver rule — nothing for you to maintain. The 405 is **your
+ruleset from 1.2 working**, and it is the only one of the two that is
+configuration: if you ever see a 200 there, the ruleset is inactive,
+mis-targeted, or the App has landed on a bypass list — stop and fix
+that before merging anything. Re-run this pair after any ruleset
+change. (Why the test is safe: worst case, a PR you were about to
+merge anyway merges — and you've learned your gate was open.)
+
 ### 1.5 Light it up
 
 ```bash
