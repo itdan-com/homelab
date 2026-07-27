@@ -29,9 +29,12 @@ kubeProxyReplacement: false
 # verdict (ALLOWED/DENIED) per connection — exactly the evidence
 # trail Phase 5.5's "MCP servers refuse non-proxy traffic" needs.
 # Relay aggregates flows across all four nodes so one CLI/API call
-# sees the whole cluster. The UI can layer on when Sentinel work
-# starts in earnest.
+# sees the whole cluster. The UI (enabled at 5.5.4, when the first
+# Sentinel NetworkPolicy landed) is the visual flow map over those
+# verdicts — kubectl -n kube-system port-forward svc/hubble-ui 12000:80.
 hubble:
   enabled: true
   relay:
+    enabled: true
+  ui:
     enabled: true

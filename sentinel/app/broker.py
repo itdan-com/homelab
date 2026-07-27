@@ -5,11 +5,16 @@ k3d docker-network gateway address (the WSL host as pods see it):
 
     uvicorn app.broker:app --host <k3d-gateway-ip> --port 8401
 
-It exposes exactly three operations — ask, poll, check — and can no
-more grant itself a capability than any other caller: granting lives
-on the admin listener, which binds loopback and is unreachable from
-the cluster by construction (CLAUDE.md: one-way trust). mTLS in front
-of this listener arrives with the Envoy ext_authz proxy work (5.5.4).
+It exposes ask, poll, check, and the ext_authz entry point — and can
+no more grant itself a capability than any other caller: granting
+lives on the admin listener, which binds loopback and is unreachable
+from the cluster by construction (CLAUDE.md: one-way trust). This
+listener serves **mTLS** (5.5.4): scripts/run-broker.sh requires a
+client certificate from Sentinel's OWN CA (scripts/mint-certs.sh) —
+holding one is the price of talking to the broker at all. The
+in-cluster enforcement point in front of MCP servers is
+catalog/sentinel-proxy: Envoy's ext_authz filter asking /v1/ext-authz
+about every request.
 """
 
 import re

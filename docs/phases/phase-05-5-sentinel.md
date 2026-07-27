@@ -51,9 +51,9 @@ Admin listener (`app/main.py`, binds 127.0.0.1 only — unreachable from pods by
 
 ### 5.5.4 Sentinel proxy
 
-- [ ] Built as **Envoy `ext_authz`** (ADR-001 — reuse the Phase 2.5 Envoy investment, don't hand-roll a proxy): an Envoy listener in front of MCP traffic whose ext_authz filter calls Sentinel `/capability-check`. Each request must carry `X-Sentinel-Token` and `X-Flow-Id` headers.
-- [ ] On every request: call `/capability-check`; forward to MCP server only if allowed.
-- [ ] NetworkPolicy in k3d: MCP server pods refuse traffic except from the Sentinel proxy's source IP/identity.
+- [x] Built as **Envoy `ext_authz`** (ADR-001): `catalog/sentinel-proxy` (app #11) — own GatewayClass + EnvoyProxy fleet (so only it holds Sentinel's client identity), Gateway-wide SecurityPolicy `extAuth`. Requests carry `X-Sentinel-Token` + `X-Flow-Id`; the TOOL is never client-declared — Envoy forwards the original path + BODY (`bodyToExtAuth`) and the broker derives `<server>.<tool>` itself (`app/scope.py`). *(2026-07-27)*
+- [x] On every request: ext_authz calls the broker's `/v1/ext-authz` (wraps the same check_capability + audit); 200 forwards, else refused at the proxy; `failOpen: false` — dead broker = closed door. **Over mTLS with Sentinel's own CA** (`scripts/mint-certs.sh`), broker listener requires client certs.
+- [x] NetworkPolicy: fronted pods allow ONLY their Traefik door + the sentinel-proxy fleet (owning-gateway label pair); bypass attempt → Hubble `Policy denied DROPPED` with named source identity. Pattern lives in `catalog/echo` (the 5.5.4 stand-in upstream; strict proxy-only policy lands with the real mock MCP at 5.5.8).
 
 ### 5.5.5 One-screen web GUI
 
@@ -101,7 +101,7 @@ These layer on after Phase 7 without architectural change.
 ## Open questions to resolve at the start
 
 - ~~Sentinel proxy placement~~ **DECIDED (ADR-001):** proxy-as-Deployment-in-cluster, implemented as Envoy with an `ext_authz` filter calling out to Sentinel's `/capability-check` on the host. NetworkPolicy is straightforward; the admin API stays untouched on the host; one-way trust preserved (the proxy holds no grant-issuing power — it only asks).
-- mTLS between Sentinel proxy and Sentinel admin: private CA generated at install time; certs rotate every 90 days.
+- ~~mTLS between Sentinel proxy and Sentinel broker~~ **DONE 5.5.4:** Sentinel mints its OWN CA at install (`scripts/mint-certs.sh` — deliberately not cert-manager: the cluster must never mint a cert the broker trusts). 90-day leaves; rotation = re-run `--rotate` + broker restart. Proxy side: EnvoyProxy `backendTLS.clientCertificateRef` (client half) + BackendTLSPolicy pinning Sentinel's CA + SNI (server half); cluster artifacts injected out-of-git (age-key pattern).
 - **Listener split (raised at 5.5.1, decide at 5.5.3):** `/capability-check` must be reachable FROM the cluster (the in-cluster Envoy proxy calls it via the host-gateway IP), while grants/GUI/kill must NOT be. The admin app binds 127.0.0.1 — unreachable from pods by construction (proven 2026-07-27: pod → host-gateway:8400 URLError while loopback answered; positive control Ollama:11434 → 200). The check endpoint therefore needs its own listener bound on the host-gateway address + mTLS — likely a second uvicorn socket or a separate minimal app sharing the DB layer.
 - Where do MCP server upstream secrets (OAuth tokens for Gmail, GitHub, etc.) actually live? **Recommendation: encrypted at rest in `/var/lib/sentinel/secrets/`, read only by Sentinel — never mounted into pods.** MCP servers get short-lived service tokens from Sentinel, not the upstream secret.
 
@@ -117,6 +117,56 @@ These layer on after Phase 7 without architectural change.
 - `STATUS.md` updated.
 
 ## Notes captured during execution
+
+- **2026-07-27 — 5.5.4 done (the enforcement point is live and it cannot
+  be lied to).** Full battery through the REAL data path (pod → alias
+  Service → Envoy fleet → mTLS ext_authz → broker → echo): no token →
+  403 `missing-token` at the proxy; request→grant(bob, 5m)→claim-once
+  poll→ **200 "hello from the platform"**; same token with a body
+  invoking a different tool → 403 `scope-mismatch`; same token, wrong
+  flow-id → 403 `scope-mismatch`; direct pod→echo bypass → Hubble
+  `Policy denied DROPPED` with the source pod NAMED; Traefik door
+  unaffected; audit shows request/grant/use/denial for the flow.
+  - **Design upgrade over the plan:** owner chose proxy-derived tool
+    identity (vs trusting a client header). Implemented BETTER than the
+    Lua sketch: EG's `bodyToExtAuth` ships the original body to the
+    broker, so derivation lives in the TRUST ANCHOR as pure, pytest-able
+    Python (`app/scope.py`) — `<server-from-path>.<params.name>` for
+    `tools/call`, `<server>.rpc.<method>` otherwise, everything else
+    denies closed. Composite scope also kills cross-server token reuse.
+    No Lua, no filter-ordering dependency.
+  - **mTLS:** Sentinel's own CA (2y) + 90-day leaves via
+    `scripts/mint-certs.sh` (idempotent, detects the gateway IP from the
+    docker network, injects `sentinel-ca` ConfigMap + `sentinel-proxy-client`
+    Secret out-of-git). Broker requires client certs (`run-broker.sh`,
+    proven: host-with-cert 200 / host-without refused / pod-without
+    refused). `sentinel-broker.internal` declared in
+    `k3d/coredns-custom.yaml` — charts reference the NAME; BackendTLSPolicy
+    pins CA + SNI to it.
+  - **Latent platform bug found & fixed (the big one):** upstream
+    ai-gateway-helm REGENERATES its webhook certs every render → each
+    catalog commit rotated the Secret while the controller-patched
+    `caBundle` went stale → the `failurePolicy: Fail` pod-mutator then
+    blocked EVERY EG-provisioned pod create (fleet rollouts AND KEDA
+    scale-ups — silently broken since the first post-rebuild commit;
+    surfaced by the sentinel fleet's first pod). Fix in
+    `catalog/argocd`: `ignoreDifferences` (cert Secret data + webhook
+    caBundle) **plus `RespectIgnoreDifferences=true`** — without the
+    latter, syncs still overwrite ignored fields. One controller restart
+    re-patched the bundle (fingerprints verified equal); the sentinel
+    fleet pod then passed the same webhook, proving the path for KEDA too.
+  - EG-CR defaults loop again (Phase 4 lesson under-applied): API server
+    stamps `group`/`kind`/`weight` — 3 pin commits; templates now
+    comment the rule. Echo consents via ReferenceGrant in its OWN chart;
+    ingress allowlist NetworkPolicy pattern (plain v1, DOKS-portable)
+    also lives there for future MCP charts to copy.
+  - **Phase-6 policy note:** MCP streamable-HTTP opens its server-push
+    channel with a bodiless GET — today that denies closed
+    (`empty-body`). Decide the SSE-channel scope story when real MCP
+    servers land (capability profiles are the likely answer). JSON-RPC
+    batches are refused by design (one call, one scope, one audit line).
+  - Hubble UI enabled (`k3d/cilium-values.yaml` + live upgrade) — the
+    visual flow map over the policy verdicts; demo-asset material.
 
 - **2026-07-27 — 5.5.3 done (broker API, two listeners).** Owner
   paused to sanity-check the endpoint count — right call: the doc's

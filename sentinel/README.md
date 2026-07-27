@@ -13,13 +13,15 @@ and `docs/phases/phase-05-5-sentinel.md`):
 - **One-way trust.** The cluster has NO path to Sentinel's admin
   surface — no kubectl route, no NetworkPolicy, no service account.
   Claude can *request* and *observe denials*; only the human *grants*.
-- **Bind discipline enforces it at layer 3.** The admin API + GUI bind
-  to `127.0.0.1` only. Cluster pods reach the WSL2 host via the
-  host-gateway IP (e.g. `172.19.80.1`), which cannot address the
-  host's loopback — so the admin surface is unreachable from any pod
-  *by construction*. The one cluster-facing endpoint
-  (`GET /capability-check`, called by the Envoy ext_authz proxy) gets
-  its own listener + mTLS when it lands (5.5.3/5.5.4).
+- **Bind discipline enforces it at layer 3, mTLS at layer 5.** The
+  admin API + GUI bind to `127.0.0.1` only. Cluster pods reach the
+  WSL2 host via gateway IPs, which cannot address the host's loopback —
+  so the admin surface is unreachable from any pod *by construction*.
+  The cluster-facing broker listener additionally requires a client
+  certificate from **Sentinel's own CA** (5.5.4; `scripts/mint-certs.sh`,
+  deliberately not cert-manager — the cluster must never be able to
+  mint a cert the broker trusts). The sentinel-proxy's Envoy fleet
+  holds the one client identity; nothing else in the cluster does.
 - **Not a catalog chart, ever.** Sentinel must survive the cluster's
   deletion — it lives here as plain code deployed by systemd (5.5.7),
   not by ArgoCD.
@@ -31,7 +33,7 @@ the security model — not a convention that can be forgotten:
 
 | App | Binds | Who reaches it | Routes |
 |---|---|---|---|
-| `app.broker` | k3d gateway IP | cluster pods (via the Sentinel proxy) | request a capability, poll for the answer, **check** a token |
+| `app.broker` | k3d gateway IP, **mTLS required** | cluster pods (via the Sentinel proxy) | request a capability, poll for the answer, **check** a token, **/v1/ext-authz** (Envoy's per-call question) |
 | `app.main` (admin) | `127.0.0.1` | the human at the console | **grant**, **deny**, **kill**/release, audit, flows |
 
 Granting has no route on the broker app. A pod cannot reach loopback
@@ -46,8 +48,16 @@ Claude ──POST /v1/capability-requests──▶ broker      (202, request_id)
 Claude ──GET  …/{id}  (poll)──────────▶ broker      (pending…)
                      human ──POST …/{id}/grant──▶ admin   (mints token)
 Claude ──GET  …/{id}  (poll)──────────▶ broker      (granted + token, ONCE)
-proxy  ──GET  /v1/capability-check─────▶ broker      (200 allow / 403 deny)
+proxy  ──POST /v1/ext-authz/<orig path>▶ broker      (200 forward / 403 refuse)
 ```
+
+The last line is Envoy's `ext_authz` callout (`catalog/sentinel-proxy`):
+the original path is appended to the prefix and the original BODY rides
+along, so the broker derives the tool being exercised itself —
+`<server>.<params.name>` for `tools/call`, `<server>.rpc.<method>`
+otherwise (`app/scope.py`). A caller cannot name one tool and invoke
+another, on any server. `GET /v1/capability-check?token&tool&flow_id`
+remains for humans and scripts.
 
 Token delivery is **claim-once**: the plaintext reaches the requester
 on its first post-grant poll and nowhere else — the human who grants
@@ -67,8 +77,12 @@ python3 -m venv .venv                        # needs the python3.12-venv apt pkg
 .venv/bin/uvicorn app.main:app --reload --port 8400
 #   → http://127.0.0.1:8400/docs
 
-# broker (cluster-facing) API, separate process:
-.venv/bin/uvicorn app.broker:app --port 8401 --host 0.0.0.0
+# once per install: mint Sentinel's CA + broker/client certs and inject
+# the cluster-side ConfigMap/Secret (rotation: re-run with --rotate):
+scripts/mint-certs.sh
+
+# broker (cluster-facing, mTLS REQUIRED), separate process:
+scripts/run-broker.sh
 ```
 
 Tests (dev deps in `requirements-dev.txt`):
@@ -88,10 +102,18 @@ and `SENTINEL_GRANT_TTL_MINUTES` (5) tune the default lifetimes.
 ```
 sentinel/
 ├── app/
-│   ├── main.py        # FastAPI app + /healthz
-│   ├── config.py      # env-driven settings (DB path/URL)
+│   ├── main.py        # ADMIN listener: grant/deny/kill/audit (loopback only)
+│   ├── broker.py      # CLUSTER listener: request/poll/check/ext-authz (mTLS)
+│   ├── service.py     # every state transition + its audit, in one place
+│   ├── scope.py       # request → capability-scope derivation (pure, tested)
+│   ├── schemas.py     # Pydantic shapes = the /docs human documentation
+│   ├── config.py      # env-driven settings (DB path/URL, TTLs)
 │   ├── db.py          # SQLAlchemy engine/session/Base
-│   └── models.py      # data model (flows, capability_grants, audit_events — 5.5.2)
+│   └── models.py      # data model (flows, grants, requests, audit, kill)
+├── scripts/
+│   ├── mint-certs.sh  # Sentinel CA + broker/client certs + cluster inject
+│   └── run-broker.sh  # boot the broker with client-cert-required TLS
+├── certs/             # minted material (gitignored; /var/lib at 5.5.7)
 ├── migrations/        # Alembic (env.py wired to app.models metadata)
 ├── alembic.ini
 ├── pyproject.toml     # project metadata + top-level deps
