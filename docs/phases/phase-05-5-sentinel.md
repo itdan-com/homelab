@@ -73,9 +73,15 @@ Admin listener (`app/main.py`, binds 127.0.0.1 only — unreachable from pods by
 
 ### 5.5.7 Systemd integration
 
-- [ ] Write `/etc/systemd/system/sentinel.service` unit file.
-- [ ] `Restart=always`, `User=bob`, logs to journald.
-- [ ] `systemctl enable --now sentinel`.
+**Scope changed by an owner directive (2026-07-27): build the cloud artifact, don't build for WSL.** systemd was chosen over a container *because* a droplet runs the same units — but only if the units contain no lab-isms. The compliance table is in ADR-004 ("The construction rule"); the CLAUDE.md working principle makes it standing.
+
+- [x] **Two units, not one** (`sentinel/deploy/*.service`). The broker is the enforcement hot path — every MCP call waits on it and fails closed — and the console is a web app that changes far more often. A console crash must not take enforcement down. *(2026-07-27)*
+- [x] **Deviation from this doc, deliberate: `User=sentinel`, not `User=bob`.** A dedicated system account is both least-privilege and the cloud shape; `bob` is a lab-ism. Code deploys to `/opt/sentinel`, state to `/var/lib/sentinel` (systemd `StateDirectory`), certs to `/etc/sentinel/certs`, config to `/etc/sentinel/sentinel.env` — root-owned, service-readable, deliberately NOT a `ConfigurationDirectory` so the trust anchor cannot rewrite its own config.
+- [x] `Restart=always`, journald, plus the hardening a public-facing daemon would get (`ProtectSystem=strict`, `NoNewPrivileges`, `RestrictAddressFamilies`, `SystemCallFilter=@system-service`, …) — because in cloud it *is* closer to public-facing.
+- [x] **One install path** — `scripts/install-systemd.sh`, idempotent, the same script cloud-init would call. The single host-specific fact (the address pods reach the broker on) is detected there and written to the env file; the units know nothing about k3d. Certs are adopted rather than re-minted so the cluster's trust survives a reinstall.
+- [x] **Refuse-to-start guard**: the console will not boot bound to a non-loopback address over plain http. A `--host 0.0.0.0` typo would otherwise put the kill switch on the network in cleartext while everything still looked healthy. Written as a lifespan handler, not the deprecated `@app.on_event` — a security check that quietly stops running when a framework drops a hook is a control with an expiry date nobody notices.
+- [ ] **Owner action — install + enroll.** `install-systemd.sh` needs root, so it is run by the owner (`sudo ./scripts/install-systemd.sh`), followed by `sudo ./scripts/enroll-operator.sh` and registering a **real** passkey at `http://localhost:8400/`. Twice, with two devices. The production database starts empty on purpose: the only credential enrolled so far is a software test authenticator that exists in no one's hands, and the canonical audit log should begin with real events.
+- [x] **Reboot policy decided: manual start, documented** (SETUP.md §1.7). Windows does not start WSL2, so nothing else starts either; the platform returns when a terminal is opened. `Restart=always` is true *within* a running WSL and is not a promise of unattended availability — saying so plainly beats implying otherwise.
 
 ### 5.5.8 End-to-end smoke test
 

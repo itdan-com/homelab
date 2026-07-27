@@ -1,0 +1,67 @@
+# Sentinel broker — the cluster-facing listener (request / poll / check
+# / ext-authz), served over mTLS with Sentinel's own CA.
+#
+# Written for a production Linux host (ADR-004 "construction rule").
+# The one host-specific value — which address the cluster reaches this
+# on — is injected as SENTINEL_BROKER_BIND by the install step, which
+# detects the k3d gateway locally and would be handed the VPC address by
+# cloud-init. Nothing in this file knows what k3d is.
+#
+# THIS is the unit that must never be down: every MCP call in the
+# cluster waits on it and fails closed if it cannot answer. It carries
+# no web console and changes rarely, which is exactly why it is
+# separate from sentinel-admin.service.
+
+[Unit]
+Description=Sentinel broker (capability issuance + per-call enforcement)
+Documentation=https://github.com/itdan-com/homelab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=sentinel
+Group=sentinel
+EnvironmentFile=/etc/sentinel/sentinel.env
+WorkingDirectory=/opt/sentinel
+# --ssl-cert-reqs 2 is ssl.CERT_REQUIRED: a peer without a certificate
+# from Sentinel's own CA cannot complete the handshake, let alone reach
+# a route. The cluster's Envoy fleet holds the only client identity.
+ExecStart=/opt/sentinel/.venv/bin/uvicorn app.broker:app \
+  --host ${SENTINEL_BROKER_BIND} --port ${SENTINEL_BROKER_PORT} \
+  --ssl-certfile ${SENTINEL_CERT_DIR}/broker.crt \
+  --ssl-keyfile ${SENTINEL_CERT_DIR}/broker.key \
+  --ssl-ca-certs ${SENTINEL_CERT_DIR}/ca.crt \
+  --ssl-cert-reqs 2
+Restart=always
+RestartSec=2
+
+# StateDirectory creates /var/lib/sentinel owned by the service user and
+# makes it the ONE writable path under ProtectSystem=strict. /etc/sentinel
+# is deliberately NOT a ConfigurationDirectory: that would hand it to the
+# service user, and a trust anchor must not be able to rewrite its own
+# config. The install script owns it as root, mode 0640 root:sentinel.
+StateDirectory=sentinel
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+[Install]
+WantedBy=multi-user.target

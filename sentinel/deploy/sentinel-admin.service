@@ -1,0 +1,65 @@
+# Sentinel admin console — the human's side (grant / deny / kill / audit).
+#
+# This unit is written for a production Linux host, not for the lab
+# (ADR-004 "construction rule"): a dedicated service user, a deployed
+# copy under /opt, state under /var/lib, and every host-specific value
+# injected from /etc/sentinel/sentinel.env by the install step. A
+# DigitalOcean droplet runs this file unchanged; WSL2 is simply one
+# Linux host that also runs it.
+#
+# SEPARATE from sentinel-broker.service on purpose. The broker is the
+# enforcement hot path: every MCP call in the cluster waits on it, and
+# it fails closed. A crash in the console — a human-facing web app that
+# changes far more often — must not take enforcement down with it.
+
+[Unit]
+Description=Sentinel admin console (capability approvals + kill switch)
+Documentation=https://github.com/itdan-com/homelab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=sentinel
+Group=sentinel
+EnvironmentFile=/etc/sentinel/sentinel.env
+WorkingDirectory=/opt/sentinel
+ExecStart=/opt/sentinel/.venv/bin/uvicorn app.main:app \
+  --host ${SENTINEL_ADMIN_BIND} --port ${SENTINEL_ADMIN_PORT}
+Restart=always
+RestartSec=2
+
+# State lives in /var/lib/sentinel; systemd creates it with the right
+# ownership, so no install-time chown can drift.
+# StateDirectory creates /var/lib/sentinel owned by the service user and
+# makes it the ONE writable path under ProtectSystem=strict. /etc/sentinel
+# is deliberately NOT a ConfigurationDirectory: that would hand it to the
+# service user, and a trust anchor must not be able to rewrite its own
+# config. The install script owns it as root, mode 0640 root:sentinel.
+StateDirectory=sentinel
+StateDirectoryMode=0700
+
+# Hardening. This service holds the kill switch and the audit log, so it
+# gets the same treatment we would give an internet-facing daemon —
+# because in cloud (ADR-004) that is closer to what it is.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+[Install]
+WantedBy=multi-user.target

@@ -71,6 +71,37 @@ The 5.5.4/5.5.5 work is, by luck and by rule, already cloud-shaped:
   allowlist, Origin check, CSRF header, strict CSP. In cloud these stop
   being belt-and-braces and become the actual perimeter.
 
+## The construction rule (owner directive, 2026-07-27)
+
+Deciding *where* Sentinel runs in cloud is worth little if the thing we
+install locally has to be rebuilt to get there. The owner's directive
+when choosing systemd for 5.5.7:
+
+> "Windows is NOT its end state so we should ALWAYS be doing things for
+> production in the cloud, otherwise we will be re-creating processes in
+> phase 8 not just building out a small terraform change."
+
+**systemd is not a local-only choice** — a droplet runs Ubuntu and the
+same units. What *would* make Phase 8 a rewrite is baking the lab into
+them. So the artifact is written for the cloud VM and the lab is one
+host that runs it. Concretely, an installed-outside-the-cluster artifact
+is compliant only if:
+
+| Rule | Wrong (lab-shaped) | Right (cloud-shaped) |
+|---|---|---|
+| Runs as its own service user | `User=bob` | `User=sentinel`, a system account |
+| Lives outside anyone's home | `/home/bob/homelab/sentinel` | `/opt/sentinel` (deployed, not run from a git checkout) |
+| Data under FHS | `./sentinel-dev.db` | `/var/lib/sentinel/` |
+| Config is injected, not discovered at runtime | unit runs `docker network inspect` | install step detects, writes `/etc/sentinel/sentinel.env`; the unit only reads it |
+| One install path | "on WSL do X, in cloud do Y" | one idempotent script; cloud-init calls the same one |
+| Secrets outside the repo | `sentinel/certs/` | `/etc/sentinel/certs/`, mode 0700 |
+
+**The test to apply before any such item is called done:** *would Phase 8
+point Terraform at this, or re-create it?* If the latter, it was built
+wrong. Deferring the container image is fine — two artifacts to keep in
+sync is real cost and the bugs are not worked out yet — but the systemd
+artifact must already be the production one.
+
 ## What is local-only and must be named (ADR-002 rule)
 
 | Artifact | Local form | Cloud form |

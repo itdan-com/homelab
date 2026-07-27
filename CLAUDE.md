@@ -340,6 +340,18 @@ documented choice. See `docs/adr/ADR-002-cloud-parity-contract.md`.)*
   backlogged. Updating the platform must reduce to `git pull` +
   ArgoCD sync; a one-command idempotent bootstrap script is a
   Phase 4 deliverable.
+- **Build the cloud artifact first; the lab is one place it runs (owner
+  input 2026-07-27).** Windows/WSL2 is the current host, not the end
+  state. Anything installed outside the cluster — services, units,
+  install scripts, paths, users — is written as the **production
+  artifact for a cloud VM**, and the lab is simply one Linux host that
+  runs it. Host-specific values (a k3d gateway IP, a home directory, a
+  developer's username) are *detected by an install step and written to
+  config*; they never appear inside the artifact. The test: if Phase 8
+  would have to re-create a process rather than point Terraform at it,
+  the artifact was built wrong. This is the anti-drift rule behind
+  ADR-002's cloud-parity contract — ADR-004 applies it to Sentinel and
+  lists what a compliant artifact looks like.
 - **No agent action without a paper trail.** Every control-plane Claude
   action must (a) produce a git commit, (b) post to Slack for approval
   unless explicitly pre-authorized for the namespace, and (c) log to

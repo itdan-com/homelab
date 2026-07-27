@@ -33,6 +33,8 @@ Relying Party ID must be a domain, so `localhost` works and
 `127.0.0.1` does not.
 """
 
+import os
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -46,7 +48,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from . import __version__
 from . import auth_routes
 from .actor import console_guard, current_operator, require_operator
-from .config import CONSOLE_ALLOWED_HOSTS, FLOW_ACTIVE_MINUTES
+from .config import CONSOLE_ALLOWED_HOSTS, CONSOLE_ORIGIN, FLOW_ACTIVE_MINUTES
 from .db import SessionLocal, engine
 from .models import (
     AuditEvent,
@@ -86,7 +88,42 @@ CSP = (
     "form-action 'none'; frame-ancestors 'none'"
 )
 
+def _refuse_unsafe_exposure() -> None:
+    """Refuse to start exposed without TLS.
+
+    A `--host 0.0.0.0` typo in a unit file would put the kill switch on
+    the network in cleartext, and nothing else in the system would
+    notice: the app would look healthy, the console would work, and the
+    session cookie would cross the wire in the clear. WebAuthn does not
+    save us — it needs a secure context, so the passkey would simply
+    stop working while the surface stayed open.
+
+    So the process refuses. In cloud (ADR-004) the console IS
+    network-reachable; the rule is not "loopback forever", it is "not
+    exposed without https".
+    """
+    bind = os.environ.get("SENTINEL_ADMIN_BIND", "127.0.0.1")
+    loopback = bind in {"127.0.0.1", "::1", "localhost"} or bind.startswith("127.")
+    if not loopback and not CONSOLE_ORIGIN.startswith("https://"):
+        raise RuntimeError(
+            f"refusing to start: admin console bound to {bind} (not loopback) "
+            f"while SENTINEL_CONSOLE_ORIGIN is {CONSOLE_ORIGIN!r}. Serve it "
+            "over https and set that origin, or bind loopback."
+        )
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Startup checks. Deliberately a lifespan handler and not the older
+    @app.on_event: that API is deprecated, and a guard that quietly
+    stops running when a framework drops a hook is a security control
+    with an expiry date nobody notices."""
+    _refuse_unsafe_exposure()
+    yield
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Sentinel Admin (loopback-only)",
     version=__version__,
     description="The human's side of the broker: see what's asking, "

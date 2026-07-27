@@ -118,3 +118,42 @@ def test_console_guards():
 if __name__ == "__main__":
     test_console_guards()
     print("ok")
+
+
+def test_refuses_to_start_exposed_without_tls():
+    """A `--host 0.0.0.0` typo in a unit file would put the kill switch
+    on the network in cleartext, and everything would still look
+    healthy. Nothing else in the system catches that, so the process
+    refuses to start. The rule is not 'loopback forever' — in cloud the
+    console IS reachable — it is 'not exposed without https'."""
+    import importlib
+    import os
+
+    import app.main
+
+    def boots(bind, origin):
+        os.environ["SENTINEL_ADMIN_BIND"] = bind
+        os.environ["SENTINEL_CONSOLE_ORIGIN"] = origin
+        importlib.reload(app.config)
+        mod = importlib.reload(app.main)
+        try:
+            with TestClient(mod.app):
+                return True
+        except RuntimeError:
+            return False
+
+    import app.config
+    original = (os.environ.get("SENTINEL_ADMIN_BIND"),
+                os.environ.get("SENTINEL_CONSOLE_ORIGIN"))
+    try:
+        assert boots("127.0.0.1", "http://localhost:8400") is True, \
+            "loopback over http is the normal local install"
+        assert boots("0.0.0.0", "http://localhost:8400") is False, \
+            "exposed over http refuses to start"
+        assert boots("10.1.2.3", "https://sentinel.example.com") is True, \
+            "exposed over https is the cloud install and is allowed"
+    finally:
+        for k, v in zip(("SENTINEL_ADMIN_BIND", "SENTINEL_CONSOLE_ORIGIN"), original):
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        importlib.reload(app.config)
+        importlib.reload(app.main)

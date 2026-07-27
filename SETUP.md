@@ -202,6 +202,59 @@ The operator's read-only kubeconfig is minted automatically by
 and re-minted on every run, because k3d assigns the API server a
 random host port per cluster create. Nothing manual to do.
 
+### 1.6 Sentinel — the capability broker (installs OUTSIDE the cluster)
+
+Sentinel holds the kill switch, so it deliberately does not live in the
+cluster it polices (`docs/adr/ADR-004-*`). It installs as two systemd
+services on the host. Prerequisite on Ubuntu: `sudo apt install
+python3.12-venv`.
+
+```bash
+cd sentinel
+./scripts/mint-certs.sh                     # Sentinel's own CA + mTLS certs
+sudo ./scripts/install-systemd.sh           # deploy to /opt, enable both units
+sudo ./scripts/enroll-operator.sh           # prints a single-use enrollment code
+```
+
+Then open **`http://localhost:8400/`** — `localhost`, not `127.0.0.1`,
+because WebAuthn's Relying Party ID must be a domain — paste the code,
+and register with Windows Hello, Touch ID, or a security key.
+
+**Do that twice, with two different devices.** A second passkey is the
+entire recovery plan: there is no account-recovery backdoor, because a
+backdoor is a second front door to the kill switch.
+
+Re-run `sudo ./scripts/install-systemd.sh` after a `git pull` — that is
+the deploy step, and it is deliberate rather than a git checkout being
+hot-swapped underneath a running service. The same script is what
+cloud-init runs on a droplet; nothing in it is specific to this
+machine except the broker address, which it detects and writes to
+`/etc/sentinel/sentinel.env`.
+
+### 1.7 After a reboot: the platform is manually started
+
+**Known and accepted** (owner decision, 2026-07-27). Windows does not
+start WSL2 on its own, and everything else waits on it: no WSL means no
+Docker, which means no cluster and no Sentinel. Every container carries
+a restart policy and both Sentinel units are `Restart=always`, so the
+whole platform comes back **once WSL is running** — but something has to
+run it.
+
+So after a Windows reboot, open a WSL terminal (or RDP in and open one).
+That is the start command. Check it came back with:
+
+```bash
+docker ps                                   # k3d nodes + portainer
+systemctl status sentinel-broker sentinel-admin
+kubectl get applications -n argocd
+```
+
+If you later want it unattended, a Windows Task Scheduler entry at boot
+running `wsl.exe -d Ubuntu -e true` is enough to trigger the chain. It
+is deliberately not done today: an always-on lab is a different
+commitment, and `Restart=always` should not be read as a promise the
+platform cannot keep.
+
 ---
 
 ## Part 2 — every web interface, and where its password lives

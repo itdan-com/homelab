@@ -14,38 +14,62 @@
 # recovery backdoor, because a backdoor is a second front door to the
 # kill switch.
 #
-#   ./scripts/enroll-operator.sh                 # first operator, default label
+# Works against whichever Sentinel is installed:
+#   * a systemd install  (/etc/sentinel/sentinel.env present) — needs sudo
+#   * a dev checkout     (falls back to the repo venv + dev database)
+#
+#   ./scripts/enroll-operator.sh                 # default user, default label
 #   ./scripts/enroll-operator.sh bob "yubikey"   # explicit user + label
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-USERNAME="${1:-${SENTINEL_OPERATOR:-$(id -un)}}"
-LABEL="${2:-$(hostname) $(date +%Y-%m-%d 2>/dev/null || echo device)}"
-PORT="${SENTINEL_ADMIN_PORT:-8400}"
-RP_ID="${SENTINEL_RP_ID:-localhost}"
+ETC_ENV="${SENTINEL_ETC_DIR:-/etc/sentinel}/sentinel.env"
+SVC_USER="${SENTINEL_USER:-sentinel}"
 
-CODE=$(.venv/bin/python - "$USERNAME" "$LABEL" <<'PY'
+if [[ -r "$ETC_ENV" ]]; then
+  # shellcheck disable=SC1090
+  source "$ETC_ENV"
+  APP_DIR="${SENTINEL_APP_DIR:-/opt/sentinel}"
+  PY="$APP_DIR/.venv/bin/python"
+  MODE="systemd install"
+  RUN=(runuser -u "$SVC_USER" -- env "SENTINEL_DB=$SENTINEL_DB" "$PY")
+  [[ $EUID -eq 0 ]] || RUN=(sudo "${RUN[@]}")
+else
+  APP_DIR="$PWD"
+  PY="$PWD/.venv/bin/python"
+  MODE="dev checkout"
+  RUN=(env "SENTINEL_DB=${SENTINEL_DB:-$PWD/sentinel-dev.db}" "$PY")
+  SENTINEL_RP_ID="${SENTINEL_RP_ID:-localhost}"
+  SENTINEL_ADMIN_PORT="${SENTINEL_ADMIN_PORT:-8400}"
+fi
+
+USERNAME="${1:-${SENTINEL_OPERATOR:-$(logname 2>/dev/null || id -un)}}"
+LABEL="${2:-$(hostname) $(date +%Y-%m-%d 2>/dev/null || echo device)}"
+
+CODE=$("${RUN[@]}" - "$APP_DIR" "$USERNAME" "$LABEL" <<'PY'
 import sys
+sys.path.insert(0, sys.argv[1])
 from app.auth import mint_enrollment_code
 from app.db import SessionLocal
 
 with SessionLocal() as s:
-    print(mint_enrollment_code(s, sys.argv[1], sys.argv[2]))
+    print(mint_enrollment_code(s, sys.argv[2], sys.argv[3]))
 PY
 )
 
 cat <<EOF
 
-  Enrollment code for '$USERNAME' ($LABEL):
+  ($MODE)  Enrollment code for '$USERNAME' ($LABEL):
 
       $CODE
 
-  1. Open  http://$RP_ID:$PORT/   in a browser ON THIS HOST.
+  1. Open  http://${SENTINEL_RP_ID}:${SENTINEL_ADMIN_PORT}/  in a browser ON THIS HOST.
      (The hostname matters: WebAuthn's Relying Party ID must be a
       domain, so 'localhost' works and '127.0.0.1' does not.)
   2. Paste the code, then approve with Windows Hello / Touch ID / your
      security key.
 
-  The code is single-use and expires in ${SENTINEL_ENROLLMENT_TTL_MINUTES:-10} minutes.
+  Single-use, expires in ${SENTINEL_ENROLLMENT_TTL_MINUTES:-10} minutes.
+  Run this again with a SECOND device — that is the whole recovery plan.
 
 EOF
