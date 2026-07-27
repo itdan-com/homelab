@@ -212,10 +212,14 @@ could be given an SSO account and use the platform end-to-end.
 This is the security backbone that must exist before the control-plane
 Claude has **any external capability beyond opening PRs** (ADR-001
 amendment: the PR-only v0 of Phase 4.5 may precede it; everything
-else — Slack, MCP, SaaS, direct cluster writes — may not). It is
-immediately preceded by the planned cluster rebuild: **Cilium** CNI
-(Flannel does not enforce NetworkPolicy, which Sentinel requires),
-per-node CPU caps, and `k3d/coredns-custom.yaml` reapplied.
+else — Slack, MCP, SaaS, direct cluster writes — may not). Its entry
+criterion — the cluster rebuild to **Cilium** CNI — was DONE
+2026-07-27 (ADR-003): Cilium with kube-proxy retained, chosen for
+per-flow policy-verdict auditability (Hubble), L7/identity policy
+headroom, and DOKS parity — k3s's embedded controller already
+enforced basic v1 NetworkPolicy, so enforcement alone was never the
+whole story. The rebuild doubled as the disaster-recovery proof:
+`bootstrap.sh` reassembles the entire platform from git, hands-free.
 Sentinel lives in a
 *separate trust domain*: a small Python or Node service running as a
 **systemd unit on the WSL2 host directly** — not inside k3d. The

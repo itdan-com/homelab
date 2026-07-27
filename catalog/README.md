@@ -89,6 +89,23 @@ git add catalog/my-service && git commit -m "catalog: add my-service"
 
 Phase 4 onward: just the `git commit`. ArgoCD does the install.
 
+### Umbrella charts: how dependencies travel
+
+Charts that wrap an upstream project (cert-manager, monitoring,
+authentik, envoy-gateway, envoy-ai-gateway) declare it under
+`dependencies:` in `Chart.yaml`. Convention, learned the hard way at
+the 2026-07-27 DR rebuild:
+
+- **`Chart.lock` IS committed** — it pins the exact resolved version
+  and repo (HTTPS or OCI).
+- **`charts/*.tgz` is NOT committed** (root `.gitignore` has
+  `charts/`): ArgoCD's repo-server rebuilds dependencies from
+  `Chart.lock` at render time, so vendoring tarballs just bloats git.
+- Locally, run `helm dependency build catalog/<name>` before
+  `helm template`/`helm lint` — a fresh clone has empty `charts/`
+  directories. `bootstrap.sh` does this itself for the charts it
+  renders pre-GitOps (argocd, cert-manager).
+
 ---
 
 ## The label schema (v1)
