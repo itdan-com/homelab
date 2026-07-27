@@ -119,6 +119,59 @@ These layer on after Phase 7 without architectural change.
 
 ## Notes captured during execution
 
+- **2026-07-27 — adversarial review of everything built so far; six
+  more defects closed.** An independent read of the broker + proxy
+  (owner ask: "ensure we continue to find bugs as we go") confirmed the
+  token leak found above and surfaced these, each now fixed with a
+  regression test:
+  - **CRITICAL — the one-time token pickup could be stolen.** Dedupe
+    matched on `(flow, tool)` alone, so any caller could name someone
+    else's scope, receive *their* `request_id`, and race them to the
+    claim the instant the human clicked Grant; the poll authenticated
+    nothing. Fixed with a caller-minted `claim_nonce` (hash stored,
+    required on poll, wrong nonce → same 404 as unknown id). Same fix
+    closes the approval-screen lie: a second asker now gets its own
+    card with its own justification instead of silently inheriting the
+    first one's.
+  - **HIGH — live credentials were being written to journald.** The
+    token was a query parameter on `/v1/capability-check`, and uvicorn
+    logs full query strings. Now a header.
+  - **HIGH — MCP could never have worked through the proxy.**
+    Streamable HTTP opens its push channel with a bodiless GET and ends
+    with a bodiless DELETE; both denied unconditionally as
+    `empty-body`. Now grantable as `<server>.rpc.transport.<verb>` —
+    the human still says yes, but a session is possible. This would
+    have blocked 5.5.8 and Phase 6.
+  - **MEDIUM — authorization and execution could read different
+    documents.** Duplicate JSON keys are last-wins in Python and
+    first-wins elsewhere, so Sentinel could authorize `say` while the
+    upstream ran `delete_repo`. Duplicates and NaN/Infinity refused.
+  - **MEDIUM — the kill switch could not be pressed twice.** The sweep
+    sat inside `if not ks.engaged`, so a grant that became live while
+    engaged could never be cleaned up and came back alive on release.
+  - **Reliability:** WAL + `busy_timeout` — two processes share the
+    SQLite file and the broker commits per MCP call, so a console read
+    could block the audit write whose absence then explained nothing.
+  - Plus: `claim` is now an audited event type (the record could not
+    say whether a capability was ever picked up); the documented
+    `SENTINEL_GRANT_TTL_MINUTES` knob was dead and the 24h ceiling
+    existed only for callers bypassing the console (now 60);
+    `mint-certs.sh` renews on expiry instead of printing success over a
+    broken cert; Swagger UI off (the kill-switch origin runs no CDN JS).
+  - **Method note worth keeping:** `Synced/Healthy` in ArgoCD means
+    "matches what ArgoCD last fetched", NOT "matches HEAD". A probe
+    that only checks status will pass against the previous commit —
+    compare `.status.sync.revision` to `git rev-parse HEAD`.
+  - **End-state written up as ADR-004** (Proposed): Sentinel is a named
+    trust domain with a local (WSL2 host) and a cloud (VPC droplet
+    outside DOKS) instantiation, because in DOKS there is no free
+    "outside the cluster" and both lazy defaults — in-cluster, or on
+    the operator's laptop — break either the trust model or
+    availability. Phase 8 gains a sixth deliverable. The ADR also
+    ranks the debts deliberately NOT fixed (no tenant scoping, one
+    fleet cert, mutable audit log, all-or-nothing revocation, opt-in
+    enforcement, no egress policy) by cost-now vs cost-later.
+
 - **2026-07-27 — 5.5.5 done (the console), and a real token leak found
   and closed on the way in.**
   - **Bug found by probing, not reading (owner ask: keep hunting).** A
