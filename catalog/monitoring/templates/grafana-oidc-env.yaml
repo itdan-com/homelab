@@ -1,0 +1,20 @@
+{{/*
+OIDC client secret for Grafana's Authentik login (Phase 5 B6),
+delivered as env var GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET — Grafana's
+GF_<SECTION>_<KEY> convention overrides grafana.ini, keeping the
+secret out of the ini ConfigMap. Value comes from the SOPS-encrypted
+secrets.enc.yaml (.Values.oidc.clientSecret); the authentik chart's
+SOPS file holds the same value (two ends of one credential). The
+grafana subchart attaches this Secret via envFromSecret.
+*/}}
+{{- if .Values.oidc.clientSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-oidc
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: {{ .Values.oidc.clientSecret | quote }}
+{{- end }}
