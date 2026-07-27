@@ -17,6 +17,7 @@ spec:
   # (Phase 4 lesson).
   parentRefs:
     - group: gateway.networking.k8s.io
+      kind: Gateway
       name: {{ include "catalog.fullname" . }}
   rules:
     {{- range .Values.upstreams }}
