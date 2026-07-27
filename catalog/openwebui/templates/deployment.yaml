@@ -70,6 +70,11 @@ spec:
             # AI gateway Service. Plain (non-secret) value from values.
             - name: OPENAI_API_BASE_URL
               value: {{ .Values.config.openaiApiBaseUrl | quote }}
+            {{- if .Values.config.bypassModelAccessControl }}
+            # Model exposure policy = the gateway allowlist (values.yaml).
+            - name: BYPASS_MODEL_ACCESS_CONTROL
+              value: "true"
+            {{- end }}
             {{- if .Values.sso.enabled }}
             # --- SSO (Phase 5 B5): OIDC against Authentik. Non-secret
             # config; OAUTH_CLIENT_SECRET rides the -auth Secret. Note

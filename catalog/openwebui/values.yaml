@@ -35,6 +35,14 @@ replicaCount: 1
 # resolves; the Service listens on port 80.
 config:
   openaiApiBaseUrl: "http://ai-gateway/v1"
+  # Model visibility for non-admin users. v0.9.x hides every model
+  # from role=user unless an access_grant exists or this bypass is on.
+  # POLICY DECISION (B5): the model allowlist for this deployment
+  # lives at the AI GATEWAY (this consumer key's model list, in git)
+  # — so everyone signed in sees exactly what the gateway serves.
+  # Flip to false + use per-model grants (Admin > Settings > Models)
+  # when different users should see different models.
+  bypassModelAccessControl: true
 
 # Auth — the per-consumer gateway key OpenWebUI presents as its Bearer
 # token to the AI gateway. Minted for client id "openwebui"; the
