@@ -68,6 +68,14 @@ data:
           client_type: confidential
           client_id: {{ .clientId }}
           client_secret: !Env AUTHENTIK_OPENWEBUI_OIDC_CLIENT_SECRET
+          # Grant-type allowlist. LOAD-BEARING: the admin UI preselects
+          # authorization_code, but API/blueprint-created providers get
+          # an EMPTY list — and authentik then rejects every authorize
+          # request as "invalid_request" (log: "Invalid grant_type for
+          # provider"). Least privilege: code flow + refresh only.
+          grant_types:
+            - authorization_code
+            - refresh_token
           # Implicit consent: first-party app on our own platform —
           # no "allow access?" interstitial for our own users.
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
