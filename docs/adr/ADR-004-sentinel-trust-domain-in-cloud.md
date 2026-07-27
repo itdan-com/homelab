@@ -43,13 +43,46 @@ are both wrong:
 that happens to be handy.**
 
 1. **Local:** the WSL2 host, systemd (5.5.7). Unchanged.
-2. **Cloud:** a **small always-on VM outside the DOKS cluster, inside
-   the same VPC** (a DigitalOcean Droplet), provisioned by the same
-   Terraform run that builds the cluster. Cloud firewall allows
-   cluster → broker on the mTLS port and nothing else inbound from the
-   cluster; the admin surface is reachable only over the operator's
-   VPN/WireGuard or an authenticated public endpoint, never from the
-   VPC's cluster subnet.
+2. **Cloud:** a **small always-on Linux VM in the same private network
+   as the cluster, outside it**, provisioned by the same Terraform run.
+   The cloud firewall allows cluster → broker on the mTLS port and
+   nothing else inbound from the cluster.
+
+**Stated as a shape, not a product** (owner challenge, 2026-07-27 —
+an earlier draft of this ADR said "a DigitalOcean Droplet", which read
+as a commitment this platform has not made and should not make):
+
+| Requirement | AWS | GCP | Azure | DigitalOcean |
+|---|---|---|---|---|
+| Managed cluster | EKS | GKE | AKS | DOKS |
+| The VM outside it | EC2 instance | Compute Engine | Linux VM | Droplet |
+| Same private network | VPC + subnet | VPC | VNet | VPC |
+| Private name for the broker | Route 53 private zone | Cloud DNS private zone | Private DNS zone | DO private DNS |
+
+Everything above the provisioning layer — every chart in `catalog/`,
+the units, the install script — is identical on all four. What differs
+is one Terraform module per provider, which is the layer *designed* to
+differ; that is how every platform product does it, and it is bounded
+work rather than a re-implementation.
+
+### Reaching the console in cloud (recommended: don't expose it)
+
+The obvious answer is a public HTTPS endpoint protected by the passkey,
+and 5.5.6 hardened the console as if that were the plan. The better
+answer is to not put it on the internet at all:
+
+**Tunnel to it.** `ssh -L 8400:127.0.0.1:8400 <sentinel-host>`, then
+browse `http://localhost:8400`. The console stays loopback-bound on the
+VM, so the refuse-to-start guard is satisfied unchanged; there is no
+public surface, no certificate to obtain or renew, and no DNS record.
+WebAuthn still works because the browser sees `localhost`, which is a
+secure context and a valid Relying Party ID. A mesh VPN (WireGuard,
+Tailscale) is the same idea with nicer ergonomics.
+
+This is both *fewer moving pieces* and *less attack surface* than the
+public endpoint, so it is the default. The cost is that "approve from
+your phone" (the roadmap's mobile PWA) needs the public path — take
+that trade when the feature is actually wanted, not before.
 
 This keeps every property the local design already proves: one-way
 trust, mTLS with Sentinel's own CA, DNS-named broker, fail-closed.
@@ -126,6 +159,38 @@ artifact must already be the production one.
   security gate and must be stated, not discovered.
 - **SQLite stays.** One writer, tiny data, a control plane rather than
   a workload. It is not the thing that will need rework.
+
+## Portability gaps found while checking this claim (2026-07-27)
+
+ADR-002 says "the entire `catalog/` deploys unchanged" in cloud. Audited
+against the actual charts, **that is not true today** — and, importantly,
+the gaps are *not* about which cloud. They are about **k3s-bundled things
+versus things we install ourselves**, so they bite identically on DOKS,
+EKS, GKE and AKS:
+
+1. **Every door is a Traefik `IngressRoute` CRD** (`traefik.io/v1alpha1`,
+   in eleven charts) and **Traefik is not in `catalog/`** — it arrives
+   free with k3s as `traefik-kube-system`. On any managed cluster those
+   resources fail with "no matches for kind IngressRoute". Two ways out:
+   add Traefik as a catalog chart, or migrate the doors to Gateway API
+   `HTTPRoute`, which needs no new component because Envoy Gateway is
+   already running. The second is the better answer — one gateway
+   implementation instead of two — and it is a bigger change.
+2. **`storageClassName: local-path`** is k3s's provisioner and exists
+   nowhere else. It must become a platform value (ADR-002 already names
+   storage class as one of its knobs; the charts have not adopted it).
+3. **ServiceLB / host-port assumptions.** `EnvoyProxy` is pinned to
+   `ClusterIP` locally *because* k3s's ServiceLB would fight Traefik for
+   ports 80/443. In cloud that reasoning inverts — a real
+   LoadBalancer is what you want — so the exposure model needs a
+   per-environment value rather than a comment explaining the local
+   workaround.
+
+**The general lesson worth carrying:** anything k3s hands us for free is
+a hidden dependency, and hidden dependencies are exactly what makes a
+"it's just Kubernetes" claim false at the worst moment. These belong in
+Phase 8's scope, and they are more likely to cost time than the choice
+of provider.
 
 ## Known debts this ADR does *not* resolve (recorded, not fixed)
 
