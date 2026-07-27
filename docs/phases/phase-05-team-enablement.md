@@ -17,12 +17,14 @@ passkeys are exactly where this platform is headed (Authentik admin
 now, Sentinel in 5.5).
 
 **Status:** In progress — **stage A (TLS foundation) COMPLETE
-2026-07-26** (A1–A5) **+ stage B 4/7** (B1–B3 2026-07-26; B4
-2026-07-27: OpenWebUI OIDC provider+application assembled headless
-from blueprints). Next: **B5 — wire OpenWebUI to Authentik** (OIDC
-env + SOPS client secret; see B4 notes for the two knowns: in-cluster
-resolution of the discovery URL, issuer/Host-header port). Kickoff
-2026-07-26 reconciled this doc (old exit criteria demanded
+2026-07-26** (A1–A5) **+ stage B 5/7** (B1–B3 2026-07-26; B4+B5
+2026-07-27: SSO is LIVE — owner signs into OpenWebUI via Authentik,
+akadmin→admin and bob→user both browser-verified; headless
+login-dance harness proves the flow end-to-end). Next: **B6 —
+Grafana → Authentik** (second blueprint key in the same CM — include
+`grant_types` from birth; Grafana supports split auth/token URLs so
+the coredns shim may not even be needed there — decide in-item).
+Kickoff 2026-07-26 reconciled this doc (old exit criteria demanded
 Langfuse/MinIO despite the slimmed goal).
 
 **Kickoff decisions on record:**
@@ -142,10 +144,26 @@ Langfuse/MinIO despite the slimmed goal).
   disk). Verified headless: blueprint instance `successful`, provider
   + application via API, discovery doc over the TLS door advertising
   RS256. One rolling-update race found and understood — see note.)*
-- [ ] **B5. OpenWebUI → Authentik** — OIDC env + SOPS client secret; a
+- [x] **B5. OpenWebUI → Authentik** — OIDC env + SOPS client secret; a
   fresh user signs in via Authentik; admin-role mapping verified;
   decision recorded on the local-password path (disable vs. keep as
   break-glass).
+  *(Done 2026-07-27, commits `11c7ca4`+`d65ab29`+`b7de2d5`: one
+  canonical issuer (the public :8443 door) for browser AND backend —
+  two named local-only shims make it work in-cluster (coredns
+  lab.local template zone → 172.18.0.1; combined CA bundle via
+  initContainer, REQUESTS_CA_BUNDLE/SSL_CERT_FILE). Blueprint v2:
+  groups openwebui-users/-admins + IdP-side policy bindings +
+  prefix-filtered roles scope mapping; app-side
+  ENABLE_OAUTH_ROLE_MANAGEMENT maps openwebui-admins→admin on every
+  login. Redirect URI source-verified and pinned on both sides
+  (`/oauth/oidc/login/callback`); PKCE S256. DECISION: local login
+  form stays as break-glass for the pre-SSO admin (dan@itdan.com);
+  new humans arrive via SSO. Owner-verified in the browser: akadmin
+  → admin, bob → user. Model visibility: gateway allowlist IS the
+  policy — BYPASS_MODEL_ACCESS_CONTROL=true, verified as
+  impersonated bob. The one real bug — provider `grant_types` empty —
+  is a note below.)*
 - [ ] **B6. Grafana → Authentik** — OIDC config in the monitoring
   chart values; the same identity logs in; role mapping (Viewer
   default) noted.
@@ -203,6 +221,32 @@ Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-27 (B5): **The trap that bit a real login: blueprint/API-
+  created OAuth2 providers get an EMPTY `grant_types` allowlist** —
+  the admin UI silently preselects authorization_code; config-as-code
+  gets no UI defaults. Authentik then rejects every authorize as
+  `invalid_request` ("Invalid grant_type for provider" in server
+  logs) and OpenWebUI masks it as "email or password incorrect".
+  Blueprint now pins `[authorization_code, refresh_token]` — any
+  future OIDC client blueprint MUST include grant_types. Debug method
+  that found it: reproduce the click headless from a pod (capture the
+  302 authorize URL, replay variants to bisect), then read authentik
+  server logs — events showed nothing. **Owner-UX lesson: the
+  Authentik portal tile is a LAUNCHER, not a login** — OIDC is
+  app-initiated; the button lives on the app's login page. **Session
+  rule (owner demand after the miss): verify the LIVE flow, not just
+  the objects** — the reusable harness (flow-executor login →
+  authorize → callback → who-am-I, plus admin impersonation for
+  other-user checks) is in the scratchpad scripts and this doc's
+  history; secrets pipe via stdin `sh read` into pod env, never
+  printed (heredocs REPLACE piped stdin — use `{ secret; script; } |
+  sh -c 'read; exec python3 -'`). Minor: our roles-mapping expression
+  trips a deprecation warning (`User.ak_groups`) — works on pinned
+  2026.5.6, swap accessor at the next authentik bump (backlogged).
+  Model visibility: v0.9.x hides all models from role=user unless
+  access_grant rows exist or BYPASS_MODEL_ACCESS_CONTROL — policy
+  decision: bypass ON, the gateway consumer-key model list in git is
+  the allowlist (per-model grants = future tiering knob).
 - 2026-07-27 (B4): **Rolling-update race on first blueprint
   delivery:** the discovery tasks enqueued at new-worker boot were
   consumed by the OLD worker — the task queue is Postgres-backed and
