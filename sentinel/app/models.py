@@ -82,12 +82,89 @@ class CapabilityGrant(Base):
     flow: Mapped[Flow] = relationship(back_populates="grants")
 
 
+class RequestStatus(StrEnum):
+    PENDING = "pending"
+    GRANTED = "granted"
+    DENIED = "denied"
+    EXPIRED = "expired"
+
+
+class CapabilityRequest(Base):
+    """A pending question to the human: "may flow X use tool Y?".
+
+    Persisted (not an in-memory channel) so a Sentinel restart loses
+    nothing, the GUI can list it, and the audit story has an anchor.
+    Requests auto-expire (default 10 min): `expired` is computed
+    lazily at read time — no background sweeper in the MVP.
+    Duplicate (flow_id, tool) requests while one is pending dedupe
+    onto the existing row, so client retries don't spam the GUI.
+    """
+
+    __tablename__ = "capability_requests"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    flow_id: Mapped[str] = mapped_column(ForeignKey("flows.id"), index=True)
+    tool: Mapped[str] = mapped_column(String(128))
+    reason: Mapped[str] = mapped_column(String(512))
+    status: Mapped[RequestStatus] = mapped_column(
+        Enum(
+            RequestStatus,
+            native_enum=False,
+            create_constraint=True,
+            values_callable=lambda e: [m.value for m in e],
+            length=16,
+        ),
+        default=RequestStatus.PENDING,
+        index=True,
+    )
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    decided_by: Mapped[str | None] = mapped_column(String(128))
+    denied_reason: Mapped[str | None] = mapped_column(String(512))
+    grant_id: Mapped[str | None] = mapped_column(ForeignKey("capability_grants.id"))
+    # Token delivery channel: the plaintext lives here ONLY between
+    # grant and the requester's first successful poll (claim-once —
+    # nulled on claim, and nulled if the grant lapses unclaimed). The
+    # admin who grants never sees it; after claim, only the hash in
+    # capability_grants remains anywhere. Consequence for backups: a
+    # stolen DB can contain at most in-flight unclaimed tokens, each
+    # scope-locked and minutes from expiry.
+    token_plaintext: Mapped[str | None] = mapped_column(String(128))
+    token_claimed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    flow: Mapped[Flow] = relationship()
+    grant: Mapped["CapabilityGrant | None"] = relationship()
+
+
+class KillState(Base):
+    """The global kill switch — a singleton row (id=1), CURRENT state
+    only (history lives in audit_events). Persisted so that a Sentinel
+    restart while killed COMES BACK killed: fail-closed must survive
+    crashes, not just uptime."""
+
+    __tablename__ = "kill_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    engaged: Mapped[bool] = mapped_column(default=False)
+    engaged_at: Mapped[datetime | None] = mapped_column(DateTime)
+    engaged_by: Mapped[str | None] = mapped_column(String(128))
+    reason: Mapped[str | None] = mapped_column(String(512))
+    released_at: Mapped[datetime | None] = mapped_column(DateTime)
+    released_by: Mapped[str | None] = mapped_column(String(128))
+
+
 class AuditEventType(StrEnum):
     REQUEST = "request"
     GRANT = "grant"
     DENIAL = "denial"
     USE = "use"
     REVOCATION = "revocation"
+    # Two additions over the phase doc's five (recorded in its notes):
+    # kill-switch transitions are security-critical events in their own
+    # right — hiding them inside "revocation" would blur the audit story.
+    KILL_ENGAGED = "kill_engaged"
+    KILL_RELEASED = "kill_released"
 
 
 class AuditEvent(Base):

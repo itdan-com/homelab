@@ -35,10 +35,19 @@ Sentinel is a systemd unit on the WSL2 host. The k3d cluster has no path to its 
 
 ### 5.5.3 Broker API
 
-- [ ] `POST /capability-request` — Claude posts (flow_id, tool, reason). Returns request-id + 202. Pushes to GUI via SSE/WebSocket.
-- [ ] `POST /capability-grant` — GUI posts (request-id, ttl, granted_by). Mints token, writes to `capability_grants`, returns token to Claude over pending request channel.
-- [ ] `GET /capability-check?token=...&tool=...&flow_id=...` — Sentinel proxy calls; returns allow/deny.
-- [ ] `POST /kill` (admin) — global kill: invalidates all unexpired tokens.
+**Endpoint-count review (owner ask 2026-07-27): four wasn't enough to close the loop; final surface is nine, split across two listeners, zero speculative.** The doc's four had no token-delivery path, no Deny backend, and no kill-release — so the loop couldn't actually complete. Design decisions locked: HTTP-status-as-verdict on check (200/403, native Envoy ext_authz contract for 5.5.4); claim-once token delivery via poll (the granting human never sees the secret); dedupe on duplicate pending (flow,tool); lazy request expiry (no sweeper); kill = revocation persisted in a table (survives restart); everything under `/v1`; FastAPI `/docs` is the human doc, generated from the code so it can't drift.
+
+Cluster-facing listener (`app/broker.py`, binds the k3d gateway IP; mTLS at 5.5.4):
+- [x] `POST /v1/capability-requests` — Claude posts (flow_id, tool, reason, agent). 202 new / 200 dedup-onto-pending; registers the flow on first sight. *(2026-07-27)*
+- [x] `GET /v1/capability-requests/{id}` — poll; `granted` first-poll carries the token once, then never again; `denied`/`expired` fail closed. **(the missing delivery path)**
+- [x] `GET /v1/capability-check?token&tool&flow_id` — **200 allow / 403 deny** (reason: unknown-token/scope-mismatch/revoked/expired/kill-engaged); every call audited.
+
+Admin listener (`app/main.py`, binds 127.0.0.1 only — unreachable from pods by construction):
+- [x] `GET /v1/capability-requests` — pending panel (GUI + curl).
+- [x] `POST …/{id}/grant` — mints token (→ requester's poll, never echoed here), 201; 409 if not pending or kill engaged.
+- [x] `POST …/{id}/deny` — **the Deny button's backend**; resolves the poll immediately.
+- [x] `GET|POST /v1/kill` + `POST /v1/kill/release` — engage revokes all live grants (audited each), refuses new; release resumes (old tokens stay dead). **kill-release was missing entirely.**
+- [x] `GET /v1/audit-events` (filterable) + `GET /v1/flows` — the record, for the GUI's other two panels.
 
 ### 5.5.4 Sentinel proxy
 
@@ -108,6 +117,44 @@ These layer on after Phase 7 without architectural change.
 - `STATUS.md` updated.
 
 ## Notes captured during execution
+
+- **2026-07-27 — 5.5.3 done (broker API, two listeners).** Owner
+  paused to sanity-check the endpoint count — right call: the doc's
+  four endpoints could not close the loop (no way to deliver the token
+  to the requester, no Deny backend, no kill-release). Final surface
+  is **nine across two ASGI apps**, still zero speculative:
+  - `app/service.py` holds every transition; each writes its audit
+    event in the SAME commit (no state without a paper trail). `app/
+    schemas.py` Pydantic models double as the `/docs` human docs.
+  - **Two listeners, not one** — this is the trust boundary made
+    physical: `app/broker.py` (request/poll/check) binds the k3d
+    gateway IP for pods; `app/main.py` (grant/deny/kill/audit/flows)
+    binds 127.0.0.1. Granting literally has no route on the
+    cluster-facing app (live-verified: POST grant on :8401 → 404).
+  - Design calls, each to dodge a known production-API trap:
+    check returns **HTTP-status-as-verdict** (200/403) so Envoy
+    ext_authz consumes it unchanged at 5.5.4; **claim-once** token
+    delivery (plaintext lives in `capability_requests` only between
+    grant and first poll, then nulled — the granting human never sees
+    it); **dedupe** on duplicate pending (flow,tool) so retries don't
+    spam the GUI; **lazy expiry** (no background sweeper in MVP);
+    **kill = revocation persisted** in `kill_state` (survives a
+    process restart — proven).
+  - Schema grew: `capability_requests`, `kill_state`, `token_hash`
+    (5.5.2), token-delivery columns, and 2 audit types
+    (kill_engaged/kill_released → 7 total). Migration `80951989de42`;
+    Alembic doesn't diff CHECK constraints, so the enum widening is
+    hand-added in both directions (verified reversible).
+  - Proof: `tests/test_broker_flow.py` 20/20 (happy path, all 4 deny
+    reasons, dedupe, deny-then-409, kill-revokes+blocks+**survives
+    restart**, release-keeps-old-dead, all 7 audit types) + a live
+    two-listener curl walkthrough. `python3.12-venv` needed `httpx2`
+    (not httpx) for the test client — dev-only, in requirements-dev.txt.
+  - **Flagged, not committed:** an incomplete `sentinel/smoke.sh`
+    appeared in the tree that I did not author with my tools; left
+    untracked for the owner to review rather than committed into the
+    security-sensitive Sentinel dir. The committed test is the pytest
+    lifecycle.
 
 - **2026-07-27 — 5.5.2 done (data model + first real migration).**
   Migration `d405f45ef0a6` (autogen output inspected line-by-line —

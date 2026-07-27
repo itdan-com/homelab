@@ -24,20 +24,64 @@ and `docs/phases/phase-05-5-sentinel.md`):
   deletion — it lives here as plain code deployed by systemd (5.5.7),
   not by ArgoCD.
 
+## Two listeners (the trust boundary, made physical)
+
+Sentinel runs as **two ASGI apps**, and which one a route lives on IS
+the security model — not a convention that can be forgotten:
+
+| App | Binds | Who reaches it | Routes |
+|---|---|---|---|
+| `app.broker` | k3d gateway IP | cluster pods (via the Sentinel proxy) | request a capability, poll for the answer, **check** a token |
+| `app.main` (admin) | `127.0.0.1` | the human at the console | **grant**, **deny**, **kill**/release, audit, flows |
+
+Granting has no route on the broker app. A pod cannot reach loopback
+via the gateway IP, so the grant/kill surface is unreachable from k3d
+by construction — before any auth exists (WebAuthn/TOTP arrive at
+5.5.6; until then loopback-reachability *is* the boundary).
+
+## The capability loop
+
+```
+Claude ──POST /v1/capability-requests──▶ broker      (202, request_id)
+Claude ──GET  …/{id}  (poll)──────────▶ broker      (pending…)
+                     human ──POST …/{id}/grant──▶ admin   (mints token)
+Claude ──GET  …/{id}  (poll)──────────▶ broker      (granted + token, ONCE)
+proxy  ──GET  /v1/capability-check─────▶ broker      (200 allow / 403 deny)
+```
+
+Token delivery is **claim-once**: the plaintext reaches the requester
+on its first post-grant poll and nowhere else — the human who grants
+never sees it, and Sentinel keeps only a SHA-256 hash. `/capability-check`
+answers with **HTTP status** (200 allow, 403 deny) — the contract
+Envoy's `ext_authz` speaks directly (5.5.4).
+
 ## Dev quickstart (on the WSL2 host)
 
 ```bash
 cd sentinel
-python3 -m venv .venv
+python3 -m venv .venv                        # needs the python3.12-venv apt pkg
 .venv/bin/pip install -r requirements.txt
-.venv/bin/alembic upgrade head          # create/upgrade the SQLite schema
-.venv/bin/uvicorn app.main:app --reload # admin API on 127.0.0.1:8000 (dev)
-curl -s http://127.0.0.1:8000/healthz
+.venv/bin/alembic upgrade head               # create/upgrade the SQLite schema
+
+# admin (human) API + interactive docs on loopback:
+.venv/bin/uvicorn app.main:app --reload --port 8400
+#   → http://127.0.0.1:8400/docs
+
+# broker (cluster-facing) API, separate process:
+.venv/bin/uvicorn app.broker:app --port 8401 --host 0.0.0.0
+```
+
+Tests (dev deps in `requirements-dev.txt`):
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest tests/            # 20-assertion lifecycle
 ```
 
 `SENTINEL_DB` overrides the SQLite path (dev default:
 `./sentinel-dev.db`, gitignored; production lands in
-`/var/lib/sentinel/` at 5.5.7).
+`/var/lib/sentinel/` at 5.5.7). `SENTINEL_REQUEST_TTL_MINUTES` (10)
+and `SENTINEL_GRANT_TTL_MINUTES` (5) tune the default lifetimes.
 
 ## Layout
 

@@ -1,0 +1,3 @@
+# Test-only deps (NOT installed in production — see requirements.txt for runtime).
+httpx2==2.9.1
+pytest==9.1.1
