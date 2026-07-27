@@ -38,6 +38,9 @@ oidcClients:
   grafana:
     clientId: grafana
     baseUrl: https://grafana.lab.local:8443
+  argocd:
+    clientId: argocd
+    baseUrl: https://argocd.lab.local:8443
 
 # ---------------------------------------------------------------------------
 # Subchart values. Every leaf under `authentik:` below becomes an

@@ -1,0 +1,71 @@
+{{- if .Values.argocdIngress.enabled }}
+# ArgoCD's door (Phase 5 B7) — the house TLS pattern (certificate +
+# redirect middleware + two IngressRoutes), chart-local because the
+# umbrella fronts a subchart service. One file: one feature.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: argocd-tls
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  secretName: argocd-tls
+  dnsNames:
+    - {{ .Values.argocdIngress.host }}
+  privateKey:
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ .Values.argocdIngress.tls.issuer }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: argocd-redirect-https
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+    {{- with .Values.argocdIngress.tls.redirectPort }}
+    port: {{ . | quote }}
+    {{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ .Values.argocdIngress.host }}`)
+      kind: Rule
+      services:
+        - name: {{ .Values.argocdIngress.service }}
+          port: {{ .Values.argocdIngress.port }}
+  tls:
+    secretName: argocd-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: argocd-redirect
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`{{ .Values.argocdIngress.host }}`)
+      kind: Rule
+      middlewares:
+        - name: argocd-redirect-https
+      services:
+        - name: {{ .Values.argocdIngress.service }}
+          port: {{ .Values.argocdIngress.port }}
+{{- end }}

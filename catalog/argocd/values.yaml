@@ -6,6 +6,24 @@ catalog:
   # Holds the repo deploy key (SOPS'd in secrets.enc.yaml).
   dataClass: secret
 
+# ArgoCD's public door (Phase 5 B7) — house TLS pattern, rendered by
+# OUR template (templates/argocd-ingress.yaml). Passes ADR-002's
+# exposure policy: browsed + authenticated (SSO below + local admin).
+# NOTE: this chart is NOT ArgoCD-self-managed (Phase 4 deferral) —
+# applying changes here is a manual `helm secrets upgrade` (see
+# NOTES.txt / operator cheatsheet).
+argocdIngress:
+  enabled: true
+  host: argocd.lab.local
+  # The argo-cd chart's server Service; server.insecure=true below
+  # means Traefik terminates TLS and forwards plain HTTP — same
+  # topology as every other door.
+  service: argocd-server
+  port: 80
+  tls:
+    issuer: lab-local-ca
+    redirectPort: "8443"
+
 # ---------------------------------------------------------------------------
 # GitOps wiring consumed by templates/applicationset.yaml.
 # ---------------------------------------------------------------------------
@@ -40,6 +58,49 @@ argo-cd:
       # Allow helm-secrets' downloader scheme in valueFiles
       # (secrets://secrets.enc.yaml).
       helm.valuesFileSchemes: secrets, https
+      # Public URL — OIDC redirects derive from this (Phase 5 B7).
+      url: https://argocd.lab.local:8443
+      # SSO via Authentik (B7), ArgoCD-native OIDC (dex stays off).
+      # One canonical issuer (B5 decision): the public door, resolved
+      # in-cluster by the lab.local CoreDNS zone. clientSecret is a
+      # $-reference into argocd-secret (configs.secret.extra, SOPS).
+      # Scopes deliberately EXCLUDE profile: authentik's built-in
+      # profile mapping emits ALL group names as a `groups` claim,
+      # which would collide with our prefix-filtered argocd-groups
+      # mapping — openid+email+groups is everything ArgoCD needs.
+      # rootCA: local-only (ADR-002) — the lab CA's PUBLIC cert so
+      # ArgoCD's server-side discovery/token calls verify; delete on
+      # cloud (Let's Encrypt). The local admin account stays enabled
+      # (chart default) as break-glass, same decision as the other
+      # two doors.
+      oidc.config: |
+        name: Authentik
+        issuer: https://authentik.lab.local:8443/application/o/argocd/
+        clientID: argocd
+        clientSecret: $oidc.authentik.clientSecret
+        requestedScopes: ["openid", "email", "groups"]
+        rootCA: |
+          -----BEGIN CERTIFICATE-----
+          MIIBgzCCASigAwIBAgIUIs6RZknw98V66lkhSUcJAHZIZ4QwCgYIKoZIzj0EAwIw
+          HzEdMBsGA1UEAxMUaG9tZWxhYiBsYWIubG9jYWwgQ0EwHhcNMjYwNzI2MjM1NjU2
+          WhcNMzYwNzIzMjM1NjU2WjAfMR0wGwYDVQQDExRob21lbGFiIGxhYi5sb2NhbCBD
+          QTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABFeshrRIas9ZvMA3ejvSvbUUjraE
+          Hnb+tyiZbSDa5DXrMdWnGV8g6w3f6bL2K1tx8L5KZZSY0U5HSUGMrp6iXEujQjBA
+          MA4GA1UdDwEB/wQEAwICpDAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBTlp6FY
+          TyLjrRMIDZ9VdmfVtErGhDAKBggqhkjOPQQDAgNJADBGAiEAmcurWHWVCrJGVS+j
+          lURDsi1A3K+QKuSNmlpvOFFqUrUCIQCNzgxy9eu4Faljff3EgjPKnJB4etXQe7E8
+          P5SDIG8OXQ==
+          -----END CERTIFICATE-----
+    # RBAC from the prefix-filtered groups claim: argocd-admins get
+    # admin, argocd-users read-only. Default role EMPTY — an SSO
+    # login with neither group sees nothing (and the IdP-side
+    # bindings deny them before that anyway).
+    rbac:
+      policy.default: ""
+      policy.csv: |
+        g, argocd-admins, role:admin
+        g, argocd-users, role:readonly
+      scopes: "[groups]"
     params:
       # TLS terminates elsewhere (port-forward now, Traefik+cert-manager
       # in Phase 5); plain HTTP inside the cluster.
