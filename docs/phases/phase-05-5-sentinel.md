@@ -29,9 +29,9 @@ Sentinel is a systemd unit on the WSL2 host. The k3d cluster has no path to its 
 
 ### 5.5.2 Data model
 
-- [ ] `flows` table: `id`, `agent`, `started_at`, `ended_at`, `metadata` (JSON).
-- [ ] `capability_grants` table: `id`, `flow_id`, `tool`, `granted_at`, `expires_at`, `granted_by`, `revoked_at`.
-- [ ] `audit_events` table: `id`, `ts`, `event_type` (request/grant/denial/use/revocation), `flow_id`, `tool`, `actor`, `details` (JSON).
+- [x] `flows` table: `id` (client-supplied flow-id, string PK), `agent`, `started_at`, `ended_at`, `metadata` (JSON). *(2026-07-27)*
+- [x] `capability_grants` table: `id` (UUID hex — unguessable), `flow_id` (real FK), `tool`, **`token_hash`** (SHA-256, unique — deliberate addition: /capability-check validates hashes; tokens are never stored), `granted_at`, `expires_at`, `granted_by`, `revoked_at`.
+- [x] `audit_events` table: `id` (autoincrement — ordering is a feature in a log), `ts`, `event_type` (strict 5-value enum + DB CHECK), `flow_id`/`tool`/`actor` (**no FKs, by design** — the audit log must record unknown/garbage flows; an audit insert that can fail referential integrity is a log an attacker can silence), `details` (JSON).
 
 ### 5.5.3 Broker API
 
@@ -108,6 +108,20 @@ These layer on after Phase 7 without architectural change.
 - `STATUS.md` updated.
 
 ## Notes captured during execution
+
+- **2026-07-27 — 5.5.2 done (data model + first real migration).**
+  Migration `d405f45ef0a6` (autogen output inspected line-by-line —
+  keep that habit), applied + downgrade/re-upgrade proven. Behavior
+  smoke 6/6: JSON round-trip, CHECK rejects junk event_type, **FK
+  rejects grants for unknown flows** (needs `PRAGMA foreign_keys=ON`
+  per connection — wired as an engine event in `db.py`; SQLite
+  defaults it OFF), UNIQUE rejects duplicate token_hash, audit accepts
+  unknown flow-ids (no-FK design). Conventions locked in `models.py`'s
+  docstring: naive-UTC datetimes everywhere; `metadata` column maps to
+  `meta` attribute (declarative reserves the name); grant validity =
+  not-revoked AND not-expired AND kill-switch-off. Schema deviation
+  from this doc, deliberate: `token_hash` column added now so 5.5.3
+  stores digests, never tokens.
 
 - **2026-07-27 — 5.5.1 done (stack + skeleton).** Python 3.12/FastAPI/
   SQLAlchemy/Alembic; `sentinel/` scaffolded with the trust model
