@@ -75,13 +75,19 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
   SETUP.md "Trusting the lab CA": export → fingerprint-verify →
   import (Win + macOS) → undo commands. Additive op, no snapshot
   needed; reversal path documented.)*
-- [ ] **A5. Consoles get real doors** — IngressRoutes + certs + hosts
+- [x] **A5. Consoles get real doors** — IngressRoutes + certs + hosts
   entries for `grafana.lab.local` (and `authentik.lab.local` when B
   lands; `argocd.lab.local` only if B7 lands). README doors table
   updated as each door opens. Scope is set by ADR-002's exposure
   policy: doors only for browsed **and authenticated** services —
   Prometheus/Alertmanager are unauthenticated by design and stay
   port-forward until Phase 7 puts them behind SSO forward-auth.
+  *(Done 2026-07-26, commit `b86e5f9` + doc sweep: chart-local door in
+  the monitoring umbrella (cert SAN + 200 on /login + 301 verified on
+  the wire), `grafana.ini root_url` set pre-SSO, hosts line added via
+  snapshot-first elevated script (backup `hosts.bak-20260726-194415`,
+  receipt file, Windows ping → 127.0.0.1). README gained the
+  "logins in ten seconds" block (owner ask).)*
 
 ### B — SSO (Authentik as OIDC provider)
 
@@ -160,6 +166,18 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-26 (A5): WSL→Windows elevation gotcha: `Start-Process
+  -Verb RunAs` through `powershell.exe` interop BLOCKS the WSL shell
+  until the UAC dialog is answered — launch it detached/background
+  and poll a receipt file instead. The elevated script pattern that
+  worked: snapshot first, abort if the file reads back suspiciously
+  small (the 2026-07-25 failure mode), append-only + idempotent,
+  write a receipt to Downloads. Also: elevated PowerShell writes
+  UTF-16 receipts — harmless, but grep/cat show spaced characters.
+  Umbrella-door pattern: the umbrella chart owns the door
+  (chart-local template, service name stated explicitly), the
+  subchart owns the app; `root_url` set before SSO so B6 builds on
+  truth.
 - 2026-07-26 (A3): Traefik's `redirectScheme permanent: true` emits
   **301**, not 308 — comments/docs corrected after observing the live
   header. Leaf certs are SAN-only (empty subject) — cert-manager
