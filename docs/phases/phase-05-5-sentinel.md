@@ -2,9 +2,9 @@
 
 **Goal:** A trust-domain-separated security broker on the WSL2 host that mints short-lived per-flow capability tokens, gates every MCP call, and provides a one-screen GUI + global kill switch — all unreachable from inside the k3d cluster.
 
-**Status:** Not started. Blocked on Phase 5. **Non-negotiable before any non-PR external power** (ADR-001 wording — the PR-only Control-Plane v0 of Phase 4.5 may precede this; nothing else may).
+**Status:** ENTRY CRITERIA MET 2026-07-27 (see Notes) — ready for 5.5.1. **Non-negotiable before any non-PR external power** (ADR-001 wording — the PR-only Control-Plane v0 of Phase 4.5 may precede this; nothing else may).
 
-**Entry criteria (do immediately before this phase):** cluster rebuild from `k3d/devlab-cluster.yaml` with **Cilium** CNI (Flannel does not enforce the NetworkPolicy this phase depends on), per-node CPU caps added, and `k3d/coredns-custom.yaml` + `k3d/portainer-agent.yaml` reapplied. The rebuild doubles as the from-git disaster-recovery proof.
+**Entry criteria (do immediately before this phase):** ✅ DONE 2026-07-27 — cluster rebuilt from `k3d/devlab-cluster.yaml` with **Cilium** CNI 1.19.6 (kube-proxy kept — DOKS parity), per-node CPU caps (kubelet `system-reserved` + docker ceilings), `k3d/coredns-custom.yaml` + `k3d/portainer-agent.yaml` reapplied by `bootstrap.sh`. The rebuild doubled as the from-git disaster-recovery proof AND the headless-SSO-assembly proof (`scripts/sso-dance.sh` 7/7). Premise correction recorded in Notes: k3s's embedded kube-router controller was already enforcing basic v1 NetworkPolicy — Cilium's case is Hubble per-flow verdict evidence, L7/identity policy headroom, and cloud parity, not "deny was a no-op".
 
 ---
 
@@ -108,4 +108,39 @@ These layer on after Phase 7 without architectural change.
 
 ## Notes captured during execution
 
-- (empty)
+- **2026-07-27 — entry criteria executed (the Cilium rebuild + DR drill).**
+  Full teardown → `bootstrap.sh` → 10/10 apps Synced/Healthy → gate 5/5,
+  `sso-dance.sh` 7/7, `netpol-smoke.sh` 3/3. What the drill caught:
+  - **Two pets found and converted.** Envoy Gateway v1.8.1 + Envoy AI
+    Gateway v1.0.0 control planes were hand-installed in Phase 2.5 and
+    lived only in the old cluster — the platform did NOT fully
+    self-assemble until `catalog/envoy-gateway` + `catalog/envoy-ai-gateway`
+    made them citizens (catalog is now 10 apps).
+  - **Bootstrap chicken-and-egg.** `catalog/argocd` ships its own TLS
+    door (a Certificate) since B7, so bootstrap now server-side-applies
+    the six cert-manager CRDs (rendered from the pinned chart) before
+    installing ArgoCD.
+  - **CA continuity works as designed.** `k3d/lab-ca.enc.yaml` (SOPS)
+    restored pre-ArgoCD; cert-manager adopted it (rotationPolicy Never);
+    SHA256 fingerprint identical before/after — client trust survives.
+  - **Premise corrected.** Pre-rebuild `netpol-smoke.sh` PASSED under
+    Flannel: k3s's embedded kube-router policy controller enforces basic
+    v1 NetworkPolicy. The Cilium swap buys per-flow verdict observability
+    (Hubble logged the deny phase as `Policy denied DROPPED` with
+    security identities — the Sentinel audit primitive), L7/identity
+    policy headroom, and DOKS parity. `--disable-network-policy` also
+    removes that embedded controller, so Cilium is now the only enforcer.
+  - **Eventual-consistency lesson.** Endpoint programming and policy
+    propagation are async; one-shot probes race them (baseline probe
+    lost under Cilium after winning by luck under Flannel). Harness
+    asserts settled state via retry loops.
+  - **k3d + no-CNI is fine:** `k3d cluster create --wait` gates on the
+    k3s process, not node Ready; nodes sat NotReady until Cilium landed
+    (expected, documented in the cluster yaml header).
+  - **Known accepted loss:** Grafana + Prometheus sit on `local-path`
+    PVCs inside node containers — metrics history and hand-made Grafana
+    state die with a rebuild (dashboards/config are provisioned; backlog
+    notes the option to move them to hostPath if history starts to matter).
+  - Rebuild artifacts: backups in `~/homelab-data-backups/`
+    (pg_dumpall 215 tables + 829M data tar + state snapshot), unused —
+    hostPath survival worked; keep until next rebuild proves again.

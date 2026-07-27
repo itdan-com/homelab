@@ -299,15 +299,22 @@ From the Mac (via RDP):
 |---|---|
 | Pause the cluster (preserve state) | `k3d cluster stop devlab` |
 | Resume the cluster | `k3d cluster start devlab` |
-| **Destroy and recreate** the cluster | Ask Claude — there's a host-alias IP to re-bind and Portainer to re-attach. |
+| **Destroy and recreate** the cluster | `k3d cluster delete devlab && ./bootstrap.sh` — that's the whole runbook (proven 2026-07-27) |
+| Verify a rebuild (or any day) | `/resume` liveness gate, then `scripts/sso-dance.sh` (7 asserts) + `scripts/netpol-smoke.sh` (3 asserts) |
 | List clusters k3d knows about | `k3d cluster list` |
 | Get an admin kubeconfig file | `k3d kubeconfig get devlab` |
 
-**Never run `k3d cluster delete devlab` casually.** It nukes
-everything in the cluster. Persistent data (anything not on a
-PersistentVolume backed by host paths) is gone. Phase 4 (GitOps)
-makes recreate-from-scratch fast, but pre-Phase-4 you'd lose
-state.
+**A rebuild is safe but not free.** Proven by the 2026-07-27 DR
+drill: everything reassembles from git via `bootstrap.sh` — Cilium,
+the lab CA (from `k3d/lab-ca.enc.yaml`, so browsers keep trusting),
+all 10 catalog apps, SSO, the operator kubeconfig, Portainer's
+network attachment. Survives on host paths: postgres (Authentik
+users/groups), OpenWebUI data, `~/homelab-data`. **Dies with the
+cluster:** Prometheus metrics history and hand-made Grafana tweaks
+(local-path PVCs — dashboards re-provision, history doesn't), plus
+the ArgoCD local `admin` break-glass password (regenerated; read it
+back with the command in SETUP.md Part 2). Take a fresh backup first
+anyway: `kubectl exec -n chat postgres-0 -- pg_dumpall -U postgres > backup.sql`.
 
 ---
 
