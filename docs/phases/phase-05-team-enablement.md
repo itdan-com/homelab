@@ -65,10 +65,16 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
   openwebui AND echo. Verified: served cert chains to the lab CA,
   https 200 both services, http 301→`:8443` both. Gate/docs swept to
   the new URLs.)*
-- [ ] **A4. Trust the CA on the Windows box** — export the CA cert,
+- [x] **A4. Trust the CA on the Windows box** — export the CA cert,
   import into the Windows trust store (elevated step: snapshot-first
   rule applies), then `https://openwebui.lab.local:<port>` shows a
   clean padlock, zero warnings. Write the adopter doc for this step.
+  *(Done 2026-07-26: owner imported via `certutil -addstore Root` and
+  logged into OpenWebUI over https with a clean padlock — after a
+  browser restart (TLS-verdict cache; now documented). Adopter doc =
+  SETUP.md "Trusting the lab CA": export → fingerprint-verify →
+  import (Win + macOS) → undo commands. Additive op, no snapshot
+  needed; reversal path documented.)*
 - [ ] **A5. Consoles get real doors** — IngressRoutes + certs + hosts
   entries for `grafana.lab.local` (and `authentik.lab.local` when B
   lands; `argocd.lab.local` only if B7 lands). README doors table

@@ -221,3 +221,47 @@ is wrong.
 
 SSO note: OpenWebUI, Grafana, and ArgoCD all move behind Authentik
 single sign-on in Phase 5 — this table is the pre-SSO reality.
+
+### Trusting the lab CA (one-time, per client machine)
+
+The platform signs its own `*.lab.local` HTTPS certificates with a
+private CA (see `catalog/cert-manager/`). Until a machine trusts that
+CA, every lab URL shows a certificate warning. The import is
+additive, takes two minutes, and covers every current *and future*
+lab service. **Local-only artifact:** on a public cluster with a real
+domain, the issuer swaps to Let's Encrypt and this section does not
+apply at all.
+
+1. **Export the CA's public cert** (private key never leaves the
+   cluster):
+   ```bash
+   kubectl get secret lab-local-ca -n cert-manager \
+     -o jsonpath='{.data.ca\.crt}' | base64 -d > lab-local-ca.crt
+   ```
+2. **Verify you exported what you think** — compare against your
+   cluster's fingerprint before trusting anything:
+   ```bash
+   openssl x509 -in lab-local-ca.crt -noout -subject -fingerprint -sha256
+   ```
+3. **Import it:**
+   - **Windows** (elevated PowerShell — Start → "powershell" →
+     right-click → Run as administrator):
+     ```
+     certutil -addstore Root C:\path\to\lab-local-ca.crt
+     ```
+     Undo later with: `certutil -delstore Root "homelab lab.local CA"`
+   - **macOS**:
+     ```bash
+     sudo security add-trusted-cert -d -r trustRoot \
+       -k /Library/Keychains/System.keychain lab-local-ca.crt
+     ```
+     Undo later with: `sudo security delete-certificate -c "homelab lab.local CA" /Library/Keychains/System.keychain`
+4. **Restart the browser** before checking — browsers cache TLS
+   verdicts, and a stale warning after a successful import is the #1
+   false alarm here.
+5. Visit `https://openwebui.lab.local:8443` — padlock should be clean.
+
+Lifecycle: leaf certificates renew themselves (~90 days, automatic,
+invisible). The CA lasts 10 years; when it renews, clients re-import
+once — that's a planned migration, not maintenance (details:
+operator cheatsheet → "TLS: the lab CA").
