@@ -51,6 +51,50 @@ config:
 gateway:
   apiKey: ""
 
+# SSO via Authentik (Phase 5 B5) — OIDC against the platform IdP.
+# ONE canonical issuer for browser AND backend (cloud parity, ADR-002):
+# the public https door. Locally, two shims make that URL work from
+# inside the cluster — both named, both dead in cloud:
+#   1. k3d/coredns-custom.yaml resolves *.lab.local for pods.
+#   2. sso.labCa mounts the lab CA into a COMBINED trust bundle
+#      (system CAs + ours) for the pod's server-side OIDC calls
+#      (discovery/token/jwks). Let's Encrypt needs no bundle — flip
+#      labCa.enabled off. Never verify-skip, never replace the
+#      system bundle outright.
+# The client secret lives ONLY in secrets.enc.yaml (sso.clientSecret,
+# same value as the authentik chart's SOPS file — the two ends of one
+# credential).
+sso:
+  enabled: true
+  providerUrl: https://authentik.lab.local:8443/application/o/openwebui/.well-known/openid-configuration
+  clientId: openwebui
+  # Pinned EXPLICITLY on both sides (here + the blueprint's strict
+  # allowlist) so nothing depends on framework URL derivation. This
+  # is v0.9.6's primary callback route.
+  redirectUri: https://openwebui.lab.local:8443/oauth/oidc/login/callback
+  providerName: Authentik
+  # `roles` is a custom scope (blueprint scope mapping): openwebui-*
+  # group names arrive as the roles claim.
+  scopes: "openid email profile roles"
+  # App-layer authorization, re-evaluated on EVERY login: no matching
+  # role -> no entry; openwebui-admins -> app admin. Membership is
+  # managed in Authentik (groups) — onboarding = one user, one group.
+  allowedRoles: "openwebui-users,openwebui-admins"
+  adminRoles: "openwebui-admins"
+  # PKCE (OAuth 2.1): code-interception protection on top of the
+  # confidential client secret.
+  codeChallengeMethod: S256
+  # DECISION (B5): the local email/password form STAYS as break-glass
+  # — if the IdP is down, the pre-SSO local admin still gets in. New
+  # humans arrive via SSO only. Revisit when the IdP is HA in cloud.
+  loginForm: true
+  clientSecret: ""  # SOPS-only — secrets.enc.yaml
+  labCa:
+    enabled: true
+    # This chart's cert-manager leaf Secret; carries ca.crt for the
+    # lab CA. With a public issuer the key is absent and this is off.
+    secretName: openwebui-tls
+
 # Storage — explicit PV with hostPath pointing at the WSL2 directory
 # mounted into the k3d nodes (see k3d/devlab-cluster.yaml `volumes:`).
 # This is what makes the data (SQLite DB, uploads, WEBUI_SECRET_KEY)

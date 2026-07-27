@@ -21,15 +21,44 @@ spec:
     metadata:
       labels:
         {{- include "catalog.labels" . | nindent 8 }}
-      {{- if .Values.gateway.apiKey }}
+      {{- if or .Values.gateway.apiKey .Values.sso.clientSecret }}
       annotations:
-        # checksum forces a pod rollout when the gateway key changes.
-        # Guarded because secret.yaml only renders when the key is set.
+        # checksum forces a pod rollout when a credential changes.
+        # Guarded because secret.yaml only renders when one is set.
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       {{- end }}
     spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.sso.labCa.enabled }}
+      initContainers:
+        # Local-only shim (ADR-002): combined trust bundle = system
+        # CAs + the lab CA, so the pod's server-side OIDC calls trust
+        # the lab door WITHOUT breaking public TLS. Never replace the
+        # system bundle with a private CA alone; never verify-skip.
+        # Reuses the app image: zero extra pulls, same supply chain.
+        - name: ca-bundle
+          image: {{ include "catalog.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - cat /etc/ssl/certs/ca-certificates.crt /lab-ca/ca.crt > /bundle/ca-bundle.crt
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: lab-ca
+              mountPath: /lab-ca
+              readOnly: true
+            - name: ca-bundle
+              mountPath: /bundle
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           image: {{ include "catalog.image" . }}
@@ -41,10 +70,54 @@ spec:
             # AI gateway Service. Plain (non-secret) value from values.
             - name: OPENAI_API_BASE_URL
               value: {{ .Values.config.openaiApiBaseUrl | quote }}
-          {{- if .Values.gateway.apiKey }}
+            {{- if .Values.sso.enabled }}
+            # --- SSO (Phase 5 B5): OIDC against Authentik. Non-secret
+            # config; OAUTH_CLIENT_SECRET rides the -auth Secret. Note
+            # OpenWebUI treats the OAuth env family as authoritative
+            # every boot (ENABLE_OAUTH_PERSISTENT_CONFIG defaults
+            # false) — git stays the source of truth.
+            - name: ENABLE_OAUTH_SIGNUP
+              value: "true"
+            - name: OAUTH_CLIENT_ID
+              value: {{ .Values.sso.clientId | quote }}
+            - name: OPENID_PROVIDER_URL
+              value: {{ .Values.sso.providerUrl | quote }}
+            - name: OPENID_REDIRECT_URI
+              value: {{ .Values.sso.redirectUri | quote }}
+            - name: OAUTH_PROVIDER_NAME
+              value: {{ .Values.sso.providerName | quote }}
+            - name: OAUTH_SCOPES
+              value: {{ .Values.sso.scopes | quote }}
+            # Authorization at the app layer: role required to enter,
+            # admin role mapped, both re-evaluated on every login.
+            - name: ENABLE_OAUTH_ROLE_MANAGEMENT
+              value: "true"
+            - name: OAUTH_ROLES_CLAIM
+              value: "roles"
+            - name: OAUTH_ALLOWED_ROLES
+              value: {{ .Values.sso.allowedRoles | quote }}
+            - name: OAUTH_ADMIN_ROLES
+              value: {{ .Values.sso.adminRoles | quote }}
+            {{- with .Values.sso.codeChallengeMethod }}
+            - name: OAUTH_CODE_CHALLENGE_METHOD
+              value: {{ . | quote }}
+            {{- end }}
+            # Break-glass decision recorded in values.yaml.
+            - name: ENABLE_LOGIN_FORM
+              value: {{ .Values.sso.loginForm | quote }}
+            {{- end }}
+            {{- if .Values.sso.labCa.enabled }}
+            # Python HTTP stacks (requests/httpx/ssl) read these; both
+            # point at the COMBINED bundle built by the initContainer.
+            - name: REQUESTS_CA_BUNDLE
+              value: /etc/openwebui/ca/ca-bundle.crt
+            - name: SSL_CERT_FILE
+              value: /etc/openwebui/ca/ca-bundle.crt
+            {{- end }}
+          {{- if or .Values.gateway.apiKey .Values.sso.clientSecret }}
           envFrom:
-            # OPENAI_API_KEY (this consumer's gateway key) from the
-            # SOPS-backed Secret. Only attached when the key is set.
+            # OPENAI_API_KEY (gateway key) + OAUTH_CLIENT_SECRET (SSO)
+            # from the SOPS-backed Secret. Attached when either is set.
             - secretRef:
                 name: {{ include "catalog.fullname" . }}-auth
           {{- end }}
@@ -57,6 +130,11 @@ spec:
             # auto-generated WEBUI_SECRET_KEY, embedding caches) here.
             - name: data
               mountPath: /app/backend/data
+            {{- if .Values.sso.labCa.enabled }}
+            - name: ca-bundle
+              mountPath: /etc/openwebui/ca
+              readOnly: true
+            {{- end }}
           # /health is OpenWebUI's liveness endpoint (it's the path the
           # image's own baked HEALTHCHECK probes; returns {"status":true}).
           # startupProbe gives first boot room: on a fresh PV OpenWebUI
@@ -87,6 +165,18 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "catalog.fullname" . }}-data
+        {{- if .Values.sso.labCa.enabled }}
+        # ca.crt from this chart's own cert-manager leaf Secret — the
+        # lab CA's public cert, no private material.
+        - name: lab-ca
+          secret:
+            secretName: {{ .Values.sso.labCa.secretName }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: ca-bundle
+          emptyDir: {}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -25,6 +25,20 @@
 # IF THE WSL2 GATEWAY IP CHANGES (check: `ip route show default`):
 #   update the IP below, re-apply, restart coredns. It has been stable
 #   at 172.19.80.1 since 2026-05-17 across multiple reboots.
+#
+# TWO DIFFERENT "HOST" IPs — do not conflate them:
+#   172.19.80.1 = the WINDOWS host (WSL2 default gateway) — Ollama.
+#   172.18.0.1  = the k3d docker network gateway (the WSL2 VM itself,
+#                 check: `docker network inspect k3d-devlab`) — where
+#                 docker publishes the cluster's ingress ports (8443).
+#
+# The lab.local block below is a LOCAL-ONLY shim (ADR-002): it lets
+# PODS resolve the platform's public door names (authentik.lab.local,
+# openwebui.lab.local, ...) so backends can call the SAME canonical
+# https URLs the browser uses — e.g. OpenWebUI fetching Authentik's
+# OIDC discovery/token endpoints (Phase 5 B5). Traffic hairpins:
+# pod -> 172.18.0.1:8443 (docker publish) -> serverlb -> Traefik.
+# In cloud, public DNS answers these names and this block is dead.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -35,5 +49,14 @@ data:
     host.docker.internal:53 {
         hosts {
             172.19.80.1 host.docker.internal
+        }
+    }
+  lab-local.server: |
+    lab.local:53 {
+        template IN A {
+            answer "{{ .Name }} 60 IN A 172.18.0.1"
+        }
+        template IN AAAA {
+            rcode NOERROR
         }
     }
