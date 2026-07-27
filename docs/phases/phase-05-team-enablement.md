@@ -17,13 +17,13 @@ passkeys are exactly where this platform is headed (Authentik admin
 now, Sentinel in 5.5).
 
 **Status:** In progress — **stage A (TLS foundation) COMPLETE
-2026-07-26** (A1–A5) **+ stage B 5/7** (B1–B3 2026-07-26; B4+B5
-2026-07-27: SSO is LIVE — owner signs into OpenWebUI via Authentik,
-akadmin→admin and bob→user both browser-verified; headless
-login-dance harness proves the flow end-to-end). Next: **B6 —
-Grafana → Authentik** (second blueprint key in the same CM — include
-`grant_types` from birth; Grafana supports split auth/token URLs so
-the coredns shim may not even be needed there — decide in-item).
+2026-07-26** (A1–A5) **+ stage B 6/7** (B1–B3 2026-07-26; B4–B6
+2026-07-27: SSO LIVE on OpenWebUI **and Grafana** — akadmin→admin
+on both, bob→user/Viewer, one-click portal tiles; every flow proven
+by the headless login-dance harness). Next: **B7 (stretch) — ArgoCD
+→ Authentik** if session budget allows, else file the Phase 7
+carry-in + correct SETUP.md; then **C — close-out** (end-to-end
+proof screenshots, docs converge, STATUS).
 Kickoff 2026-07-26 reconciled this doc (old exit criteria demanded
 Langfuse/MinIO despite the slimmed goal).
 
@@ -164,9 +164,26 @@ Langfuse/MinIO despite the slimmed goal).
   policy — BYPASS_MODEL_ACCESS_CONTROL=true, verified as
   impersonated bob. The one real bug — provider `grant_types` empty —
   is a note below.)*
-- [ ] **B6. Grafana → Authentik** — OIDC config in the monitoring
+- [x] **B6. Grafana → Authentik** — OIDC config in the monitoring
   chart values; the same identity logs in; role mapping (Viewer
   default) noted.
+  *(Done 2026-07-27, commits `8537212`+`5c3ecbb`: blueprint v3 —
+  grafana provider (grant_types FROM BIRTH), prefix-filtered
+  `grafana-*` roles claim, grafana-users/-admins groups + IdP-side
+  bindings, strict redirect to Grafana's fixed
+  `/login/generic_oauth`. Monitoring umbrella: `auth.generic_oauth`
+  with all three URLs on the canonical public door (coredns zone
+  resolves in-cluster; native `tls_client_ca` → the door secret's
+  own ca.crt — no initContainer needed; both knobs die on cloud/LE);
+  `role_attribute_path` grafana-admins→Admin else Viewer; PKCE;
+  client secret as GF_ env from a SOPS-fed umbrella Secret,
+  render-asserted absent from the ini ConfigMap. BOTH portal tiles
+  now launch the apps' OIDC initiation routes — one click = signed
+  in. Break-glass parity: Grafana admin form stays. Live-dance
+  verified: akadmin→org Admin, impersonated bob→Viewer. Two snags
+  captured in notes: the .gitignore `*-secret.yaml` tripwire ate the
+  new template; a NEW blueprint file needs discovery, not the
+  watcher.)*
 - [ ] **B7 (stretch). ArgoCD → Authentik** — SETUP.md already promises
   this for Phase 5; do it if A+B land with budget left, else file as a
   Phase 7 carry-in and correct SETUP.md.
@@ -221,6 +238,26 @@ Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-27 (B6): **The .gitignore safety net ate a Helm template:**
+  `*-secret.yaml` (the plaintext-secrets tripwire) silently excluded
+  the new `templates/grafana-oidc-secret.yaml` from `git add <dir>` —
+  local `helm template` rendered it (helm ignores git), ArgoCD never
+  saw it, Grafana ran with an empty client secret and bounced
+  `/login/generic_oauth` → `/login` with nothing in its logs. Fix:
+  renamed to `grafana-oidc-env.yaml`; the net stays. **Rule: after a
+  commit that adds files, verify the file COUNT in the commit stat.**
+  Blueprint delivery nuance confirmed: the worker's file WATCHER
+  re-applies changed known files, but a brand-NEW file in the mount
+  needs a `blueprints_discovery` pass (hourly schedule; fast-forward
+  with `.send()` — B4 playbook). Grafana's `envFromSecret` has no
+  checksum: creating/rotating that Secret needs a manual grafana
+  restart (documented in values). kube-prometheus-stack full syncs
+  run the admission-webhook hook Job — expect minutes, not seconds.
+  One-click tiles: `meta_launch_url` → each app's OIDC INITIATION
+  route (`/oauth/oidc/login`; `/login/generic_oauth`) — tile click =
+  signed in; login pages with break-glass forms remain on direct
+  visit. Memberships (runtime data, via API, logged): akadmin →
+  grafana-admins, bob → grafana-users.
 - 2026-07-27 (B5): **The trap that bit a real login: blueprint/API-
   created OAuth2 providers get an EMPTY `grant_types` allowlist** —
   the admin UI silently preselects authorization_code; config-as-code
