@@ -91,13 +91,27 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 
 ### B — SSO (Authentik as OIDC provider)
 
-- [ ] **B1. Database** — `authentik` DB via the postgres chart's
+- [x] **B1. Database** — `authentik` DB via the postgres chart's
   `extraDatabases`; verify connection headroom for the post-Redis
   connection count.
-- [ ] **B2. `catalog/authentik/`** — umbrella over the official
+  *(Done 2026-07-26, commit `c5eef5a`: went further than the item —
+  new `auth.extraUsers` gives every app its own role (least-privilege
+  over superuser sharing), created on fresh init by
+  `20-extra-users.sh` with passwords via Secret env, never ConfigMap.
+  Live instance mirrored manually (role+DB `authentik`); pod needed
+  no restart. Headroom verified live: authentik idles at 10 of
+  max_connections=100.)*
+- [x] **B2. `catalog/authentik/`** — umbrella over the official
   authentik chart, pinned ≥ 2025.10 (no Redis), SOPS-encrypted secret
   key + bootstrap admin credentials, resources within budget, catalog
   labels, `argo.yaml`; Synced/Healthy.
+  *(Done 2026-07-26, commit `c5eef5a`: pinned 2026.5.6, zero redis
+  resources in render. ArgoCD app #8 — server+worker Running,
+  Synced/Healthy ~2 min after discovery; 215 tables migrated into OUR
+  postgres; health 200 cross-namespace; TLS door serving (SAN
+  authentik.lab.local, lab-CA issuer) awaiting only the B3 hosts
+  line. akadmin bootstrapped headless via AUTHENTIK_BOOTSTRAP_* from
+  SOPS.)*
 - [ ] **B3. `authentik.lab.local` over TLS** via the A-stage
   machinery; admin login works in the browser.
 - [ ] **B4. OIDC provider + application for OpenWebUI** configured in
@@ -166,6 +180,24 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-26 (B1+B2): **SOPS rule, learned via near-miss:** `sops -e`
+  with explicit `--age`/`--encrypted-regex` STILL requires a matching
+  creation rule for the input path — encrypting from a /tmp path
+  errored, and the shell redirect then truncated the tracked target
+  to empty. `git restore` recovered it; all secrets regenerated and
+  the live role password rotated (`ALTER ROLE`). **New rule: write
+  plaintext AT the destination `secrets.enc.yaml` path, `sops -e -i`
+  it, verify `ENC[` + round-trip BEFORE `git add`; never redirect
+  sops output over a tracked file.** Also: helm `-f` list semantics
+  replace lists wholesale — a SOPS file overriding `auth.extraUsers`
+  must carry complete entries, not just passwords. goauthentik chart:
+  every leaf under `authentik.*` becomes an `AUTHENTIK_*` env var via
+  its rendered Secret (bootstrap_password/token verified in render) —
+  no hand-rolled Secret template needed. Postgres StatefulSet does
+  NOT restart on Secret/ConfigMap content changes (no checksum
+  annotations there — deliberate for a DB); fresh-init-only initdb
+  means live instances get mirrored manually, and that's documented,
+  not hidden.
 - 2026-07-26 (A5): WSL→Windows elevation gotcha: `Start-Process
   -Verb RunAs` through `powershell.exe` interop BLOCKS the WSL shell
   until the UAC dialog is answered — launch it detached/background
