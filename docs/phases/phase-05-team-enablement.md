@@ -16,8 +16,12 @@ an http→https rework; and WebAuthn requires a secure context —
 passkeys are exactly where this platform is headed (Authentik admin
 now, Sentinel in 5.5).
 
-**Status:** In progress — kickoff 2026-07-26 (this doc reconciled:
-old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
+**Status:** In progress — **stage A (TLS foundation) COMPLETE
+2026-07-26** (A1–A5) **+ stage B 3/7** (B1–B3 done same day:
+Authentik live, akadmin verified). Next: **B4 — OIDC blueprints for
+OpenWebUI** (config-as-code REQUIRED, ADR-002). Kickoff 2026-07-26
+reconciled this doc (old exit criteria demanded Langfuse/MinIO
+despite the slimmed goal).
 
 **Kickoff decisions on record:**
 
@@ -112,8 +116,14 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
   authentik.lab.local, lab-CA issuer) awaiting only the B3 hosts
   line. akadmin bootstrapped headless via AUTHENTIK_BOOTSTRAP_* from
   SOPS.)*
-- [ ] **B3. `authentik.lab.local` over TLS** via the A-stage
+- [x] **B3. `authentik.lab.local` over TLS** via the A-stage
   machinery; admin login works in the browser.
+  *(Done 2026-07-26: hosts line via snapshot-first elevated script
+  (backup `hosts.bak-20260726-201249`), owner-verified akadmin login
+  on the dashboard — embedded outpost healthy (1), and the owner's
+  one mistyped password visible as a failed-login event: the audit
+  trail works. Doors tables (README/SETUP/cheatsheet) gained the
+  Authentik row at wrap-up.)*
 - [ ] **B4. OIDC provider + application for OpenWebUI** configured in
   Authentik — **blueprints (config-as-code) REQUIRED** per ADR-002:
   SSO must assemble headless on a machine nobody clicked (the cloud

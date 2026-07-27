@@ -17,6 +17,7 @@ does not type git.
 | AI Gateway (API only) | `http://ai-gateway/v1` — in-cluster only | OpenAI-compatible LLM gateway (Envoy AI Gateway). Needs a per-consumer Bearer key; deliberately NOT reachable from a browser — OpenWebUI is the only user-facing door. |
 | **ArgoCD (GitOps UI)** | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` | user `admin`; password: `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' \| base64 -d`. Five green tiles = platform matches git. |
 | **Grafana (dashboards)** | `https://grafana.lab.local:8443` | Needs hosts entry `127.0.0.1 grafana.lab.local`. user `admin`; password: `sops -d catalog/monitoring/secrets.enc.yaml`. Start with "AI Gateway — Token-Rate Autoscaling". (Fallback if ingress is broken: `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → `http://localhost:3000`.) |
+| **Authentik (SSO admin)** | `https://authentik.lab.local:8443` | Needs hosts entry `127.0.0.1 authentik.lab.local`. user `akadmin`; password: `sops -d catalog/authentik/secrets.enc.yaml` → `bootstrap_password`. Admin interface: the "Admin interface" button top-right (or `/if/admin/`). |
 | k3d cluster API | `https://0.0.0.0:39093` | Only from inside WSL. `kubectl` already knows this. |
 
 If you forgot the Portainer admin password, the only recovery is to

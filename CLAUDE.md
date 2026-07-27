@@ -71,10 +71,11 @@ and blocked items. **Read `STATUS.md` first in every new session.**
 This section in `CLAUDE.md` only captures long-running facts that
 rarely change.
 
-- WSL2 Ubuntu is running on the Windows box. The previous Docker
-  Desktop setup has been retired in favour of a from-scratch docker-ce
-  install. No `devlab` k3d cluster currently exists; it gets created
-  in Phase 1.
+- WSL2 Ubuntu runs on the Windows box with a from-scratch docker-ce
+  install (Docker Desktop retired). The 4-node `devlab` k3d cluster
+  has been live since 2026-05-17 — declarative shape in
+  `k3d/devlab-cluster.yaml`; the platform on it self-assembles from
+  `catalog/` via ArgoCD.
 
 ## How sessions work
 

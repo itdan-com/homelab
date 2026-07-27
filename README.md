@@ -98,6 +98,7 @@ with its SSO.
 | **OpenWebUI** | The chat UI | `https://openwebui.lab.local:8443` (hosts file: `127.0.0.1 openwebui.lab.local`; http on :8080 redirects) |
 | **Argo CD** | The GitOps board — platform vs. git, every sync and diff | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` |
 | **Grafana** | Dashboards — cluster health, token-rate autoscaling | `https://grafana.lab.local:8443` (hosts file: `127.0.0.1 grafana.lab.local`) |
+| **Authentik** | SSO / identity — accounts live here (Phase 5B) | `https://authentik.lab.local:8443` (hosts entry likewise) |
 | **Prometheus** | Raw metrics + PromQL console | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090` → `http://localhost:9090` |
 | **Alertmanager** | Alert routing (chat channels in Phase 7) | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093` → `http://localhost:9093` |
 | **Portainer** | Docker/Kubernetes visual manager | `https://localhost:9443` |
@@ -112,6 +113,8 @@ password):
 - **Grafana** — `admin` / the value you set in
   `catalog/monitoring/secrets.enc.yaml`; read it back:
   `sops -d catalog/monitoring/secrets.enc.yaml`
+- **Authentik** — `akadmin` / the `bootstrap_password` in
+  `catalog/authentik/secrets.enc.yaml` (same `sops -d` trick)
 - **Argo CD** — `admin` /
   `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d`
 
