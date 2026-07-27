@@ -1,23 +1,32 @@
 # Declarative cluster definition for the devlab k3d cluster.
 #
 # This file IS the source of truth for cluster shape going forward.
-# To recreate the cluster:
-#
-#   k3d cluster delete devlab
-#   k3d cluster create --config k3d/devlab-cluster.yaml
-#   # IMPORTANT (updated 2026-07-25): apply the durable DNS override —
-#   # k3s can rewrite NodeHosts on restart and silently drop the
-#   # hostAliases entry below (this actually happened; see STATUS.md).
-#   kubectl apply -f k3d/coredns-custom.yaml
-#   kubectl apply -f k3d/portainer-agent.yaml
-#   # Then bounce CoreDNS once so it re-reads its config cleanly:
-#   kubectl -n kube-system rollout restart deploy/coredns
+# To recreate the cluster, run ./bootstrap.sh (idempotent) — it
+# creates the cluster from this file, installs Cilium (the CNI lives
+# OUTSIDE this file; a cluster born from this config has no CNI and
+# its nodes stay NotReady until bootstrap step 3 runs), applies the
+# durable CoreDNS override (k3d/coredns-custom.yaml — k3s rewrites
+# NodeHosts on restart and drops the hostAliases entry below; this
+# actually happened, see STATUS.md 2026-07-25), the Portainer agent,
+# and everything else in order. Manual `k3d cluster create --config`
+# is only for debugging the cluster shape itself.
 #
 # Why these choices:
 #   - Per-node memory cap (7Gi x 4 = 28Gi) tames K8s scheduler
 #     over-commit. Without this, each node container reports the
 #     full WSL2 VM RAM (~31Gi) and the scheduler thinks the cluster
 #     has 124Gi — leading to OOM kills when workloads are placed.
+#   - Flannel and the k3s network-policy controller are DISABLED
+#     (extraArgs below): Cilium is the CNI from Phase 5.5 on.
+#     Flannel forwards packets fine but silently IGNORES
+#     NetworkPolicy objects — and Sentinel's core guarantee ("MCP
+#     servers refuse traffic that didn't come through the Sentinel
+#     proxy") is a NetworkPolicy. Cilium enforces it, and Hubble can
+#     show the allow/deny verdict per flow. kube-proxy deliberately
+#     STAYS: that's the exact combo DigitalOcean's managed DOKS runs
+#     (our Phase 8 target — cloud parity), and Cilium's kube-proxy
+#     replacement is a one-flag optimization later, not a security
+#     difference.
 #   - hostAliases wires host.docker.internal to the current WSL2
 #     default-route gateway (= the Windows host). This is the IP
 #     that gets pods to Ollama on the RTX 4070. NOTE: WSL2 reboots
@@ -88,8 +97,27 @@ options:
     timeout: "120s"
   k3s:
     # Default k3s ships Traefik enabled — leave it (phase 2 uses it for ingress)
-    # Add k3s-side args here if needed later (e.g. --disable=servicelb).
-    extraArgs: []
+    extraArgs:
+      # No Flannel, no k3s network-policy controller: Cilium takes
+      # both jobs (see header). Server-side flags — agents inherit.
+      - arg: "--flannel-backend=none"
+        nodeFilters:
+          - server:*
+      - arg: "--disable-network-policy"
+        nodeFilters:
+          - server:*
+      # CPU honesty for the scheduler (the memory analog of the 7g
+      # caps below): every node container sees all 8 WSL2 vCPUs, so
+      # the scheduler would think this 8-core box has 32. Reserving
+      # 6 makes each node advertise ~2 allocatable vCPUs — 8
+      # schedulable across 4 nodes ≈ the physical budget. This is
+      # scheduling math only (no cgroup enforcement); bootstrap.sh
+      # adds a docker-level burst ceiling per node, because k3d's
+      # config schema can cap memory but not CPU.
+      - arg: "--kubelet-arg=system-reserved=cpu=6"
+        nodeFilters:
+          - server:*
+          - agent:*
   kubeconfig:
     updateDefaultKubeconfig: true
     switchCurrentContext: true

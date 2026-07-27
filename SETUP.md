@@ -197,11 +197,10 @@ kubectl get applications -n argocd -w       # watch it converge
 bash ops/operator/launch.sh                 # (optional) start the PR-only operator
 ```
 
-The operator additionally needs the read-only kubeconfig once:
-`kubectl apply -f k3d/operator-view-rbac.yaml`, then export the
-`operator-view-token` Secret into
-`~/.config/homelab-operator/kubeconfig` (see `k3d/operator-view-rbac.yaml`
-comments; bootstrap integration is on the roadmap).
+The operator's read-only kubeconfig is minted automatically by
+`bootstrap.sh` (step 9) into `~/.config/homelab-operator/kubeconfig` —
+and re-minted on every run, because k3d assigns the API server a
+random host port per cluster create. Nothing manual to do.
 
 ---
 

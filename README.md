@@ -145,6 +145,13 @@ it back down. Re-create it anytime: `scripts/scale-demo.sh`.*
 *The whole platform as ArgoCD sees it — every service a chart, every
 chart discovered from git, nothing deployed any other way.*
 
+![The Authentik portal: one login, tiles for ArgoCD, Grafana, and OpenWebUI](docs/assets/authentik-dashboard.png)
+
+*One identity, every door. Sign in once at Authentik and each tile
+launches straight into its app via OIDC — role-mapped per app from
+group membership, TLS everywhere, and non-members don't even see the
+tile. Onboarding a teammate is creating one user and picking groups.*
+
 ## Quickstart
 
 Prereqs: Docker, [k3d](https://k3d.io), kubectl, Helm (+

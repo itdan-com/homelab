@@ -18,3 +18,12 @@ creation_rules:
   - path_regex: catalog/.*/secrets\.enc\.yaml$
     encrypted_regex: "^(data|stringData|password|.*[Pp]assword|.*[Tt]oken|.*[Kk]ey|.*[Ss]ecret)$"
     age: age13dr952jeym9vk9kr9fglgpj6n3rxznpuvtnr8hmvdsfn2w5r5aeqdwlhpf
+
+  # Bootstrap-time secrets under k3d/ — full Kubernetes Secret
+  # manifests applied by bootstrap.sh BEFORE ArgoCD exists (e.g. the
+  # lab CA keypair, so a rebuilt cluster keeps the CA that client
+  # machines already trust). Only the base64 payloads are encrypted;
+  # metadata stays diff-readable.
+  - path_regex: k3d/.*\.enc\.yaml$
+    encrypted_regex: "^(data|stringData)$"
+    age: age13dr952jeym9vk9kr9fglgpj6n3rxznpuvtnr8hmvdsfn2w5r5aeqdwlhpf

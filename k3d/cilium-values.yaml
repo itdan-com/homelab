@@ -1,0 +1,37 @@
+# Helm values for Cilium on the devlab cluster — installed by
+# bootstrap.sh (step 3), NOT an ArgoCD catalog app: the CNI must
+# exist before any pod, including ArgoCD itself, can start. The
+# chart version is pinned in bootstrap.sh; bumping it is a
+# deliberate decision, like the k3s image pin in devlab-cluster.yaml.
+
+# k3s hands out pod CIDRs from 10.42.0.0/16; pointing Cilium's IPAM
+# pool at the same range keeps addresses consistent with what k3s's
+# controller-manager expects (official Cilium-on-k3s guidance).
+ipam:
+  operator:
+    clusterPoolIPv4PodCIDRList: ["10.42.0.0/16"]
+
+# One replica is right for a single-server cluster — the operator is
+# a control-plane piece; a second copy only matters with 2+ servers.
+operator:
+  replicas: 1
+
+# DELIBERATE (and the chart default — stated so the choice is
+# visible and greppable): kube-proxy keeps doing Service load
+# balancing; Cilium does pod networking + NetworkPolicy + Hubble.
+# Same combo as DigitalOcean's managed DOKS, the Phase 8 target.
+# Flipping this to true (kube-proxy-free eBPF mode) also requires
+# --disable-kube-proxy in devlab-cluster.yaml — a later,
+# deliberate experiment; not a security difference.
+kubeProxyReplacement: false
+
+# Hubble: per-flow observability, including the NetworkPolicy
+# verdict (ALLOWED/DENIED) per connection — exactly the evidence
+# trail Phase 5.5's "MCP servers refuse non-proxy traffic" needs.
+# Relay aggregates flows across all four nodes so one CLI/API call
+# sees the whole cluster. The UI can layer on when Sentinel work
+# starts in earnest.
+hubble:
+  enabled: true
+  relay:
+    enabled: true
