@@ -130,6 +130,72 @@ Ranked by what they would cost to fix later rather than now:
 6. **No egress policy on fronted workloads.** The ingress allowlist
    proves who can reach a hostile MCP server, never where it can reach.
 
+## Rejected: Sentinel behind Authentik SSO
+
+**Asked directly (owner, 2026-07-27): "we are going to eventually add
+it to authentik as an app right?" The answer is no, and it is settled
+rather than deferred.** Every other workload in `catalog/` should be an
+Authentik client; Sentinel is the deliberate exception this whole ADR
+exists to protect, and it is worth writing down because from the
+outside it looks like an oversight — the kind a future maintainer would
+helpfully "fix".
+
+Three independent reasons, each sufficient on its own:
+
+1. **It hands the operator Claude a route to self-approval.** Authentik's
+   groups are declared in `catalog/authentik/templates/oidc-blueprints.yaml`
+   — in this repo, applied by ArgoCD. The Phase 4.5 operator's entire
+   job is opening PRs against this repo. If Sentinel trusted Authentik,
+   an ordinary-looking SSO housekeeping PR that adds an identity to an
+   admin group, merged among a dozen config changes, would yield an
+   identity able to approve Claude's own capability requests. Claude
+   would have obtained granting power without ever touching Sentinel's
+   admin surface — exactly what `CLAUDE.md`'s "if a feature seems to
+   require Claude reaching the Sentinel admin surface, the design is
+   wrong" rule forbids, reached by a longer road. The PR gate does not
+   save us, because the dangerous PR does not look dangerous.
+2. **Failure domain.** The kill switch must work precisely when the
+   cluster is compromised or broken. A dead Authentik already locks
+   every SSO login on this platform (the liveness gate checks for it).
+   A control that is reachable only while the thing it polices is
+   healthy is not a control.
+3. **Impersonation.** Cluster-admin implies Authentik-admin implies
+   impersonating the operator — `scripts/sso-dance.sh` uses that
+   feature deliberately to test as `bob`. Correct for a chat app,
+   catastrophic in front of a kill switch.
+
+**The framing to keep:** every app on this platform keeps a local
+break-glass login for the case where Authentik is down (SETUP.md Part
+2). Sentinel is the app where the break-glass *is* the front door.
+
+Also rejected: Authentik as an *additional* factor on top of the
+passkey. It cannot grant access, so reason 1 weakens — but an AND-factor
+means a dead cluster locks the operator out of the kill switch, which
+is reason 2 unchanged.
+
+**Accepted instead:** a **link-type application** — an authentik
+application with no provider, i.e. a bookmark on the user portal
+(`linkApps.sentinel` in `catalog/authentik/values.yaml`). It satisfies
+the real motivation behind the question ("once we get the domain in
+here I don't want to be looking for all the apps we've created")
+without any trust coupling: authentik neither authenticates,
+authorizes, nor proxies the destination — it renders a tile. The URL is
+a value, not a constant, because the console is loopback locally and
+VPN-reachable in cloud.
+
+In cloud, an **external** IdP (one the cluster does not control) would
+not suffer reason 1 or 3, and is defensible as a convenience later. It
+still adds a third-party availability dependency to the kill switch, so
+a locally-registered passkey must remain the primary path regardless.
+
+**Corollary for multi-user (ties to debt 1 below):** if more than one
+person should be able to approve, that is a small set of passkeys
+registered directly with Sentinel — not a group synced from the
+platform directory. "May you use the platform" and "may you approve an
+agent's request for real-world power" are different questions, and
+answering both from one directory quietly grants the kill switch to
+every SSO user.
+
 ## Alternatives considered
 
 - **Sentinel in-cluster, hardened.** Rejected: ends the trust model.

@@ -302,3 +302,44 @@ data:
           order: 20
           enabled: true
   {{- end }}
+  {{- range $key, $app := .Values.linkApps }}
+  {{- if $app.enabled }}
+  {{ $key }}-link.yaml: |
+    version: 1
+    metadata:
+      name: {{ $key }}-link
+    entries:
+      # An application with NO provider — authentik's way to publish a
+      # plain bookmark on the user portal. Authentik does not
+      # authenticate, authorize, or proxy the destination; it only
+      # renders a tile. That distinction is the entire point here for
+      # Sentinel (ADR-004): the platform's surfaces should be findable
+      # in one place, but the kill switch must not depend on an
+      # in-cluster IdP whose group definitions live in this repo.
+      - model: authentik_core.group
+        state: present
+        id: group-{{ $key }}-link
+        identifiers:
+          name: {{ $app.group }}
+      - model: authentik_core.application
+        state: present
+        id: {{ $key }}-link-app
+        identifiers:
+          slug: {{ $app.slug }}
+        attrs:
+          name: {{ $app.name }}
+          meta_description: {{ $app.description | quote }}
+          meta_launch_url: {{ $app.url }}
+          # Opens in a new tab: the destination is not part of this
+          # portal's origin and, for Sentinel, not even on the cluster.
+          open_in_new_tab: true
+      - model: authentik_policies.policybinding
+        state: present
+        identifiers:
+          target: !KeyOf {{ $key }}-link-app
+          group: !KeyOf group-{{ $key }}-link
+        attrs:
+          order: 10
+          enabled: true
+  {{- end }}
+  {{- end }}

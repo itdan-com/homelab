@@ -42,6 +42,34 @@ oidcClients:
     clientId: argocd
     baseUrl: https://argocd.lab.local:8443
 
+# Portal tiles for platform surfaces that are deliberately NOT SSO
+# clients. These create an authentik *application with no provider* —
+# a bookmark. It carries no authority: authentik neither authenticates
+# nor authorizes the destination, it only puts a link on the portal so
+# the platform's surfaces are findable in one place.
+#
+# Sentinel is here for a load-bearing reason, not an oversight. See
+# docs/adr/ADR-004 "Rejected: Sentinel behind Authentik SSO" — the
+# broker's admin surface must not depend on an in-cluster identity
+# provider whose groups are defined in this very repo, because the
+# operator Claude opens PRs against this repo. The tile is the only
+# safe part of that idea.
+linkApps:
+  sentinel:
+    enabled: true
+    name: Sentinel
+    slug: sentinel
+    # Environment-specific by design (ADR-004): loopback locally,
+    # a VPN-reachable host in cloud. Never a cluster address.
+    url: http://127.0.0.1:8400/
+    description: >-
+      Capability broker and kill switch. Runs OUTSIDE the cluster and
+      authenticates you with its own passkey — by design, this link is
+      a bookmark, not a single sign-on.
+    # Which group sees the tile. A link to a console you cannot open is
+    # noise, so it is bound rather than shown to everyone.
+    group: platform-operators
+
 # ---------------------------------------------------------------------------
 # Subchart values. Every leaf under `authentik:` below becomes an
 # AUTHENTIK_* env var via the chart's rendered Secret — which is how
