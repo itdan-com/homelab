@@ -61,7 +61,9 @@ linkApps:
     slug: sentinel
     # Environment-specific by design (ADR-004): loopback locally,
     # a VPN-reachable host in cloud. Never a cluster address.
-    url: http://127.0.0.1:8400/
+    # `localhost`, not `127.0.0.1`: WebAuthn's Relying Party ID must be
+    # a domain, so the passkey only works on the named host (5.5.6).
+    url: http://localhost:8400/
     description: >-
       Capability broker and kill switch. Runs OUTSIDE the cluster and
       authenticates you with its own passkey — by design, this link is

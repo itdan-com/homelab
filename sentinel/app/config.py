@@ -47,6 +47,30 @@ CONSOLE_ALLOWED_HOSTS = [
     if h.strip()
 ]
 
+# --- human auth (5.5.6) ------------------------------------------------------
+#
+# WebAuthn's Relying Party ID must be a DOMAIN — the spec does not allow
+# a bare IP, so the console is reached at http://localhost:8400 and not
+# http://127.0.0.1:8400. (Browsers treat localhost as a secure context,
+# which WebAuthn also requires, so plain HTTP is fine here; in cloud this
+# becomes the real console hostname over real TLS — ADR-004.)
+CONSOLE_RP_ID = os.environ.get("SENTINEL_RP_ID", "localhost")
+CONSOLE_PORT = int(os.environ.get("SENTINEL_ADMIN_PORT", "8400"))
+CONSOLE_ORIGIN = os.environ.get(
+    "SENTINEL_CONSOLE_ORIGIN", f"http://{CONSOLE_RP_ID}:{CONSOLE_PORT}")
+
+# How long a console session lives before the human must present the
+# authenticator again. Short on purpose: this session can revoke every
+# capability on the platform.
+SESSION_TTL_MINUTES = int(os.environ.get("SENTINEL_SESSION_TTL_MINUTES", "60"))
+
+# An enrollment code is the out-of-band secret that authorizes adding a
+# NEW authenticator. It is minted by `scripts/enroll-operator.sh` on the
+# host and printed to the terminal — so registering a passkey requires
+# shell access to the Sentinel host, not merely the ability to reach the
+# console's port.
+ENROLLMENT_TTL_MINUTES = int(os.environ.get("SENTINEL_ENROLLMENT_TTL_MINUTES", "10"))
+
 # A flow counts as active if it holds a live grant, or if anything at
 # all happened on it within this window. (`ended_at` is only set when a
 # caller explicitly closes a flow, which nothing does yet — so it can

@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -167,6 +167,12 @@ class AuditEventType(StrEnum):
     DENIAL = "denial"
     USE = "use"
     REVOCATION = "revocation"
+    # Human-auth transitions (5.5.6). The record must be able to answer
+    # "who could have approved this, and when did that change" — an
+    # authenticator being added is as security-relevant as a grant.
+    AUTH_SUCCESS = "auth_success"
+    AUTH_FAILURE = "auth_failure"
+    CREDENTIAL_ADDED = "credential_added"
     # Two additions over the phase doc's five (recorded in its notes):
     # kill-switch transitions are security-critical events in their own
     # right — hiding them inside "revocation" would blur the audit story.
@@ -203,3 +209,117 @@ class AuditEvent(Base):
     tool: Mapped[str | None] = mapped_column(String(128))
     actor: Mapped[str | None] = mapped_column(String(128))
     details: Mapped[dict | None] = mapped_column(JSON)
+
+
+# --- human auth (5.5.6) -------------------------------------------------------
+#
+# Until now, "the human" was a config string and loopback-reachability
+# was the whole authorization model. These four tables replace that with
+# a credential the operator physically holds. Same secret discipline as
+# everywhere else: nothing here stores anything replayable — public keys
+# are public by definition, sessions and enrollment codes are SHA-256
+# digests, and the TOTP secret is the one unavoidable exception (it is
+# shared-secret by construction, which is exactly why it is the fallback
+# and not the primary).
+
+
+class Operator(Base):
+    """A human who may approve. Deliberately NOT synced from the
+    platform's identity provider: Authentik runs inside the cluster this
+    service polices, and its groups are declared in the same git repo the
+    agent opens PRs against (ADR-004). Who may APPROVE is a small set
+    managed here; who may USE the platform is a different question with a
+    different answer."""
+
+    __tablename__ = "operators"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    username: Mapped[str] = mapped_column(String(128), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    # Base32 TOTP seed, present only if the operator enrolled the
+    # fallback. NULL for passkey-only operators, which is the better
+    # posture — a TOTP seed is phishable in a way a passkey is not.
+    totp_secret: Mapped[str | None] = mapped_column(String(64))
+    totp_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class WebAuthnCredential(Base):
+    """One registered authenticator. An operator may hold several —
+    laptop, phone, hardware key — and that IS the recovery story: a
+    second passkey beats any account-recovery backdoor, because a
+    backdoor is a second front door to the kill switch."""
+
+    __tablename__ = "webauthn_credentials"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    operator_id: Mapped[str] = mapped_column(ForeignKey("operators.id"), index=True)
+    label: Mapped[str] = mapped_column(String(128))
+    # Base64url credential id as the browser reports it, and the COSE
+    # public key. Neither is a secret; the private key never leaves the
+    # authenticator, which is the entire point of choosing WebAuthn.
+    credential_id: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary)
+    # Cloned-authenticator detector: a counter that goes backwards means
+    # two devices are presenting the same credential.
+    sign_count: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    operator: Mapped[Operator] = relationship()
+
+
+class ConsoleSession(Base):
+    """A verified browser session. Stored server-side (hash only) rather
+    than as a self-contained signed cookie, so that revocation is real:
+    a stolen laptop is answered by deleting rows, not by waiting for an
+    expiry the attacker's copy also carries."""
+
+    __tablename__ = "console_sessions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    operator_id: Mapped[str] = mapped_column(ForeignKey("operators.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    method: Mapped[str] = mapped_column(String(16))  # webauthn | totp
+
+    operator: Mapped[Operator] = relationship()
+
+
+class EnrollmentCode(Base):
+    """Out-of-band authorization to add an authenticator, minted by
+    `scripts/enroll-operator.sh` on the host and printed to the terminal.
+
+    Registration must not be self-service just because no credential
+    exists yet: 'first browser to reach the port wins' would mean any
+    local process — or anything that talks a victim's browser into a
+    request — could enroll itself as the approver. Requiring a code from
+    the host's shell makes enrolling a deliberate act by someone who
+    already has the host."""
+
+    __tablename__ = "enrollment_codes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(128))
+    label: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class WebAuthnChallenge(Base):
+    """A pending ceremony challenge. Server-side and single-use: a
+    challenge kept in the browser's session would let a replayed one be
+    reused, and the whole point of the challenge is that it cannot."""
+
+    __tablename__ = "webauthn_challenges"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    challenge: Mapped[bytes] = mapped_column(LargeBinary)
+    purpose: Mapped[str] = mapped_column(String(16))  # register | login
+    operator_id: Mapped[str | None] = mapped_column(String(32))
+    enrollment_id: Mapped[str | None] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)

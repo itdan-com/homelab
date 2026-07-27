@@ -34,15 +34,44 @@ the security model — not a convention that can be forgotten:
 | App | Binds | Who reaches it | Routes |
 |---|---|---|---|
 | `app.broker` | k3d gateway IP, **mTLS required** | cluster pods (via the Sentinel proxy) | request a capability, poll for the answer, **check** a token, **/v1/ext-authz** (Envoy's per-call question) |
-| `app.main` (admin) | `127.0.0.1` | the human at the console (`http://127.0.0.1:8400/`) | **grant**, **deny**, **kill**/release, audit, flows |
+| `app.main` (admin) | `127.0.0.1` | the human at the console (`http://localhost:8400/`, passkey required) | **grant**, **deny**, **kill**/release, audit, flows |
+
+### Signing in (5.5.6)
+
+The console is shut until a **WebAuthn passkey** is verified — every
+route that reads or changes platform state answers 401 without a
+session. Reads are gated too: the pending panel and the audit log
+describe what the platform's agent is trying to do and what it has
+done, which is not public merely because it is not a button.
+
+A passkey rather than a password because `CLAUDE.md` says never
+password-only, and a passkey cannot be phished at all: the
+authenticator signs a challenge bound to *this origin*, so a lookalike
+site gets a signature that verifies against nothing.
+
+**Enrolling requires shell access to this host**, not merely the
+ability to reach the port:
+
+```bash
+sentinel/scripts/enroll-operator.sh          # prints a single-use code
+# then open http://localhost:8400/ and paste it
+```
+
+`localhost`, not `127.0.0.1` — WebAuthn's Relying Party ID must be a
+domain, and an IP is not one. Run the same command again to add a
+second device: **that is the recovery story.** There is no account
+recovery backdoor, because a backdoor is a second front door to the
+kill switch. TOTP exists as the documented fallback and can only be
+enrolled by an operator who is already signed in.
 
 ### The console is a web page, so loopback is not the whole story
 
 Binding to loopback stops the *cluster*. It does not stop the
 operator's own browser, which will carry a request from any tab to
-`127.0.0.1`. Three independent controls sit in front of every
-state-changing route — none of them authentication, which arrives at
-5.5.6 and stacks on top:
+loopback. Three independent controls sit in front of every
+state-changing route, *below* the authentication above — they stop a
+page the operator visits from driving the console even while a valid
+session exists:
 
 1. **Host allowlist** — defeats DNS rebinding (`Host: evil.com` → 400).
 2. **Origin check** — defeats plain cross-site requests (→ 403).
@@ -57,14 +86,14 @@ the kill switch is the last place to accept markup from the thing
 asking for power.
 
 **Identity is resolved by the server, never asserted by the caller.**
-There is no `granted_by` field to send; the audit log records
-`SENTINEL_OPERATOR` (default: the host user), and 5.5.6 swaps that for
-the verified passkey without touching any route.
+There is no `granted_by` field to send; the audit log records the
+operator whose passkey opened the session — a cryptographically
+established human, not a string someone typed.
 
 Granting has no route on the broker app. A pod cannot reach loopback
 via the gateway IP, so the grant/kill surface is unreachable from k3d
-by construction — before any auth exists (WebAuthn/TOTP arrive at
-5.5.6; until then loopback-reachability *is* the boundary).
+by construction — *before* the passkey is even asked for. Layer 3 and
+layer 7 answer independently.
 
 ## The capability loop
 
@@ -111,8 +140,9 @@ python3 -m venv .venv                        # needs the python3.12-venv apt pkg
 
 # admin (human) console + interactive docs on loopback:
 .venv/bin/uvicorn app.main:app --reload --port 8400
-#   → http://127.0.0.1:8400/              the one-screen console
-#   → http://127.0.0.1:8400/openapi.json  the generated API schema
+#   → http://localhost:8400/              the one-screen console
+#   → http://localhost:8400/openapi.json  the generated API schema
+# (localhost, not 127.0.0.1: WebAuthn's RP ID must be a domain.)
 # (Swagger UI is deliberately OFF: it loads its JavaScript from a public
 #  CDN, and the origin that owns the kill switch executes no third-party
 #  code. app/schemas.py's Field descriptions are the reference text, and
@@ -147,7 +177,9 @@ sentinel/
 │   ├── broker.py      # CLUSTER listener: request/poll/check/ext-authz (mTLS)
 │   ├── service.py     # every state transition + its audit, in one place
 │   ├── scope.py       # request → capability-scope derivation (pure, tested)
-│   ├── actor.py       # who is acting (server-resolved) + the CSRF guard
+│   ├── actor.py       # who is acting (from the session) + the CSRF guard
+│   ├── auth.py        # WebAuthn ceremonies, sessions, TOTP fallback
+│   ├── auth_routes.py # /auth/* endpoints the console calls
 │   ├── console/       # the one-screen GUI (no build step, no CDN)
 │   ├── schemas.py     # Pydantic shapes = the /docs human documentation
 │   ├── config.py      # env-driven settings (DB path/URL, TTLs, operator)
@@ -155,6 +187,7 @@ sentinel/
 │   └── models.py      # data model (flows, grants, requests, audit, kill)
 ├── scripts/
 │   ├── mint-certs.sh  # Sentinel CA + broker/client certs + cluster inject
+│   ├── enroll-operator.sh # mint a single-use code to add an authenticator
 │   └── run-broker.sh  # boot the broker with client-cert-required TLS
 ├── certs/             # minted material (gitignored; /var/lib at 5.5.7)
 ├── migrations/        # Alembic (env.py wired to app.models metadata)

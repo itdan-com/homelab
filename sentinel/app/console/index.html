@@ -10,9 +10,53 @@
   <header>
     <h1>SENTINEL</h1>
     <div class="who">operator <b id="operator">…</b></div>
+    <button id="logout" class="ghost hidden">Sign out</button>
     <div id="link" class="link">connecting…</div>
   </header>
 
+  <!-- Shown until a passkey has been verified. Everything below it is
+       not merely hidden but unreachable: every data route 401s without
+       a session, so a signed-out console has nothing to leak. -->
+  <section id="gate" class="gate hidden">
+    <div class="gate-card">
+      <h2 id="gate-title">Sign in</h2>
+
+      <div id="gate-signin">
+        <p class="gate-copy">
+          Approving a capability is a decision only you can make, so the
+          console asks for the authenticator you physically hold.
+        </p>
+        <button id="passkey-btn" class="grant">Use passkey</button>
+        <p class="gate-alt">
+          <button id="show-totp" class="linkish">No authenticator? Use a TOTP code</button>
+        </p>
+        <div id="totp-form" class="hidden">
+          <input id="totp-user" placeholder="operator name" autocomplete="username">
+          <input id="totp-code" placeholder="6-digit code" inputmode="numeric"
+                 autocomplete="one-time-code">
+          <button id="totp-btn">Verify code</button>
+        </div>
+      </div>
+
+      <div id="gate-enroll" class="hidden">
+        <p class="gate-copy">
+          No authenticator is enrolled yet. On this host, run:
+        </p>
+        <pre class="cmd">sentinel/scripts/enroll-operator.sh</pre>
+        <p class="gate-copy">
+          then paste the code it prints. It is required so that reaching
+          this page is not by itself enough to become the person who
+          approves.
+        </p>
+        <input id="enroll-code" placeholder="enrollment code" autocomplete="off">
+        <button id="enroll-btn" class="grant">Register this device</button>
+      </div>
+
+      <p id="gate-error" class="gate-error"></p>
+    </div>
+  </section>
+
+  <div id="app" class="hidden">
   <!-- Kill-switch state is the loudest thing on the page: if it is
        engaged, nothing else on screen matters. -->
   <section id="killbar" class="killbar">
@@ -48,6 +92,7 @@
       <div id="audit"></div>
     </section>
   </main>
+  </div>
 
   <script src="/static/console.js"></script>
 </body>

@@ -65,9 +65,11 @@ Admin listener (`app/main.py`, binds 127.0.0.1 only — unreachable from pods by
 
 ### 5.5.6 Human auth
 
-- [ ] WebAuthn / passkey registration flow on first run.
-- [ ] TOTP fallback (otpauth:// QR for any authenticator app).
-- [ ] **No password-only path.** A password by itself is not acceptable — phishing the password phishes the kill switch.
+- [x] WebAuthn / passkey registration — but **not** "first run", which was the wrong shape: registration requires a single-use code minted on the host by `scripts/enroll-operator.sh`. "No credential exists yet, so let the first browser register" would mean anything that can reach the port becomes the approver. The same command adds a second device later, so there is one mechanism and no special case. *(2026-07-27)*
+- [x] TOTP fallback — `otpauth://` URI plus a server-rendered **SVG** QR as a `data:` URI (no JS QR library, no Pillow: the console loads no third-party code and the trust anchor gains no image dependency). Enrollable only by an operator who is already signed in, and unusable until confirmed with a live code.
+- [x] **No password-only path** — there is no password at all. Sessions are server-side rows (hash only) so revocation is real; the cookie is HttpOnly + SameSite=Strict + Secure.
+- [x] Every route that reads or changes platform state now requires a session, reads included — the pending panel and audit log describe what the agent is doing, which is not public merely because it is not a button. `/healthz` stays open and uninformative so a supervisor can check liveness before anyone enrolls.
+- [x] `current_operator()` now returns the passkey-verified human, so the audit log's `granted_by` is cryptographic rather than configured — the 5.5.5 one-file-change prediction held.
 
 ### 5.5.7 Systemd integration
 
@@ -118,6 +120,46 @@ These layer on after Phase 7 without architectural change.
 - `STATUS.md` updated.
 
 ## Notes captured during execution
+
+- **2026-07-27 — 5.5.6 done (the passkey), plus the Authentik question
+  answered for good.**
+  - **Stack:** `webauthn` 3.0.0 + `pyotp` + `qrcode` (SVG factory —
+    PNG would have pulled Pillow into the trust anchor for one picture).
+    Five tables: operators, webauthn_credentials, console_sessions,
+    enrollment_codes, webauthn_challenges. Migration `cdf028306ccc`;
+    the audit enum needed hand-widening **for the third time** (Alembic
+    still does not diff CHECK constraints — this is now a reflex).
+  - **The design call that mattered:** registration is NOT "first run
+    wins". It needs a single-use code minted by
+    `scripts/enroll-operator.sh` on the host, so becoming the approver
+    requires already having the host — not merely reaching the port.
+    One mechanism covers first enrollment and adding a second device,
+    and a second device is the recovery story: no account-recovery
+    backdoor, because a backdoor is a second front door to the kill
+    switch.
+  - **`localhost`, not `127.0.0.1`.** WebAuthn's Relying Party ID must
+    be a domain; an IP is not one. Every console URL moved, including
+    the Authentik tile.
+  - **Sessions are DB rows, not signed cookies**, so revocation is
+    real; they survive a process restart (asserted), which is correct —
+    restarting Sentinel should not sign the operator out.
+  - **Tests use a real software authenticator** (P-256 key, real
+    signature over authenticatorData ‖ SHA256(clientDataJSON)) rather
+    than mocks, so the four checks that make a passkey unphishable are
+    each exercised: wrong origin, replayed challenge, unissued
+    challenge, unknown credential — all 401. 12/12 across four suites,
+    each also runnable standalone. Live ceremony driven over HTTP
+    against the running listener too, then the full chain: ask → grant
+    (401 without a session, 201 with) → claim → **200 through the
+    proxy**.
+  - **Harness lesson:** the session cookie is `Secure`, and an HTTP
+    test client silently never sends it back. Browsers *do* send Secure
+    cookies to localhost, so the app keeps the strict setting and the
+    test client moved to an https base URL — fix the harness, not the
+    security property.
+  - **Every suite now signs in** (`tests/authkit.py`), because the
+    console has no anonymous surface any more. That is the honest
+    shape: "authenticate first" is simply what using it looks like.
 
 - **2026-07-27 — adversarial review of everything built so far; six
   more defects closed.** An independent read of the broker + proxy

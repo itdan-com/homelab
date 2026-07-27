@@ -30,11 +30,15 @@ from starlette.testclient import TestClient  # noqa: E402
 
 from app.broker import app as broker_app  # noqa: E402
 from app.main import app as admin_app  # noqa: E402
+from authkit import sign_in  # noqa: E402
 from app.scope import derive_scope  # noqa: E402
 
 _HERE = os.path.dirname(__file__)
 broker = TestClient(broker_app)
-admin = TestClient(admin_app)
+# https + sign-in: since 5.5.6 the console has no anonymous
+# surface, so authenticating first is simply what using it looks
+# like (the session cookie is Secure, which an http client drops).
+admin = TestClient(admin_app, base_url="https://testserver")
 
 AUTHZ = "/v1/ext-authz"
 CONSOLE = {"x-sentinel-console": "1"}  # the admin app's CSRF guard
@@ -124,6 +128,7 @@ def test_derive_scope_table():
 
 def test_ext_authz_verdicts():
     _migrate()
+    sign_in(admin)
     token = _granted_token("xz-flow-A", "echo.say")
 
     # happy path: 200, grant identity attached for the upstream's log

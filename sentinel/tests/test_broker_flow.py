@@ -34,10 +34,14 @@ from starlette.testclient import TestClient  # noqa: E402
 
 from app.broker import app as broker_app  # noqa: E402
 from app.main import app as admin_app  # noqa: E402
+from authkit import sign_in  # noqa: E402
 
 _HERE = os.path.dirname(__file__)
 broker = TestClient(broker_app)
-admin = TestClient(admin_app)
+# https + sign-in: since 5.5.6 the console has no anonymous
+# surface, so authenticating first is simply what using it looks
+# like (the session cookie is Secure, which an http client drops).
+admin = TestClient(admin_app, base_url="https://testserver")
 CONSOLE = {"x-sentinel-console": "1"}  # the admin app's CSRF guard
 
 
@@ -71,6 +75,7 @@ def _check(token, tool, flow):
 
 def test_broker_lifecycle():
     _migrate()
+    sign_in(admin)
 
     # --- happy path -----------------------------------------------------------
     r = _ask("flow-A", "github.create_pr")
@@ -124,8 +129,11 @@ def test_broker_lifecycle():
     from importlib import reload
     reload(dbmod)  # brand-new engine/session, as a fresh process would build
     from app.main import app as admin2
-    assert TestClient(admin2).get("/v1/kill").json()["engaged"] is True, \
-        "kill state persists across restart"
+    # Same cookies on purpose: a PROCESS restart must not sign the
+    # operator out — the session is a row in the DB, not memory.
+    assert TestClient(admin2, base_url="https://testserver",
+                      cookies=admin.cookies).get("/v1/kill").json()["engaged"] is True, \
+        "kill state (and the console session) survive a restart"
 
     admin.post("/v1/kill/release", headers=CONSOLE)
     assert _check(token, "github.create_pr", "flow-A").json()["reason"] == "revoked", \

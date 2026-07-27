@@ -11,20 +11,26 @@ granting routes there.
 Loopback is not, however, the same as safe. The console is a WEB page
 in the operator's browser, and a browser will happily carry a request
 from any other tab. So three independent controls sit in front of
-every state-changing route, none of which is authentication (that is
-5.5.6, and it stacks on top):
+every state-changing route, none of which is authentication:
 
-  1. Host allowlist   — defeats DNS rebinding (`Host: evil.com` → 403)
+  1. Host allowlist   — defeats DNS rebinding (`Host: evil.com` → 400)
   2. Origin check     — defeats plain cross-site requests
   3. Console header   — a custom header forces a CORS preflight that
                         this app never answers, so the browser refuses
                         before Sentinel is asked
 
-And the actor is resolved server-side (app.actor), so the audit log
-records who Sentinel BELIEVES acted rather than a name the caller
-typed.
+**And, since 5.5.6, authentication on top of all three**: every route
+that reads or changes platform state requires a session opened by a
+WebAuthn passkey (`app.auth`). Reads are gated too — the pending panel
+and the audit log describe what the platform's agent is trying to do
+and what it has done, which is not public merely because it is not a
+button. The actor is resolved server-side from that session, so the
+audit log records a cryptographically established human rather than a
+name the caller typed.
 
-Console: http://127.0.0.1:8400/     Interactive API docs: /docs
+Console: http://localhost:8400/  — the hostname matters. WebAuthn's
+Relying Party ID must be a domain, so `localhost` works and
+`127.0.0.1` does not.
 """
 
 from datetime import timedelta
@@ -38,7 +44,8 @@ from sqlalchemy import func, select, text
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
-from .actor import console_guard, current_operator
+from . import auth_routes
+from .actor import console_guard, current_operator, require_operator
 from .config import CONSOLE_ALLOWED_HOSTS, FLOW_ACTIVE_MINUTES
 from .db import SessionLocal, engine
 from .models import (
@@ -113,6 +120,7 @@ async def _console_hardening(request: Request, call_next):
     return response
 
 
+app.include_router(auth_routes.router)
 app.mount("/static", StaticFiles(directory=CONSOLE_DIR), name="static")
 
 
@@ -123,10 +131,13 @@ def console():
 
 @app.get("/healthz", tags=["meta"])
 def healthz() -> dict:
+    """Deliberately unauthenticated and deliberately uninformative: a
+    health check exists to tell a supervisor the process is alive, so it
+    must work before anyone signs in and must not describe who can. Who
+    you are signed in as is `/auth/status`."""
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
-    return {"status": "ok", "listener": "admin", "version": __version__,
-            "operator": current_operator()}
+    return {"status": "ok", "listener": "admin", "version": __version__}
 
 
 def _get_request(s, request_id: str) -> CapabilityRequest:
@@ -141,6 +152,7 @@ def _get_request(s, request_id: str) -> CapabilityRequest:
     response_model=list[PendingRequest],
     tags=["decisions"],
     summary="What is asking for power right now",
+    dependencies=[Depends(require_operator)],
 )
 def list_pending():
     """The console's main panel (and the curl equivalent). Only pending
@@ -211,7 +223,8 @@ def deny(request_id: str, body: DenyIn, operator: str = Depends(current_operator
 
 
 @app.get("/v1/kill", response_model=KillStatus, response_model_exclude_none=True,
-         tags=["kill"], summary="Kill-switch state")
+         tags=["kill"], summary="Kill-switch state",
+         dependencies=[Depends(require_operator)])
 def kill_status():
     with SessionLocal() as s:
         return KillStatus.model_validate(kill_state(s))
@@ -257,6 +270,7 @@ def release(operator: str = Depends(current_operator)):
     response_model=list[AuditEventOut],
     tags=["record"],
     summary="The canonical record, newest first",
+    dependencies=[Depends(require_operator)],
 )
 def audit_events(
     limit: int = Query(default=50, ge=1, le=500),
@@ -277,6 +291,7 @@ def audit_events(
     response_model=list[FlowOut],
     tags=["record"],
     summary="Known flows, with the evidence for calling one active",
+    dependencies=[Depends(require_operator)],
 )
 def flows(active: bool = Query(
     default=False,

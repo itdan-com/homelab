@@ -29,10 +29,14 @@ from starlette.testclient import TestClient  # noqa: E402
 from app.broker import app as broker_app  # noqa: E402
 from app.config import OPERATOR  # noqa: E402
 from app.main import app as admin_app  # noqa: E402
+from authkit import sign_in  # noqa: E402
 
 _HERE = os.path.dirname(__file__)
 broker = TestClient(broker_app)
-admin = TestClient(admin_app)
+# https + sign-in: since 5.5.6 the console has no anonymous
+# surface, so authenticating first is simply what using it looks
+# like (the session cookie is Secure, which an http client drops).
+admin = TestClient(admin_app, base_url="https://testserver")
 CONSOLE = {"x-sentinel-console": "1"}
 
 
@@ -52,6 +56,7 @@ def _pending(flow="guard-flow", tool="guard.tool"):
 
 def test_console_guards():
     _migrate()
+    sign_in(admin)
     rid = _pending()
 
     # Layer 3 — the custom header. A cross-origin page cannot set it

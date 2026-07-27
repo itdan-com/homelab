@@ -3,6 +3,14 @@ __pycache__/
 *.pyc
 *.db
 *.sqlite3
+# WAL/SHM sidecars hold PAGES OF THE DATABASE, including rows not yet
+# checkpointed into the .db file. `*.db` alone did not match them, so
+# enabling WAL mode at 5.5.5 quietly made two files full of database
+# contents committable — and they were committed (see STATUS). Anything
+# that is a piece of the database is ignored, whatever it is called.
+*.db-wal
+*.db-shm
+*.db-journal
 # Sentinel's private CA + leaf keys (minted per-install by
 # scripts/mint-certs.sh) — never in git, encrypted or not: the CA
 # key IS the authority to impersonate the broker.

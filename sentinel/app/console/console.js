@@ -206,15 +206,12 @@ document.getElementById('release-btn').onclick = async () => {
 async function refresh() {
   const link = document.getElementById('link');
   try {
-    const [health, kill, pending, flows, audit] = await Promise.all([
-      api('/healthz'),
+    const [kill, pending, flows, audit] = await Promise.all([
       api('/v1/kill'),
       api('/v1/capability-requests'),
       api('/v1/flows?active=true'),
       api('/v1/audit-events?limit=50'),
     ]);
-    document.getElementById('operator').textContent = health.operator;
-
     const byFlow = {};
     for (const e of audit) (byFlow[e.flow_id] ||= []).push(e);
 
@@ -226,10 +223,159 @@ async function refresh() {
     link.className = 'link live';
     link.textContent = `live · ${new Date().toLocaleTimeString()}`;
   } catch (e) {
+    if (String(e.message).startsWith('401')) {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      return boot();   // session expired — ask for the authenticator again
+    }
     link.className = 'link lost';
     link.textContent = `NO CONTACT WITH SENTINEL — showing stale data (${e.message})`;
   }
 }
 
-refresh();
-setInterval(refresh, POLL_MS);
+/* --- authentication ------------------------------------------------------
+ *
+ * WebAuthn's browser API speaks ArrayBuffers while JSON speaks strings, so
+ * every ceremony is a base64url conversion sandwich. The private key never
+ * leaves the authenticator; what crosses the wire is a signature over a
+ * challenge bound to THIS origin, which is why a lookalike site cannot
+ * replay it — that property is the whole reason the kill switch is behind
+ * a passkey and not a password.
+ */
+
+const b64uToBuf = (s) => {
+  const pad = s.replace(/-/g, '+').replace(/_/g, '/');
+  const bin = atob(pad + '='.repeat((4 - (pad.length % 4)) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0)).buffer;
+};
+const bufToB64u = (buf) =>
+  btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+const gateError = (msg) => {
+  document.getElementById('gate-error').textContent = msg || '';
+};
+
+async function doRegister() {
+  gateError('');
+  const code = document.getElementById('enroll-code').value.trim();
+  if (!code) return gateError('Paste the code printed by enroll-operator.sh.');
+  try {
+    const started = await api('/auth/register/begin', {
+      method: 'POST', body: JSON.stringify({ code }),
+    });
+    const opts = JSON.parse(started.options).publicKey || JSON.parse(started.options);
+    const challenge = opts.challenge;
+    opts.challenge = b64uToBuf(opts.challenge);
+    opts.user.id = b64uToBuf(opts.user.id);
+    (opts.excludeCredentials || []).forEach((c) => { c.id = b64uToBuf(c.id); });
+
+    const cred = await navigator.credentials.create({ publicKey: opts });
+    await api('/auth/register/complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        _challenge: challenge,
+        credential: {
+          id: cred.id,
+          rawId: bufToB64u(cred.rawId),
+          type: cred.type,
+          response: {
+            clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+            attestationObject: bufToB64u(cred.response.attestationObject),
+          },
+        },
+      }),
+    });
+    await boot();
+  } catch (e) {
+    gateError(e.message || String(e));
+  }
+}
+
+async function doPasskeyLogin() {
+  gateError('');
+  try {
+    const started = await api('/auth/login/begin', { method: 'POST', body: '{}' });
+    const opts = JSON.parse(started.options).publicKey || JSON.parse(started.options);
+    const challenge = opts.challenge;
+    opts.challenge = b64uToBuf(opts.challenge);
+    (opts.allowCredentials || []).forEach((c) => { c.id = b64uToBuf(c.id); });
+
+    const cred = await navigator.credentials.get({ publicKey: opts });
+    await api('/auth/login/complete', {
+      method: 'POST',
+      body: JSON.stringify({
+        _challenge: challenge,
+        credential: {
+          id: cred.id,
+          rawId: bufToB64u(cred.rawId),
+          type: cred.type,
+          response: {
+            clientDataJSON: bufToB64u(cred.response.clientDataJSON),
+            authenticatorData: bufToB64u(cred.response.authenticatorData),
+            signature: bufToB64u(cred.response.signature),
+            userHandle: cred.response.userHandle
+              ? bufToB64u(cred.response.userHandle) : null,
+          },
+        },
+      }),
+    });
+    await boot();
+  } catch (e) {
+    gateError(e.message || String(e));
+  }
+}
+
+async function doTotpLogin() {
+  gateError('');
+  try {
+    await api('/auth/login/totp', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: document.getElementById('totp-user').value.trim(),
+        code: document.getElementById('totp-code').value.trim(),
+      }),
+    });
+    await boot();
+  } catch (e) {
+    gateError(e.message || String(e));
+  }
+}
+
+document.getElementById('enroll-btn').onclick = doRegister;
+document.getElementById('passkey-btn').onclick = doPasskeyLogin;
+document.getElementById('totp-btn').onclick = doTotpLogin;
+document.getElementById('show-totp').onclick = () =>
+  document.getElementById('totp-form').classList.toggle('hidden');
+document.getElementById('logout').onclick = async () => {
+  await api('/auth/logout', { method: 'POST', body: '{}' });
+  await boot();
+};
+
+let pollTimer = null;
+
+async function boot() {
+  const st = await api('/auth/status');
+  const signedIn = st.authenticated;
+  document.getElementById('gate').classList.toggle('hidden', signedIn);
+  document.getElementById('app').classList.toggle('hidden', !signedIn);
+  document.getElementById('logout').classList.toggle('hidden', !signedIn);
+  document.getElementById('operator').textContent = st.operator || '—';
+  if (!signedIn) {
+    // No authenticator on the host yet → show how to make one, not a
+    // sign-in prompt nobody can satisfy.
+    document.getElementById('gate-enroll').classList.toggle('hidden', st.enrolled);
+    document.getElementById('gate-signin').classList.toggle('hidden', !st.enrolled);
+    document.getElementById('gate-title').textContent =
+      st.enrolled ? 'Sign in' : 'Enroll this device';
+    document.getElementById('link').className = 'link';
+    document.getElementById('link').textContent = 'not signed in';
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    return;
+  }
+  gateError('');
+  await refresh();
+  if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
+}
+
+boot();
+

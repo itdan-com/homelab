@@ -130,3 +130,32 @@ button:disabled { opacity: .5; cursor: default; }
 .tag.denial, .tag.revocation { color: var(--bad); }
 .tag.kill_engaged, .tag.kill_released { color: var(--warn); font-weight: 600; }
 .live { color: var(--ok); font-weight: 600; }
+
+/* --- auth gate ----------------------------------------------------------
+   Shown until a passkey is verified. Nothing behind it is merely hidden:
+   every data route 401s without a session, so a signed-out console has
+   nothing to leak even to someone reading the DOM. */
+.gate { display: flex; justify-content: center; padding: 48px 20px; }
+.gate-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  padding: 26px 28px; max-width: 460px; width: 100%;
+}
+.gate-card h2 { margin-top: 0; }
+.gate-copy { color: var(--muted); font-size: 14px; }
+.gate-alt { margin: 14px 0 0; }
+.gate-error { color: var(--bad); font-size: 13px; min-height: 18px; margin-bottom: 0; }
+.gate-card input {
+  font: inherit; font-size: 14px; width: 100%; padding: 8px 10px; margin: 6px 0 10px;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--ink);
+}
+.cmd {
+  font-family: var(--mono); font-size: 13px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px;
+  overflow-x: auto;
+}
+button.linkish {
+  border: 0; background: none; color: var(--accent); padding: 0;
+  text-decoration: underline; font-size: 13px;
+}
+header #logout { margin-left: 8px; }
