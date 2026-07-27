@@ -23,9 +23,15 @@
 #      rebuilt cluster keeps the CA client machines already trust.
 #      cert-manager ADOPTS a valid pre-existing CA secret instead of
 #      minting a new one (rotationPolicy: Never in the chart).
-#   8. ArgoCD (catalog/argocd umbrella, two-pass: CRDs land, then the
+#   8. cert-manager CRDs, rendered from the chart tarball already
+#      vendored in catalog/ (same version pin, no extra downloads).
+#      Needed because catalog/argocd ships its own TLS door — a
+#      Certificate resource — and helm validates kinds up front; but
+#      cert-manager itself deploys via ArgoCD. Classic chicken-and-egg:
+#      CRDs are cluster infrastructure (like Cilium), apps stay GitOps.
+#   9. ArgoCD (catalog/argocd umbrella, two-pass: CRDs land, then the
 #      catalog ApplicationSet activates).
-#   9. Operator read-only kubeconfig (view RBAC + minted SA token) at
+#  10. Operator read-only kubeconfig (view RBAC + minted SA token) at
 #      ~/.config/homelab-operator/kubeconfig — the k3d API port is
 #      random per cluster create, so this must be re-minted per build.
 #
@@ -55,7 +61,7 @@ cd "$REPO_ROOT"
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 cluster_nodes() { docker ps --format '{{.Names}}' | grep -E "^k3d-${CLUSTER_NAME}-(server|agent)-" | sort; }
 
-step "1/9 Preflight"
+step "1/10 Preflight"
 for bin in docker k3d kubectl helm sops; do
   command -v "$bin" >/dev/null || { echo "MISSING: $bin — install it first"; exit 1; }
 done
@@ -63,14 +69,14 @@ helm plugin list | grep -q secrets || { echo "MISSING: helm-secrets plugin (helm
 [ -f "$AGE_KEY_FILE" ] || { echo "MISSING: age key at $AGE_KEY_FILE (age-keygen -o ...)"; exit 1; }
 echo "ok"
 
-step "2/9 k3d cluster '$CLUSTER_NAME'"
+step "2/10 k3d cluster '$CLUSTER_NAME'"
 if k3d cluster list 2>/dev/null | awk '{print $1}' | grep -qx "$CLUSTER_NAME"; then
   echo "exists — skipping create"
 else
   k3d cluster create --config k3d/devlab-cluster.yaml
 fi
 
-step "3/9 Cilium CNI $CILIUM_VERSION"
+step "3/10 Cilium CNI $CILIUM_VERSION"
 # k3d nodes are containers: Cilium needs a bpf filesystem and a
 # cgroup2 mount inside each one, propagated as shared so the agent
 # pod's mount namespace sees them. Idempotent — mountpoint guards.
@@ -96,7 +102,7 @@ fi
 kubectl wait --for=condition=Ready node --all --timeout=180s
 echo "all nodes Ready under Cilium"
 
-step "4/9 Per-node CPU burst ceiling (${NODE_CPU_LIMIT} cpus)"
+step "4/10 Per-node CPU burst ceiling (${NODE_CPU_LIMIT} cpus)"
 # Contention cap only — keeps any one node from starving the WSL2
 # host. The scheduler-facing budget (allocatable ~2 vCPU/node) is set
 # in devlab-cluster.yaml via kubelet system-reserved. docker update
@@ -105,12 +111,12 @@ for node in $(cluster_nodes); do
   docker update --cpus="$NODE_CPU_LIMIT" "$node" >/dev/null && echo "capped: $node"
 done
 
-step "5/9 CoreDNS host-gateway override"
+step "5/10 CoreDNS host-gateway override"
 kubectl apply -f k3d/coredns-custom.yaml
 kubectl -n kube-system rollout restart deploy/coredns >/dev/null
 echo "applied (host.docker.internal resolution survives k3s restarts)"
 
-step "6/9 Portainer agent"
+step "6/10 Portainer agent"
 kubectl apply -f k3d/portainer-agent.yaml
 # A cluster recreate deletes and recreates the k3d docker network;
 # an existing Portainer container is left detached from it. Reattach
@@ -121,7 +127,7 @@ if docker ps -a --format '{{.Names}}' | grep -qx portainer; then
     || echo "portainer already attached"
 fi
 
-step "7/9 Bootstrap secrets (age key + lab CA)"
+step "7/10 Bootstrap secrets (age key + lab CA)"
 kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl create secret generic helm-secrets-age -n argocd \
   --from-file=key.txt="$AGE_KEY_FILE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
@@ -134,7 +140,20 @@ else
   echo "no k3d/lab-ca.enc.yaml — cert-manager will mint a fresh CA (trust it once per SETUP.md)"
 fi
 
-step "8/9 ArgoCD (then GitOps takes the wheel)"
+step "8/10 cert-manager CRDs (argocd's own TLS door needs the Certificate kind)"
+# Server-side apply: these CRDs exceed client-side apply's annotation
+# budget — the same reason the catalog app runs ServerSideApply=true.
+# ArgoCD re-applies identical CRDs later and simply becomes their
+# manager; `crds.keep` in the catalog chart protects them from prune.
+# dependency build first: charts/ tarballs are deliberately gitignored
+# (ArgoCD resolves deps from Chart.lock itself) — a fresh clone has none.
+helm dependency build catalog/cert-manager >/dev/null
+helm template cert-manager catalog/cert-manager -f catalog/cert-manager/values.yaml \
+  | awk 'BEGIN{RS="\n---\n"} /(^|\n)kind: CustomResourceDefinition(\n|$)/ {printf "---\n%s\n", $0}' \
+  | kubectl apply --server-side -f - >/dev/null
+echo "6 CRDs in place (rendered from the vendored chart, version-locked)"
+
+step "9/10 ArgoCD (then GitOps takes the wheel)"
 helm dependency build catalog/argocd >/dev/null
 if ! helm status argocd -n argocd >/dev/null 2>&1; then
   # First pass with the ApplicationSet disabled: its CRD ships in this
@@ -147,7 +166,7 @@ helm secrets upgrade argocd catalog/argocd -n argocd \
   -f catalog/argocd/values.yaml -f catalog/argocd/secrets.enc.yaml \
   --wait --timeout 5m
 
-step "9/9 Operator read-only kubeconfig"
+step "10/10 Operator read-only kubeconfig"
 if [ -f k3d/operator-view-rbac.yaml ]; then
   kubectl apply -f k3d/operator-view-rbac.yaml >/dev/null
   TOKEN=""
