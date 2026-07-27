@@ -11,14 +11,21 @@ does not type git.
 
 | Thing | URL | Notes |
 |---|---|---|
-| **OpenWebUI (chat)** | `https://openwebui.lab.local:8443` | From the Windows browser. Needs the hosts entry below; http on :8080 redirects here. Cert warning until the lab CA is trusted (see "TLS: the lab CA"). First account you create = **admin**. Pick model **qwen3.5**. |
+| **Authentik (SSO — the front door)** | `https://authentik.lab.local:8443` | Needs hosts entry `127.0.0.1 authentik.lab.local`. **Sign in with your Authentik account** — the portal shows one-click tiles for OpenWebUI/Grafana/ArgoCD. Admin console: `akadmin` (password: `sops -d catalog/authentik/secrets.enc.yaml` → `bootstrap_password`), "Admin interface" button top-right. Onboard a teammate: Directory → Users → create + set password → add to `*-users`/`*-admins` groups. |
+| **OpenWebUI (chat)** | `https://openwebui.lab.local:8443` | SSO: "Continue with Authentik" (or the tile). Roles: `openwebui-admins` group = app admin, `openwebui-users` = user; non-members are denied at Authentik. Break-glass: the pre-SSO local signup (first local account = admin). Pick model **qwen3.5**. Hosts entry below; http :8080 redirects. |
+| **ArgoCD (GitOps UI)** | `https://argocd.lab.local:8443` | SSO: "LOG IN VIA AUTHENTIK" (or the tile). `argocd-admins` = full admin, `argocd-users` = read-only. Break-glass: `admin` / `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' \| base64 -d`. Eight green tiles = platform matches git. Port-forward fallback: `kubectl port-forward -n argocd svc/argocd-server 8081:80`. |
+| **Grafana (dashboards)** | `https://grafana.lab.local:8443` | SSO: "Sign in with Authentik" (or the tile). `grafana-admins` = org Admin, `grafana-users` = Viewer. Break-glass: `admin` / `sops -d catalog/monitoring/secrets.enc.yaml`. Start with "AI Gateway — Token-Rate Autoscaling". Fallback: `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80`. |
 | Portainer | `https://localhost:9443` | From Windows browser. Self-signed cert → click "Advanced → Proceed". |
 | Portainer (from Mac) | `https://<windows-LAN-ip>:9443` | Get the Windows IP via `ipconfig` in PowerShell. |
 | AI Gateway (API only) | `http://ai-gateway/v1` — in-cluster only | OpenAI-compatible LLM gateway (Envoy AI Gateway). Needs a per-consumer Bearer key; deliberately NOT reachable from a browser — OpenWebUI is the only user-facing door. |
-| **ArgoCD (GitOps UI)** | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` | user `admin`; password: `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' \| base64 -d`. Five green tiles = platform matches git. |
-| **Grafana (dashboards)** | `https://grafana.lab.local:8443` | Needs hosts entry `127.0.0.1 grafana.lab.local`. user `admin`; password: `sops -d catalog/monitoring/secrets.enc.yaml`. Start with "AI Gateway — Token-Rate Autoscaling". (Fallback if ingress is broken: `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → `http://localhost:3000`.) |
-| **Authentik (SSO admin)** | `https://authentik.lab.local:8443` | Needs hosts entry `127.0.0.1 authentik.lab.local`. user `akadmin`; password: `sops -d catalog/authentik/secrets.enc.yaml` → `bootstrap_password`. Admin interface: the "Admin interface" button top-right (or `/if/admin/`). |
 | k3d cluster API | `https://0.0.0.0:39093` | Only from inside WSL. `kubectl` already knows this. |
+
+**Applying `catalog/argocd` changes** (the one chart ArgoCD does NOT
+manage — self-management deferred in Phase 4): after editing it, run
+`helm secrets upgrade argocd catalog/argocd -n argocd -f catalog/argocd/values.yaml -f catalog/argocd/secrets.enc.yaml`
+then `kubectl -n argocd rollout restart deploy/argocd-server` if
+`argocd-cm`/`argocd-secret` changed. Every other chart applies itself
+via git push + ArgoCD sync.
 
 If you forgot the Portainer admin password, the only recovery is to
 restart the container with the password-reset flag (ask Claude to do

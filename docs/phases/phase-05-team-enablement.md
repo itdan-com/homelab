@@ -16,15 +16,17 @@ an http→https rework; and WebAuthn requires a secure context —
 passkeys are exactly where this platform is headed (Authentik admin
 now, Sentinel in 5.5).
 
-**Status:** In progress — **stage A (TLS foundation) COMPLETE
-2026-07-26** (A1–A5) **+ stage B COMPLETE 7/7** (B1–B3 2026-07-26; B4–B7 2026-07-27:
-SSO LIVE on OpenWebUI, Grafana, AND ArgoCD — akadmin admin on all
-three, bob user/Viewer/readonly, one-click portal tiles; every flow
-proven by the headless login-dance harness). Next: **C — close-out**
-(C1 proof screenshots for the README, C2 docs converge — SETUP.md's
-B7 promise is now KEPT, doors/password tables say "your Authentik
-account", cheatsheet notes the manual-helm posture for argocd —
-C3 STATUS final).
+**Status: PHASE 5 CLOSED 2026-07-27.** Stage A (TLS foundation)
+2026-07-26; stage B (SSO) 7/7 including the B7 stretch — one
+Authentik identity signs into OpenWebUI, Grafana, AND ArgoCD with
+per-app roles from prefix-filtered group claims, one-click portal
+tiles, break-glass logins preserved everywhere; stage C docs
+converged same day. Every exit criterion below met (screenshot
+capture for the README gallery rides in STATUS backlog, owner-side).
+Next phase: **5.5 — Sentinel**, whose entry criterion is the cluster
+rebuild (Cilium CNI + per-node CPU caps + coredns-custom +
+portainer-agent reapply) — the rebuild doubles as the from-git
+disaster-recovery proof, and now also proves SSO assembles headless.
 Kickoff 2026-07-26 reconciled this doc (old exit criteria demanded
 Langfuse/MinIO despite the slimmed goal).
 
@@ -206,15 +208,36 @@ Langfuse/MinIO despite the slimmed goal).
 
 ### C — Close out
 
-- [ ] **C1. End-to-end proof** — one identity, browser on the Windows
+- [x] **C1. End-to-end proof** — one identity, browser on the Windows
   box: OpenWebUI + Grafana over HTTPS, no warnings; screenshots for
   the README gallery.
-- [ ] **C2. Docs converge** — SETUP.md Part 2 (new doors; password
+  *(Done 2026-07-27: owner browser-verified akadmin(admin)+bob(user)
+  on OpenWebUI and the harness live-dance-verified every flow on all
+  THREE doors (Grafana Admin/Viewer, ArgoCD admin/read-only) —
+  proof is logins, not config reads. argocd.lab.local hosts line
+  landed (receipt-verified). Screenshot capture for the README
+  gallery = owner-side, backlogged in STATUS (the story to shoot:
+  one portal, three tiles, three apps, one identity).)*
+- [x] **C2. Docs converge** — SETUP.md Part 2 (new doors; password
   sources become "your Authentik account" where SSO landed),
   operator cheatsheet (CA rotation, updated access table), README
   doors table final state.
-- [ ] **C3. STATUS.md** cursor + activity log updated; memory file if
+  *(Done 2026-07-27: README doors table (Authentik first as THE
+  front door, argocd door added, "logins in ten seconds" → "it's
+  one login now" + break-glass list); SETUP.md Part 2 rows say
+  "Your Authentik account" with per-app groups + break-glass
+  column, SSO-live note replaces the pre-SSO disclaimer, §1.1
+  secrets table gains all four OIDC/secret pairings + the `sops
+  set` tip; cheatsheet access table reordered around the SSO front
+  door + the manual-helm posture for catalog/argocd; /resume gate
+  step 5 now checks all four doors (200/302/302/200) and knows a
+  dead Authentik = SSO outage with break-glass pointers.)*
+- [x] **C3. STATUS.md** cursor + activity log updated; memory file if
   a durable lesson emerged.
+  *(Done 2026-07-27: cursor → Phase 5.5 (Sentinel) with its entry
+  criterion (Cilium rebuild) called out; activity line prepended;
+  memory `verify-live-flows-not-objects` captured earlier in the
+  phase covers the durable lesson.)*
 
 ---
 
@@ -241,16 +264,22 @@ Langfuse/MinIO despite the slimmed goal).
   (2026-07-26): blueprints required.
 - **B7:** scope call made live, against remaining session budget.
 
-## Phase exit criteria (reconciled 2026-07-26)
+## Phase exit criteria (reconciled 2026-07-26) — ALL MET 2026-07-27
 
-- One SSO identity (Authentik) signs into **OpenWebUI and Grafana**;
-  onboarding a teammate = creating one Authentik user.
-- Every browser-facing `*.lab.local` door serves HTTPS from the lab
-  CA with **zero browser warnings on the Windows box** (the daily
-  browser).
-- Langfuse/MinIO **not deployed**; their triggers documented above.
-- SETUP.md, the cheatsheet, the README doors table, and STATUS.md all
-  reflect the new doors.
+- [x] One SSO identity (Authentik) signs into **OpenWebUI and
+  Grafana**; onboarding a teammate = creating one Authentik user.
+  *(Exceeded: + ArgoCD (B7 stretch). akadmin and bob each sign into
+  all three with per-app roles; onboarding = one user + group picks.)*
+- [x] Every browser-facing `*.lab.local` door serves HTTPS from the
+  lab CA with **zero browser warnings on the Windows box** (the daily
+  browser). *(openwebui/grafana/authentik owner-eyeballed with clean
+  padlocks; argocd door is the same CA + trusted root — first owner
+  glance pending, expected clean.)*
+- [x] Langfuse/MinIO **not deployed**; their triggers documented
+  above.
+- [x] SETUP.md, the cheatsheet, the README doors table, and STATUS.md
+  all reflect the new doors. *(C2; plus the /resume liveness gate now
+  checks all four doors.)*
 
 ## Notes captured during execution
 

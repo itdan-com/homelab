@@ -41,11 +41,17 @@ need to. You regenerate each one with your own values:
 
 | File | What goes in it |
 |---|---|
-| `catalog/postgres/secrets.enc.yaml` | `auth: {postgresPassword: <generate>}` |
-| `catalog/monitoring/secrets.enc.yaml` | `kube-prometheus-stack: {grafana: {adminPassword: <generate>}}` |
+| `catalog/postgres/secrets.enc.yaml` | `auth: {postgresPassword: <generate>}` + per-app roles under `auth.extraUsers` (complete entries — helm list overrides replace wholesale) |
+| `catalog/monitoring/secrets.enc.yaml` | `kube-prometheus-stack: {grafana: {adminPassword: <generate>}}` + `oidc: {clientSecret: <generate>}` (Grafana's OIDC client secret — same value as the authentik file's `grafana_oidc_client_secret`) |
 | `catalog/ai-gateway/secrets.enc.yaml` | `consumers: [{name: openwebui, apiKey: sk-owui-<generate>}]` |
-| `catalog/openwebui/secrets.enc.yaml` | `gateway: {apiKey: <the SAME sk-owui value>}` — this is OpenWebUI's copy of its consumer key |
-| `catalog/argocd/secrets.enc.yaml` | the deploy key from step 1.3 (structure shown there) |
+| `catalog/openwebui/secrets.enc.yaml` | `gateway: {apiKey: <the SAME sk-owui value>}` + `sso: {clientSecret: <generate>}` (same value as the authentik file's `openwebui_oidc_client_secret`) |
+| `catalog/authentik/secrets.enc.yaml` | `authentik.authentik.*`: `secret_key`, `bootstrap_password`, `bootstrap_token`, `postgresql.password` (must match the postgres `extraUsers` entry), and one `<app>_oidc_client_secret` per SSO client (openwebui, grafana, argocd) — each shared verbatim with that app's own SOPS file |
+| `catalog/argocd/secrets.enc.yaml` | the deploy key from step 1.3 (structure shown there) + `argo-cd.configs.secret.extra."oidc.authentik.clientSecret"` (same value as the authentik file's `argocd_oidc_client_secret`) |
+
+Tip: to add or rotate a single key without plaintext ever touching
+disk, use `sops set <file> '["path"]["to"]["key"]' '"<value>"'` — it
+edits the encrypted file in place and honors the stored encryption
+rules.
 
 The pattern for each (write plaintext → encrypt in place — the
 `.sops.yaml` rule only matches files at their catalog path):
@@ -203,9 +209,9 @@ comments; bootstrap integration is on the roadmap).
 
 | Interface | What it does | How to reach it | Login |
 |---|---|---|---|
-| **OpenWebUI** | The chat UI — what end users see | `https://openwebui.lab.local:8443` (add `127.0.0.1 openwebui.lab.local` to your hosts file; http on :8080 redirects here). Browser warns until you trust the lab CA — export + import per the cheatsheet's "TLS: the lab CA". | **First account you sign up becomes admin.** No default password exists — the signup is the setup. |
-| **ArgoCD** | GitOps engine — the platform as it compares to git; every deploy, diff, and sync | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` | `admin` / `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' \| base64 -d` |
-| **Grafana** | Dashboards — cluster health, and the AI token-rate/autoscaling view | `https://grafana.lab.local:8443` (hosts entry `127.0.0.1 grafana.lab.local`; port-forward fallback: `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80`) | `admin` / the value YOU put in `catalog/monitoring/secrets.enc.yaml` — read it back with `sops -d catalog/monitoring/secrets.enc.yaml` |
+| **OpenWebUI** | The chat UI — what end users see | `https://openwebui.lab.local:8443` (add `127.0.0.1 openwebui.lab.local` to your hosts file; http on :8080 redirects here). Browser warns until you trust the lab CA — export + import per the cheatsheet's "TLS: the lab CA". | **Your Authentik account** — "Continue with Authentik" or the portal tile (needs group `openwebui-users` or `openwebui-admins`; admins group = app admin). Break-glass: the pre-SSO local signup account (first local signup was admin). |
+| **ArgoCD** | GitOps engine — the platform as it compares to git; every deploy, diff, and sync | `https://argocd.lab.local:8443` (hosts entry `127.0.0.1 argocd.lab.local`; port-forward fallback: `kubectl port-forward -n argocd svc/argocd-server 8081:80`) | **Your Authentik account** — "LOG IN VIA AUTHENTIK" or the portal tile (`argocd-admins` = full admin, `argocd-users` = read-only). Break-glass: `admin` / `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' \| base64 -d` |
+| **Grafana** | Dashboards — cluster health, and the AI token-rate/autoscaling view | `https://grafana.lab.local:8443` (hosts entry `127.0.0.1 grafana.lab.local`; port-forward fallback: `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80`) | **Your Authentik account** — "Sign in with Authentik" or the portal tile (`grafana-admins` = org Admin, `grafana-users` = Viewer). Break-glass: `admin` / the value in `catalog/monitoring/secrets.enc.yaml` (`sops -d` to read) |
 | **Prometheus** | Raw metrics + PromQL console (KEDA's data source) | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090` → `http://localhost:9090` | none (unauthenticated, cluster-internal by design) |
 | **Alertmanager** | Alert routing (wired to chat channels in Phase 7) | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093` → `http://localhost:9093` | none |
 | **Authentik** | Identity provider — SSO admin console (Phase 5B) | `https://authentik.lab.local:8443` (hosts entry `127.0.0.1 authentik.lab.local`) | `akadmin` / the `bootstrap_password` you set in `catalog/authentik/secrets.enc.yaml` (applied on FIRST boot only — changing it later in the file does nothing; change it in the UI instead) |
@@ -220,8 +226,17 @@ install (ArgoCD), or created interactively on first visit (OpenWebUI,
 Portainer). If you ever find yourself typing `admin/admin`, something
 is wrong.
 
-SSO note: OpenWebUI, Grafana, and ArgoCD all move behind Authentik
-single sign-on in Phase 5 — this table is the pre-SSO reality.
+**SSO is live (Phase 5):** OpenWebUI, Grafana, and ArgoCD all
+authenticate through Authentik — one account, roles per app via
+Authentik groups, and each app's portal tile is a one-click login
+(the tiles target the apps' OIDC initiation routes). Onboarding a
+teammate = create one Authentik user (Directory → Users), set a
+password, add them to the `*-users`/`*-admins` groups for the apps
+they need. The SSO config itself is config-as-code — Authentik
+blueprints in `catalog/authentik/templates/oidc-blueprints.yaml` —
+so it assembles headless on a fresh deploy; only group *membership*
+is runtime data. Every app keeps its local break-glass login (table
+above) for the day the IdP itself is down.
 
 ### Trusting the lab CA (one-time, per client machine)
 

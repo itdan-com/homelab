@@ -90,36 +90,36 @@ Two access styles, chosen by policy (ADR-002): a service gets a
 `kubectl port-forward` — a temporary private tunnel from your
 terminal that lives until you Ctrl-C it. Prometheus and Alertmanager
 stay tunnel-only **on purpose** (unauthenticated by design, until
-Phase 7 puts them behind SSO forward-auth); ArgoCD's door arrives
-with its SSO.
+Phase 7 puts them behind SSO forward-auth).
 
 | Service | What it's for | Open it |
 |---|---|---|
-| **OpenWebUI** | The chat UI | `https://openwebui.lab.local:8443` (hosts file: `127.0.0.1 openwebui.lab.local`; http on :8080 redirects) |
-| **Argo CD** | The GitOps board — platform vs. git, every sync and diff | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` |
-| **Grafana** | Dashboards — cluster health, token-rate autoscaling | `https://grafana.lab.local:8443` (hosts file: `127.0.0.1 grafana.lab.local`) |
-| **Authentik** | SSO / identity — accounts live here (Phase 5B) | `https://authentik.lab.local:8443` (hosts entry likewise) |
+| **Authentik** | SSO / identity — **the front door to everything below**; accounts and app tiles live here | `https://authentik.lab.local:8443` (hosts file: `127.0.0.1 authentik.lab.local`) |
+| **OpenWebUI** | The chat UI | `https://openwebui.lab.local:8443` — or one click on its Authentik tile (hosts entry likewise; http on :8080 redirects) |
+| **Argo CD** | The GitOps board — platform vs. git, every sync and diff | `https://argocd.lab.local:8443` — or its Authentik tile (hosts entry likewise) |
+| **Grafana** | Dashboards — cluster health, token-rate autoscaling | `https://grafana.lab.local:8443` — or its Authentik tile (hosts entry likewise) |
 | **Prometheus** | Raw metrics + PromQL console | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090` → `http://localhost:9090` |
 | **Alertmanager** | Alert routing (chat channels in Phase 7) | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093` → `http://localhost:9093` |
 | **Portainer** | Docker/Kubernetes visual manager | `https://localhost:9443` |
 | **echo** | Template-born demo service | `https://echo.lab.local:8443` (hosts entry likewise) |
 | **AI gateway** | OpenAI-compatible LLM API | Not a browser door — in-cluster only, `http://ai-gateway/v1` + consumer key |
 
-**Logins in ten seconds** (nothing here has a vendor default
-password):
+**Logins in ten seconds — it's one login now.** Since Phase 5,
+**your Authentik account signs into OpenWebUI, Grafana, and ArgoCD**
+(each app's Authentik portal tile is a one-click login; your role in
+each app comes from your Authentik groups — `openwebui-admins`,
+`grafana-users`, `argocd-admins`, etc.). Onboarding a teammate =
+create one Authentik user, pick their groups. Two accounts to know
+beyond that:
 
-- **OpenWebUI** — the account you signed up with (first signup
-  becomes admin).
-- **Grafana** — `admin` / the value you set in
-  `catalog/monitoring/secrets.enc.yaml`; read it back:
-  `sops -d catalog/monitoring/secrets.enc.yaml`
-- **Authentik** — `akadmin` / the `bootstrap_password` in
-  `catalog/authentik/secrets.enc.yaml` (same `sops -d` trick)
-- **Argo CD** — `admin` /
-  `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d`
+- **Authentik admin** — `akadmin` / the `bootstrap_password` in
+  `catalog/authentik/secrets.enc.yaml` (read back with `sops -d`).
+- **Break-glass** (only if Authentik itself is down): every app kept
+  its local login — OpenWebUI's first-signup admin, Grafana's
+  `admin` (`catalog/monitoring/secrets.enc.yaml`), ArgoCD's `admin`
+  (`argocd-initial-admin-secret`).
 
-(Phase 5 stage B replaces the first two with one Authentik SSO
-identity.) Full table with every interface:
+Full table with every interface:
 [SETUP.md § Part 2](SETUP.md#part-2--every-web-interface-and-where-its-password-lives).
 Day-2 health checks and recovery:
 [the operator cheatsheet](docs/operator-cheatsheet.md).

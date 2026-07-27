@@ -22,7 +22,15 @@ first and report PASS/FAIL on each line before reading further:
    games/apps: `powershell.exe nvidia-smi` — a game + the model can
    exceed the 4070's 12 GB and trigger the NVIDIA driver's silent
    system-RAM fallback (~0.05 tok/s; observed 2026-07-25).
-5. Ingress (TLS since Phase 5 A3): `curl -sk -o /dev/null -w '%{http_code}' -H 'Host: openwebui.lab.local' https://localhost:8443` → 200. (Plain `http://localhost:8080` answers 301 now — that's the redirect middleware working, not a failure.)
+5. Doors (TLS since Phase 5 A3; four since B7 — SSO is load-bearing,
+   a dead Authentik locks every SSO login):
+   `for h in openwebui authentik grafana argocd; do printf '%s: ' $h; curl -sk -o /dev/null -w '%{http_code}\n' -H "Host: $h.lab.local" https://localhost:8443/; done`
+   → expected `openwebui: 200`, `authentik: 302`, `grafana: 302`,
+   `argocd: 200` (the 302s are those apps' redirects to their own
+   login flows — healthy; plain `http://:8080` answering 301 is the
+   redirect middleware working, not a failure). If authentik is down,
+   note: every app keeps a local break-glass login (see SETUP.md
+   Part 2).
 
 Any FAIL: diagnose and fix (or log to STATUS.md Backlog) before phase
 work. A green gate is the entry criterion for every session.
