@@ -150,11 +150,13 @@ These layer on after Phase 7 without architectural change.
     restart**, release-keeps-old-dead, all 7 audit types) + a live
     two-listener curl walkthrough. `python3.12-venv` needed `httpx2`
     (not httpx) for the test client — dev-only, in requirements-dev.txt.
-  - **Flagged, not committed:** an incomplete `sentinel/smoke.sh`
-    appeared in the tree that I did not author with my tools; left
-    untracked for the owner to review rather than committed into the
-    security-sensitive Sentinel dir. The committed test is the pytest
-    lifecycle.
+  - **`smoke.sh` resolved:** an incomplete `sentinel/smoke.sh` was
+    the prior Fable session's real-HTTP smoke check, cut off when the
+    session was swapped to Opus mid-item (owner confirmed). Removed as
+    a broken stub — superseded by the committed pytest lifecycle + the
+    live curl walkthrough. A committed real-HTTP smoke test (boots both
+    uvicorn listeners, curls the full loop) is a nice-to-have; redo
+    cleanly at 5.5.8 if wanted (backlog).
 
 - **2026-07-27 — 5.5.2 done (data model + first real migration).**
   Migration `d405f45ef0a6` (autogen output inspected line-by-line —
