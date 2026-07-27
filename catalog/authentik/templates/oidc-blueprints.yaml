@@ -316,11 +316,6 @@ data:
       # Sentinel (ADR-004): the platform's surfaces should be findable
       # in one place, but the kill switch must not depend on an
       # in-cluster IdP whose group definitions live in this repo.
-      - model: authentik_core.group
-        state: present
-        id: group-{{ $key }}-link
-        identifiers:
-          name: {{ $app.group }}
       - model: authentik_core.application
         state: present
         id: {{ $key }}-link-app
@@ -333,11 +328,14 @@ data:
           # Opens in a new tab: the destination is not part of this
           # portal's origin and, for Sentinel, not even on the cluster.
           open_in_new_tab: true
+      # Visibility binding. The group is FOUND, not declared: writing to
+      # authentik's built-in admin group from a blueprint risks resetting
+      # fields we never set (its superuser flag among them).
       - model: authentik_policies.policybinding
         state: present
         identifiers:
           target: !KeyOf {{ $key }}-link-app
-          group: !KeyOf group-{{ $key }}-link
+          group: !Find [authentik_core.group, [name, {{ $app.group | quote }}]]
         attrs:
           order: 10
           enabled: true

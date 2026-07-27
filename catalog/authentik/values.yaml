@@ -66,9 +66,20 @@ linkApps:
       Capability broker and kill switch. Runs OUTSIDE the cluster and
       authenticates you with its own passkey — by design, this link is
       a bookmark, not a single sign-on.
-    # Which group sees the tile. A link to a console you cannot open is
-    # noise, so it is bound rather than shown to everyone.
-    group: platform-operators
+    # Who SEES the tile — a visibility audience, not an authorization.
+    # authentik's built-in admin group is used because it is populated
+    # at bootstrap, so the tile appears with zero manual membership
+    # management (a group nobody is in renders an invisible tile —
+    # authentik filters the portal per user, which is exactly how this
+    # was caught). Referenced read-only via !Find, never created or
+    # updated: a blueprint that writes to the built-in admin group
+    # could strip its superuser flag and lock the owner out.
+    #
+    # Seeing the link is NOT permission to use the console. Sentinel
+    # decides that itself, with a passkey (5.5.6) — per ADR-004, who may
+    # APPROVE is a deliberately separate, smaller set than who may see
+    # where the console lives.
+    group: authentik Admins
 
 # ---------------------------------------------------------------------------
 # Subchart values. Every leaf under `authentik:` below becomes an
