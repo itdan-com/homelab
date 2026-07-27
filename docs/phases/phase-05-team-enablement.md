@@ -17,13 +17,14 @@ passkeys are exactly where this platform is headed (Authentik admin
 now, Sentinel in 5.5).
 
 **Status:** In progress — **stage A (TLS foundation) COMPLETE
-2026-07-26** (A1–A5) **+ stage B 6/7** (B1–B3 2026-07-26; B4–B6
-2026-07-27: SSO LIVE on OpenWebUI **and Grafana** — akadmin→admin
-on both, bob→user/Viewer, one-click portal tiles; every flow proven
-by the headless login-dance harness). Next: **B7 (stretch) — ArgoCD
-→ Authentik** if session budget allows, else file the Phase 7
-carry-in + correct SETUP.md; then **C — close-out** (end-to-end
-proof screenshots, docs converge, STATUS).
+2026-07-26** (A1–A5) **+ stage B COMPLETE 7/7** (B1–B3 2026-07-26; B4–B7 2026-07-27:
+SSO LIVE on OpenWebUI, Grafana, AND ArgoCD — akadmin admin on all
+three, bob user/Viewer/readonly, one-click portal tiles; every flow
+proven by the headless login-dance harness). Next: **C — close-out**
+(C1 proof screenshots for the README, C2 docs converge — SETUP.md's
+B7 promise is now KEPT, doors/password tables say "your Authentik
+account", cheatsheet notes the manual-helm posture for argocd —
+C3 STATUS final).
 Kickoff 2026-07-26 reconciled this doc (old exit criteria demanded
 Langfuse/MinIO despite the slimmed goal).
 
@@ -184,9 +185,24 @@ Langfuse/MinIO despite the slimmed goal).
   captured in notes: the .gitignore `*-secret.yaml` tripwire ate the
   new template; a NEW blueprint file needs discovery, not the
   watcher.)*
-- [ ] **B7 (stretch). ArgoCD → Authentik** — SETUP.md already promises
+- [x] **B7 (stretch). ArgoCD → Authentik** — SETUP.md already promises
   this for Phase 5; do it if A+B land with budget left, else file as a
   Phase 7 carry-in and correct SETUP.md.
+  *(Done 2026-07-27, commit `d453103`: blueprint v4 third key —
+  provider (grant_types from birth), groups claim under scope_name
+  `groups` (ArgoCD's RBAC default), prefix-filtered, with NO profile
+  mapping attached (authentik's built-in profile emits ALL groups as
+  `groups` — collision avoided by design); argocd-users/-admins +
+  bindings; one-click tile via `/auth/login`. ArgoCD umbrella: house
+  door `argocd.lab.local` (server.insecure was already true for this
+  exact topology), native oidc.config (dex off) with inline rootCA
+  (lab CA public cert, local-only), clientSecret $-referenced from
+  argocd-secret via SOPS'd configs.secret.extra; RBAC csv
+  argocd-admins→admin, argocd-users→readonly, default empty. Applied
+  via manual `helm secrets upgrade` (NOT self-managed — Phase 4
+  posture). Live-dance verified: akadmin groups=[argocd-admins]
+  can-sync=yes; impersonated bob groups=[argocd-users] can-sync=no,
+  8 apps visible read-only.)*
 
 ### C — Close out
 
@@ -238,6 +254,19 @@ Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-27 (B7): **Design note that will recur:** authentik's
+  BUILT-IN profile scope mapping emits ALL group names as a `groups`
+  claim — any provider that needs a filtered groups claim must NOT
+  attach profile (ArgoCD: openid+email+groups only), or the
+  unfiltered list rides along and mapping-merge order decides the
+  winner. ArgoCD deltas from the pattern: applied via manual
+  `helm secrets upgrade` (not self-managed; its own NOTES.txt says
+  so), oidc rootCA is INLINE PEM in values (public cert, local-only,
+  delete on cloud), RBAC csv maps the claim (admins→admin,
+  users→readonly, default empty). The B6 commit-count rule paid off
+  same-session: 6/6 files verified in the B7 commit. Windows hosts
+  line for argocd.lab.local via the snapshot-first elevated script
+  (receipt in Downloads).
 - 2026-07-27 (B6): **The .gitignore safety net ate a Helm template:**
   `*-secret.yaml` (the plaintext-secrets tripwire) silently excluded
   the new `templates/grafana-oidc-secret.yaml` from `git add <dir>` —
