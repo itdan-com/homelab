@@ -70,9 +70,10 @@ by construction — before any auth exists (WebAuthn/TOTP arrive at
 
 ```
 Claude ──POST /v1/capability-requests──▶ broker      (202, request_id)
-Claude ──GET  …/{id}  (poll)──────────▶ broker      (pending…)
+          {…, claim_nonce: <secret you mint and keep>}
+Claude ──GET  …/{id}  X-Claim-Nonce ──▶ broker      (pending…)
                      human ──POST …/{id}/grant──▶ admin   (mints token)
-Claude ──GET  …/{id}  (poll)──────────▶ broker      (granted + token, ONCE)
+Claude ──GET  …/{id}  X-Claim-Nonce ──▶ broker      (granted + token, ONCE)
 proxy  ──POST /v1/ext-authz/<orig path>▶ broker      (200 forward / 403 refuse)
 ```
 
@@ -84,11 +85,21 @@ otherwise (`app/scope.py`). A caller cannot name one tool and invoke
 another, on any server. `GET /v1/capability-check?token&tool&flow_id`
 remains for humans and scripts.
 
-Token delivery is **claim-once**: the plaintext reaches the requester
-on its first post-grant poll and nowhere else — the human who grants
-never sees it, and Sentinel keeps only a SHA-256 hash. `/capability-check`
-answers with **HTTP status** (200 allow, 403 deny) — the contract
-Envoy's `ext_authz` speaks directly (5.5.4).
+Token delivery is **claim-once, and it belongs to the caller that
+asked**: the requester mints a `claim_nonce`, Sentinel stores only its
+hash, and the plaintext token is handed over on the first post-grant
+poll that presents the matching nonce — nowhere else. Without that, any
+caller could name someone else's flow and tool, be handed their
+`request_id` by the dedupe path, and race them to the pickup the
+instant the human clicked Grant. A wrong nonce gets the same 404 as an
+unknown id, so it cannot even confirm the request exists.
+
+The human who grants never sees the token, and Sentinel keeps only a
+SHA-256 hash. `/capability-check` answers with **HTTP status** (200
+allow, 403 deny) — the contract Envoy's `ext_authz` speaks directly —
+and takes the token as the `X-Sentinel-Token` **header**, never a query
+parameter: uvicorn's access log records full query strings, so a token
+in the URL would sit in journald in plaintext long after the grant died.
 
 ## Dev quickstart (on the WSL2 host)
 
@@ -100,8 +111,12 @@ python3 -m venv .venv                        # needs the python3.12-venv apt pkg
 
 # admin (human) console + interactive docs on loopback:
 .venv/bin/uvicorn app.main:app --reload --port 8400
-#   → http://127.0.0.1:8400/       the one-screen console
-#   → http://127.0.0.1:8400/docs   generated API reference
+#   → http://127.0.0.1:8400/              the one-screen console
+#   → http://127.0.0.1:8400/openapi.json  the generated API schema
+# (Swagger UI is deliberately OFF: it loads its JavaScript from a public
+#  CDN, and the origin that owns the kill switch executes no third-party
+#  code. app/schemas.py's Field descriptions are the reference text, and
+#  they are generated from the code, so they cannot drift.)
 
 # once per install: mint Sentinel's CA + broker/client certs and inject
 # the cluster-side ConfigMap/Secret (rotation: re-run with --rotate):

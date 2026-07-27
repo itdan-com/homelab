@@ -61,27 +61,38 @@ def kill_state(s: Session) -> KillState:
 
 
 def engage_kill(s: Session, by: str, reason: str | None) -> tuple[KillState, int]:
-    """Engage + permanently revoke every live grant. Idempotent."""
+    """Engage + permanently revoke every live grant. Idempotent.
+
+    The sweep runs on EVERY press, not only the first. Pressing kill a
+    second time used to be a guaranteed no-op — so if a grant ever
+    became live while engaged (a grant committing concurrently with the
+    press, say), the operator's instinct of hitting the switch again
+    could not clean it up, and the grant came back alive on release.
+    A kill switch that cannot be pressed twice is not a kill switch."""
     ks = kill_state(s)
     now = utcnow()
-    revoked = 0
-    if not ks.engaged:
+    first_press = not ks.engaged
+    if first_press:
         ks.engaged, ks.engaged_at, ks.engaged_by, ks.reason = True, now, by, reason
         ks.released_at = ks.released_by = None
-        live = s.scalars(
-            select(CapabilityGrant).where(
-                CapabilityGrant.revoked_at.is_(None),
-                CapabilityGrant.expires_at > now,
-            )
-        ).all()
-        for g in live:
-            g.revoked_at = now
-            revoked += 1
-            audit(s, AuditEventType.REVOCATION, flow_id=g.flow_id, tool=g.tool,
-                  actor=by, details={"cause": "global-kill", "grant_id": g.id})
+
+    live = s.scalars(
+        select(CapabilityGrant).where(
+            CapabilityGrant.revoked_at.is_(None),
+            CapabilityGrant.expires_at > now,
+        )
+    ).all()
+    revoked = 0
+    for g in live:
+        g.revoked_at = now
+        revoked += 1
+        audit(s, AuditEventType.REVOCATION, flow_id=g.flow_id, tool=g.tool,
+              actor=by, details={"cause": "global-kill", "grant_id": g.id})
+    if first_press or revoked:
         audit(s, AuditEventType.KILL_ENGAGED, actor=by,
-              details={"reason": reason, "grants_revoked": revoked})
-        s.commit()
+              details={"reason": reason, "grants_revoked": revoked,
+                       "repeat_press": not first_press})
+    s.commit()
     return ks, revoked
 
 
@@ -98,18 +109,28 @@ def release_kill(s: Session, by: str) -> KillState:
 # --- requests -----------------------------------------------------------------
 
 def create_request(
-    s: Session, flow_id: str, tool: str, reason: str, agent: str
+    s: Session, flow_id: str, tool: str, reason: str, agent: str, claim_nonce: str
 ) -> tuple[CapabilityRequest, bool]:
     """Register the flow if unseen; dedupe onto an existing pending
-    request for the same (flow, tool) so client retries don't spam the
-    GUI. Returns (request, created)."""
+    request so client retries don't spam the console. Returns
+    (request, created).
+
+    Dedupe matches on the CLAIM NONCE as well as (flow, tool) — and
+    that is a security property, not tidiness. Matching on scope alone
+    meant any caller could post a request naming someone else's flow
+    and tool, be handed back *their* request_id, and then race them to
+    the one-time token pickup. Same-nonce means same caller retrying;
+    a different nonce is a different asker and gets its own card in
+    front of the human, with its own justification attached."""
     if s.get(Flow, flow_id) is None:
         s.add(Flow(id=flow_id, agent=agent))
 
+    nonce_hash = _hash(claim_nonce)
     existing = s.scalars(
         select(CapabilityRequest).where(
             CapabilityRequest.flow_id == flow_id,
             CapabilityRequest.tool == tool,
+            CapabilityRequest.claim_nonce_hash == nonce_hash,
             CapabilityRequest.status == RequestStatus.PENDING,
         )
     ).first()
@@ -117,7 +138,7 @@ def create_request(
         return existing, False
 
     req = CapabilityRequest(
-        flow_id=flow_id, tool=tool, reason=reason,
+        flow_id=flow_id, tool=tool, reason=reason, claim_nonce_hash=nonce_hash,
         expires_at=utcnow() + timedelta(minutes=REQUEST_TTL_MINUTES),
     )
     s.add(req)
@@ -144,13 +165,25 @@ def refresh_status(s: Session, req: CapabilityRequest) -> RequestStatus:
     return req.status
 
 
+def nonce_matches(req: CapabilityRequest, claim_nonce: str | None) -> bool:
+    """Is this poller the caller that raised the request? Rows created
+    before 5.5.5 carry no nonce; they are long resolved, and refusing
+    them outright would be a lie about why."""
+    if req.claim_nonce_hash is None:
+        return True
+    return claim_nonce is not None and _hash(claim_nonce) == req.claim_nonce_hash
+
+
 def claim_token(s: Session, req: CapabilityRequest) -> str | None:
-    """One-time token pickup by the requester: first granted-status poll
-    gets the plaintext, every later poll gets None."""
+    """One-time token pickup by the requester: the first granted-status
+    poll FROM THE CALLER THAT ASKED (see nonce_matches) gets the
+    plaintext, every later poll gets None."""
     tok = req.token_plaintext
     if tok is not None:
         req.token_plaintext = None
         req.token_claimed_at = utcnow()
+        audit(s, AuditEventType.CLAIM, flow_id=req.flow_id, tool=req.tool,
+              details={"grant_id": req.grant_id})
         s.commit()
     return tok
 
@@ -168,6 +201,12 @@ def grant_request(
 
     token = TOKEN_PREFIX + secrets.token_urlsafe(32)
     now = utcnow()
+    # Re-read the switch after the checks above: a kill engaged while
+    # this grant was being assembled must win the race. SQLite
+    # serializes writers, so by the time we are here the sweep either
+    # ran (and we abort) or has not started (and it will see this row).
+    if kill_state(s).engaged:
+        raise ValueError("kill switch engaged — no new grants")
     grant = CapabilityGrant(
         flow_id=req.flow_id, tool=req.tool, token_hash=_hash(token),
         expires_at=now + timedelta(minutes=ttl_minutes), granted_by=granted_by,

@@ -19,7 +19,7 @@ about every request.
 
 import re
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import __version__
@@ -35,7 +35,14 @@ from .schemas import (
     TOOL_PATTERN,
 )
 from .scope import derive_scope
-from .service import audit, check_capability, claim_token, create_request, refresh_status
+from .service import (
+    audit,
+    check_capability,
+    claim_token,
+    create_request,
+    nonce_matches,
+    refresh_status,
+)
 
 app = FastAPI(
     title="Sentinel Broker (cluster-facing)",
@@ -71,7 +78,7 @@ def request_capability(body: CapabilityRequestIn, response: Response):
     with SessionLocal() as s:
         req, created = create_request(
             s, flow_id=body.flow_id, tool=body.tool,
-            reason=body.reason, agent=body.agent,
+            reason=body.reason, agent=body.agent, claim_nonce=body.claim_nonce,
         )
         if not created:
             response.status_code = 200
@@ -88,7 +95,15 @@ def request_capability(body: CapabilityRequestIn, response: Response):
     tags=["capability"],
     summary="Poll for the outcome (token arrives here, once)",
 )
-def poll_request(request_id: str):
+def poll_request(
+    request_id: str,
+    x_claim_nonce: str = Header(
+        description="The same secret you sent as `claim_nonce` when you "
+                    "asked. Proves this poll belongs to the caller that "
+                    "raised the request — without it, whoever polled "
+                    "fastest after the human clicked Grant would take "
+                    "the token."),
+):
     """`pending` → keep polling (the request itself expires, so this
     always terminates). `granted` → the **first** poll carries `token`
     (claim-once; later polls return the status without it — if the
@@ -98,6 +113,10 @@ def poll_request(request_id: str):
     with SessionLocal() as s:
         req = s.get(CapabilityRequest, request_id)
         if req is None:
+            raise HTTPException(status_code=404, detail="unknown request_id")
+        if not nonce_matches(req, x_claim_nonce):
+            # Same answer as an unknown id: a wrong nonce must not
+            # confirm that the request exists.
             raise HTTPException(status_code=404, detail="unknown request_id")
         status = refresh_status(s, req)
         token = claim_token(s, req) if status == RequestStatus.GRANTED else None
@@ -119,7 +138,11 @@ def poll_request(request_id: str):
                      "description": "Denied — reason in body, and audited."}},
 )
 def capability_check(
-    token: str = Query(description="The capability token, exactly as claimed."),
+    x_sentinel_token: str = Header(
+        description="The capability token, exactly as claimed. A HEADER, "
+                    "not a query parameter: uvicorn's access log records "
+                    "full query strings, so a token in the URL would sit "
+                    "in journald in plaintext long after the grant died."),
     tool: str = Query(pattern=TOOL_PATTERN,
                       description="Tool actually being invoked — must equal the granted tool."),
     flow_id: str = Query(pattern=FLOW_ID_PATTERN,
@@ -132,7 +155,8 @@ def capability_check(
     because the caller is our own proxy and debuggability wins; every
     check, either verdict, lands in the audit log."""
     with SessionLocal() as s:
-        allowed, reason, grant = check_capability(s, token=token, tool=tool, flow_id=flow_id)
+        allowed, reason, grant = check_capability(
+            s, token=x_sentinel_token, tool=tool, flow_id=flow_id)
         if not allowed:
             return JSONResponse(status_code=403,
                                 content={"allowed": False, "reason": reason})
@@ -192,7 +216,7 @@ async def ext_authz(original_path: str, request: Request, response: Response):
         return _authz_deny("invalid-flow-id", flow_id=None, tool=None,
                            path=original_path)
 
-    tool, reason = derive_scope(original_path, body)
+    tool, reason = derive_scope(request.method, original_path, body)
     if tool is None:
         return _authz_deny(reason, flow_id=flow_id, tool=None, path=original_path)
 

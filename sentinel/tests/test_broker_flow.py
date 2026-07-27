@@ -47,18 +47,26 @@ def _migrate() -> None:
     command.upgrade(cfg, "head")
 
 
-def _ask(flow, tool, reason="because", agent="claude"):
+NONCE = "lifecycle-claim-nonce-0123456789"
+
+
+def _ask(flow, tool, reason="because", agent="claude", nonce=NONCE):
     return broker.post("/v1/capability-requests",
-                       json={"flow_id": flow, "tool": tool, "reason": reason, "agent": agent})
+                       json={"flow_id": flow, "tool": tool, "reason": reason,
+                             "agent": agent, "claim_nonce": nonce})
 
 
-def _poll(rid):
-    return broker.get(f"/v1/capability-requests/{rid}")
+def _poll(rid, nonce=NONCE):
+    return broker.get(f"/v1/capability-requests/{rid}",
+                      headers={"X-Claim-Nonce": nonce})
 
 
 def _check(token, tool, flow):
+    # Token rides in a HEADER: uvicorn logs full query strings, so a
+    # token in the URL would land in journald in plaintext.
     return broker.get("/v1/capability-check",
-                      params={"token": token, "tool": tool, "flow_id": flow})
+                      params={"tool": tool, "flow_id": flow},
+                      headers={"X-Sentinel-Token": token})
 
 
 def test_broker_lifecycle():
@@ -127,6 +135,79 @@ def test_broker_lifecycle():
     types = {e["event_type"] for e in admin.get("/v1/audit-events", params={"limit": 500}).json()}
     need = {"request", "grant", "denial", "use", "revocation", "kill_engaged", "kill_released"}
     assert need <= types, f"audit has all 7 event types (has {sorted(types)})"
+
+
+def test_token_pickup_belongs_to_the_asker():
+    """B1: dedupe used to hand any caller another caller's request_id,
+    and the poll authenticated nothing — so whoever polled fastest after
+    the human clicked Grant took the token. The claim nonce is what makes
+    the one-time pickup belong to the caller that actually asked."""
+    _migrate()
+    victim_nonce, attacker_nonce = "victim-nonce-0123456789ab", "attacker-nonce-0123456789"
+    v = _ask("hijack-flow", "github.create_pr", reason="open the KEDA PR",
+             nonce=victim_nonce).json()["request_id"]
+
+    # The attacker names the victim's flow and tool, hoping to be handed
+    # the victim's request back. It now gets its OWN request instead...
+    a = _ask("hijack-flow", "github.create_pr", reason="delete the release branch",
+             agent="impostor", nonce=attacker_nonce).json()["request_id"]
+    assert a != v, "a different caller does not inherit someone else's request"
+
+    # ...and the human sees BOTH, each with its own justification, rather
+    # than approving one text while a different caller collects the token.
+    pending = admin.get("/v1/capability-requests").json()
+    reasons = {p["reason"] for p in pending if p["request_id"] in (v, a)}
+    assert reasons == {"open the KEDA PR", "delete the release branch"}, \
+        "each asker's own justification reaches the approval screen"
+
+    # Even knowing the id, the wrong nonce cannot poll it — and gets the
+    # same answer as an unknown id, so it learns nothing.
+    admin.post(f"/v1/capability-requests/{v}/grant",
+               json={"ttl_minutes": 5}, headers=CONSOLE)
+    assert _poll(v, nonce=attacker_nonce).status_code == 404, \
+        "wrong nonce cannot claim, and cannot confirm the request exists"
+    assert broker.get(f"/v1/capability-requests/{v}").status_code == 422, \
+        "no nonce at all is a malformed poll"
+    assert _poll(v, nonce=victim_nonce).json()["token"].startswith("snt_"), \
+        "the caller that asked still gets its token"
+
+
+def test_kill_can_be_pressed_twice():
+    """A1: the sweep used to sit inside `if not ks.engaged`, so a second
+    press revoked nothing. A grant that became live while engaged could
+    then never be cleaned up, and came back alive on release."""
+    _migrate()
+    admin.post("/v1/kill/release", headers=CONSOLE)  # start from off
+    n = "twice-nonce-0123456789abcd"
+    rid = _ask("twice-flow", "echo.say", nonce=n).json()["request_id"]
+    admin.post(f"/v1/capability-requests/{rid}/grant",
+               json={"ttl_minutes": 5}, headers=CONSOLE)
+    tok = _poll(rid, nonce=n).json()["token"]
+
+    first = admin.post("/v1/kill", json={"reason": "drill"}, headers=CONSOLE).json()
+    assert first["grants_revoked"] >= 1 and _check(tok, "echo.say", "twice-flow").status_code == 403
+
+    # Second press: still allowed, still audited, and it re-sweeps.
+    again = admin.post("/v1/kill", json={"reason": "again"}, headers=CONSOLE)
+    assert again.status_code == 200, "pressing kill twice is not an error"
+    assert again.json()["engaged"] is True
+    admin.post("/v1/kill/release", headers=CONSOLE)
+    assert _check(tok, "echo.say", "twice-flow").status_code == 403, \
+        "release does not resurrect a revoked grant"
+
+
+def test_claim_is_audited():
+    """A5: the record could not answer 'was this capability actually
+    picked up?' — an unclaimed grant looked identical to a used one."""
+    _migrate()
+    n = "audit-claim-nonce-0123456789"
+    rid = _ask("claim-flow", "echo.say", nonce=n).json()["request_id"]
+    admin.post(f"/v1/capability-requests/{rid}/grant",
+               json={"ttl_minutes": 5}, headers=CONSOLE)
+    _poll(rid, nonce=n)
+    kinds = [e["event_type"] for e in
+             admin.get("/v1/audit-events", params={"flow_id": "claim-flow"}).json()]
+    assert "claim" in kinds, "the moment the credential left Sentinel is on the record"
 
 
 if __name__ == "__main__":

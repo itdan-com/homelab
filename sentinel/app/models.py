@@ -132,6 +132,13 @@ class CapabilityRequest(Base):
     # scope-locked and minutes from expiry.
     token_plaintext: Mapped[str | None] = mapped_column(String(128))
     token_claimed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # SHA-256 of a secret the REQUESTER minted and kept. It is what makes
+    # the one-time pickup belong to the caller that asked: without it,
+    # dedupe handed any caller another caller's request_id and the poll
+    # authenticated nothing, so whoever polled fastest after the human
+    # clicked Grant took the token. Nullable only because rows predating
+    # 5.5.5 have none (all long resolved).
+    claim_nonce_hash: Mapped[str | None] = mapped_column(String(64), index=True)
 
     flow: Mapped[Flow] = relationship()
     grant: Mapped["CapabilityGrant | None"] = relationship()
@@ -165,6 +172,11 @@ class AuditEventType(StrEnum):
     # right — hiding them inside "revocation" would blur the audit story.
     KILL_ENGAGED = "kill_engaged"
     KILL_RELEASED = "kill_released"
+    # The moment the credential leaves Sentinel. Without it the record
+    # cannot answer "was this capability ever actually picked up?" —
+    # and a grant that was never claimed looks identical to one that
+    # was, which is the wrong thing to be unsure about after an incident.
+    CLAIM = "claim"
 
 
 class AuditEvent(Base):

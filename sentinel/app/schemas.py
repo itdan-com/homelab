@@ -10,6 +10,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
+from .config import DEFAULT_GRANT_TTL_MINUTES, MAX_GRANT_TTL_MINUTES
+
 FLOW_ID_PATTERN = r"^[A-Za-z0-9._-]{1,64}$"
 TOOL_PATTERN = r"^[A-Za-z0-9._-]{1,128}$"
 
@@ -48,9 +50,21 @@ class CapabilityRequestIn(SentinelModel):
     )
     agent: str = Field(
         default="unknown",
-        max_length=128,
-        description="Who is asking (informational, audited).",
+        pattern=r"^[A-Za-z0-9 ._-]{1,128}$",
+        description="Who is asking (informational, audited). Pattern-bound "
+                    "like flow_id and tool: this string is displayed on the "
+                    "approval screen, and the screen that holds the kill "
+                    "switch takes no markup from the thing asking for power.",
         examples=["control-plane-claude"],
+    )
+    claim_nonce: str = Field(
+        min_length=16, max_length=128,
+        description="A secret YOU generate and keep (e.g. secrets.token_urlsafe(32)). "
+                    "Sentinel stores only its hash and requires it back on the "
+                    "status poll, so the one-time token can only be picked up by "
+                    "the caller that asked — not by whoever polls fastest after "
+                    "the human clicks Grant.",
+        examples=["e2Fk9wQ7nS1pXyL0vB4tRc8mZ6hJ3aUd"],
     )
 
 
@@ -114,8 +128,11 @@ class AdminAction(SentinelModel):
 
 class GrantIn(AdminAction):
     ttl_minutes: int = Field(
-        default=5, ge=1, le=1440,
-        description="Grant lifetime. The console offers 5 (default) and 60.")
+        default=DEFAULT_GRANT_TTL_MINUTES, ge=1, le=MAX_GRANT_TTL_MINUTES,
+        description="Grant lifetime. The console offers 5 (default) and 60. "
+                    "Default and ceiling are config, not literals — a systemd "
+                    "unit that shrinks SENTINEL_GRANT_TTL_MINUTES to reduce "
+                    "blast radius used to be silently ignored.")
 
 
 class GrantOut(SentinelModel):

@@ -20,6 +20,11 @@ REQUEST_TTL_MINUTES = int(os.environ.get("SENTINEL_REQUEST_TTL_MINUTES", "10"))
 # buttons send 5 or 60 explicitly).
 DEFAULT_GRANT_TTL_MINUTES = int(os.environ.get("SENTINEL_GRANT_TTL_MINUTES", "5"))
 
+# Hard ceiling on any single grant. Was 24 hours purely because that is
+# a round number; the console only ever offers 5 and 60, so the extra
+# 1380 minutes existed solely for something that got past the console.
+MAX_GRANT_TTL_MINUTES = int(os.environ.get("SENTINEL_MAX_GRANT_TTL_MINUTES", "60"))
+
 # Token prefix: makes credentials grep-able in logs/incident response
 # (the industry "sk_"-style convention) without weakening entropy.
 TOKEN_PREFIX = "snt_"

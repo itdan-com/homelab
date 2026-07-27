@@ -84,6 +84,14 @@ app = FastAPI(
     version=__version__,
     description="The human's side of the broker: see what's asking, "
                 "grant or deny, pull the kill switch, read the record.",
+    # Swagger UI loads its JavaScript from a public CDN. This origin owns
+    # the kill switch, so it executes no third-party code — the CSP above
+    # would block it anyway, and a page that renders broken is worse than
+    # one that is honestly absent. The schema itself stays at
+    # /openapi.json, and app/schemas.py's Field descriptions remain the
+    # generated-from-code reference (see sentinel/README.md).
+    docs_url=None,
+    redoc_url=None,
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=CONSOLE_ALLOWED_HOSTS)
 
@@ -142,6 +150,10 @@ def list_pending():
             select(CapabilityRequest)
             .where(CapabilityRequest.status == RequestStatus.PENDING)
             .order_by(CapabilityRequest.requested_at)
+            # Bounded: nothing rate-limits capability requests yet, and an
+            # unbounded approval screen is a denial-of-service on the human
+            # AND on the hot path they share a database with.
+            .limit(200)
         ).all()
         return [
             PendingRequest(

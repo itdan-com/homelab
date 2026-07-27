@@ -46,13 +46,18 @@ def _migrate() -> None:
     command.upgrade(cfg, "head")
 
 
+NONCE = "ext-authz-claim-nonce-0123456789"
+
+
 def _granted_token(flow: str, tool: str) -> str:
     rid = broker.post("/v1/capability-requests",
-                      json={"flow_id": flow, "tool": tool,
-                            "reason": "test", "agent": "pytest"}).json()["request_id"]
+                      json={"flow_id": flow, "tool": tool, "reason": "test",
+                            "agent": "pytest", "claim_nonce": NONCE}
+                      ).json()["request_id"]
     admin.post(f"/v1/capability-requests/{rid}/grant",
                json={"ttl_minutes": 5}, headers=CONSOLE)
-    return broker.get(f"/v1/capability-requests/{rid}").json()["token"]
+    return broker.get(f"/v1/capability-requests/{rid}",
+                      headers={"X-Claim-Nonce": NONCE}).json()["token"]
 
 
 def _call(path="/echo/mcp", token=None, flow=None, json_body=None, content=None):
@@ -76,27 +81,45 @@ def _tools_call(name):
 
 def test_derive_scope_table():
     body = lambda name: __import__("json").dumps(_tools_call(name)).encode()
-    assert derive_scope("/echo/mcp", body("say")) == ("echo.say", "ok")
-    assert derive_scope("/github/mcp", body("create_pr")) == ("github.create_pr", "ok")
+    assert derive_scope("POST", "/echo/mcp", body("say")) == ("echo.say", "ok")
+    assert derive_scope("POST", "/github/mcp", body("create_pr")) == ("github.create_pr", "ok")
     # non-tools/call methods become <server>.rpc.<method with / → .>
     import json as _json
     rpc = _json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode()
-    assert derive_scope("/echo/mcp", rpc) == ("echo.rpc.tools.list", "ok")
+    assert derive_scope("POST", "/echo/mcp", rpc) == ("echo.rpc.tools.list", "ok")
     init = _json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}).encode()
-    assert derive_scope("/echo/mcp", init) == ("echo.rpc.initialize", "ok")
+    assert derive_scope("POST", "/echo/mcp", init) == ("echo.rpc.initialize", "ok")
     # deny-closed branches
-    assert derive_scope("", body("say")) == (None, "unmapped-path")
-    assert derive_scope("/", body("say")) == (None, "unmapped-path")
-    assert derive_scope("/bad seg/x", body("say")) == (None, "unmapped-path")
-    assert derive_scope("/echo/mcp", b"") == (None, "empty-body")
-    assert derive_scope("/echo/mcp", b"not json") == (None, "malformed-body")
-    assert derive_scope("/echo/mcp", b"[{}]") == (None, "batch-unsupported")
-    assert derive_scope("/echo/mcp", b'"str"') == (None, "malformed-body")
-    assert derive_scope("/echo/mcp", b'{"method": 7}') == (None, "malformed-body")
+    assert derive_scope("POST", "", body("say")) == (None, "unmapped-path")
+    assert derive_scope("POST", "/", body("say")) == (None, "unmapped-path")
+    assert derive_scope("POST", "/bad seg/x", body("say")) == (None, "unmapped-path")
+    assert derive_scope("POST", "/echo/mcp", b"") == (None, "empty-body")
+    assert derive_scope("POST", "/echo/mcp", b"not json") == (None, "malformed-body")
+    assert derive_scope("POST", "/echo/mcp", b"[{}]") == (None, "batch-unsupported")
+    assert derive_scope("POST", "/echo/mcp", b'"str"') == (None, "malformed-body")
+    assert derive_scope("POST", "/echo/mcp", b'{"method": 7}') == (None, "malformed-body")
     noname = _json.dumps({"method": "tools/call", "params": {}}).encode()
-    assert derive_scope("/echo/mcp", noname) == (None, "invalid-tool-name")
+    assert derive_scope("POST", "/echo/mcp", noname) == (None, "invalid-tool-name")
     dotted = _json.dumps(_tools_call("../../etc")).encode()
-    assert derive_scope("/echo/mcp", dotted) == (None, "invalid-tool-name")
+    assert derive_scope("POST", "/echo/mcp", dotted) == (None, "invalid-tool-name")
+
+    # MCP Streamable HTTP opens its push channel with a bodiless GET and
+    # ends the session with a bodiless DELETE. These must be GRANTABLE,
+    # not impossible — denying them outright meant no MCP session could
+    # ever be established through the proxy.
+    assert derive_scope("GET", "/echo/mcp", b"") == ("echo.rpc.transport.get", "ok")
+    assert derive_scope("DELETE", "/echo/mcp", b"") == ("echo.rpc.transport.delete", "ok")
+    # ...but a POST with no JSON-RPC document is still malformed.
+    assert derive_scope("POST", "/echo/mcp", b"") == (None, "empty-body")
+
+    # Authorization and execution must read the SAME document: with
+    # duplicate keys, Python takes the last and a first-wins parser takes
+    # the first, so Sentinel would authorize `say` while the upstream ran
+    # `delete_repo`. Refuse rather than bet on the upstream's parser.
+    dup = b'{"method":"tools/call","params":{"name":"delete_repo"},"params":{"name":"say"}}'
+    assert derive_scope("POST", "/echo/mcp", dup) == (None, "malformed-body")
+    assert derive_scope("POST", "/echo/mcp", b'{"method":"tools/call","params":NaN}') \
+        == (None, "malformed-body")
 
 
 def test_ext_authz_verdicts():

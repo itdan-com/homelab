@@ -45,7 +45,8 @@ def _migrate() -> None:
 def _pending(flow="guard-flow", tool="guard.tool"):
     return broker.post("/v1/capability-requests",
                        json={"flow_id": flow, "tool": tool,
-                             "reason": "guard test", "agent": "pytest"}
+                             "reason": "guard test", "agent": "pytest",
+                             "claim_nonce": "guard-claim-nonce-0123456789"}
                        ).json()["request_id"]
 
 

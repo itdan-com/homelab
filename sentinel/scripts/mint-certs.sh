@@ -79,8 +79,19 @@ fi
 mint_leaf() { # name, CN, extensions
   local name="$1" cn="$2" ext="$3"
   if [[ -f "$name.crt" ]]; then
-    echo "== $name.crt exists — keeping it ($(openssl x509 -in "$name.crt" -noout -enddate))"
-    return
+    # Expiry-aware: re-running this script on day 91 used to print a
+    # success-shaped "keeping it" while every MCP call failed closed
+    # behind an expired cert. Renew inside 30 days, automatically.
+    if openssl x509 -in "$name.crt" -noout -checkend $((30 * 86400)) >/dev/null; then
+      echo "== $name.crt valid — keeping it ($(openssl x509 -in "$name.crt" -noout -enddate))"
+      return
+    fi
+    if openssl x509 -in "$name.crt" -noout -checkend 0 >/dev/null; then
+      echo "!! $name.crt expires within 30 days — renewing now"
+    else
+      echo "!! $name.crt HAS ALREADY EXPIRED — renewing now (traffic was failing closed)"
+    fi
+    rm -f "$name.crt" "$name.key"
   fi
   echo "== minting $name ($LEAF_DAYS days, CN=$cn)"
   openssl ecparam -name prime256v1 -genkey -noout -out "$name.key"
