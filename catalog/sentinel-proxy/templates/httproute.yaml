@@ -12,8 +12,12 @@ metadata:
   labels:
     {{- include "catalog.labels" . | nindent 4 }}
 spec:
+  # group/kind/weight below are the API server's structural defaults,
+  # rendered explicitly — implicit defaults are a permanent ArgoCD diff
+  # (Phase 4 lesson).
   parentRefs:
-    - name: {{ include "catalog.fullname" . }}
+    - group: gateway.networking.k8s.io
+      name: {{ include "catalog.fullname" . }}
   rules:
     {{- range .Values.upstreams }}
     - matches:
@@ -27,7 +31,10 @@ spec:
               type: ReplacePrefixMatch
               replacePrefixMatch: /
       backendRefs:
-        - name: {{ .service }}
+        - group: ""
+          kind: Service
+          name: {{ .service }}
           namespace: {{ .namespace }}
           port: {{ .port }}
+          weight: 1
     {{- end }}

@@ -19,9 +19,12 @@ spec:
   extAuth:
     http:
       backendRefs:
+        # weight rendered explicitly — the API server defaults it, and an
+        # implicit default is a permanent ArgoCD diff (Phase 4 lesson).
         - group: gateway.envoyproxy.io
           kind: Backend
           name: {{ include "catalog.fullname" . }}-broker
+          weight: 1
       path: {{ .Values.broker.authzPathPrefix }}
       # Verified-by-Sentinel identity, attached by the broker's 200 and
       # forwarded upstream so the MCP server's own log can record which
