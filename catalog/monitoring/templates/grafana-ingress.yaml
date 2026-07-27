@@ -1,0 +1,72 @@
+{{- if .Values.grafanaIngress.enabled }}
+# Grafana's door (Phase 5 A5) — the house TLS pattern (certificate +
+# redirect middleware + two IngressRoutes), chart-local because the
+# umbrella fronts a subchart service instead of its own workload.
+# Kept in one file: it is one feature.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: grafana-tls
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  secretName: grafana-tls
+  dnsNames:
+    - {{ .Values.grafanaIngress.host }}
+  privateKey:
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ .Values.grafanaIngress.tls.issuer }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: grafana-redirect-https
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+    {{- with .Values.grafanaIngress.tls.redirectPort }}
+    port: {{ . | quote }}
+    {{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ .Values.grafanaIngress.host }}`)
+      kind: Rule
+      services:
+        - name: {{ .Values.grafanaIngress.service }}
+          port: {{ .Values.grafanaIngress.port }}
+  tls:
+    secretName: grafana-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana-redirect
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`{{ .Values.grafanaIngress.host }}`)
+      kind: Rule
+      middlewares:
+        - name: grafana-redirect-https
+      services:
+        - name: {{ .Values.grafanaIngress.service }}
+          port: {{ .Values.grafanaIngress.port }}
+{{- end }}

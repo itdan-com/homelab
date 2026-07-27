@@ -1,6 +1,24 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# Grafana's public door (Phase 5 A5) — rendered by OUR template
+# (templates/grafana-ingress.yaml), not the subchart: the umbrella
+# owns the door, the subchart owns the app. Passes ADR-002's exposure
+# policy (browsed + authenticated). Prometheus/Alertmanager get NO
+# door on purpose: unauthenticated by design until Phase 7 puts them
+# behind SSO forward-auth.
+grafanaIngress:
+  enabled: true
+  host: grafana.lab.local
+  # The subchart's Service (release name + "-grafana") — stated
+  # explicitly rather than derived; the release name is pinned by
+  # argo.yaml anyway.
+  service: monitoring-grafana
+  port: 80
+  tls:
+    issuer: lab-local-ca
+    redirectPort: "8443"
+
 catalog:
   tier: dev
   # dataClass secret: this release holds a real credential (Grafana
@@ -85,6 +103,13 @@ kube-prometheus-stack:
   grafana:
     # Real value injected from secrets.enc.yaml (SOPS) at install time.
     adminPassword: ""
+    grafana.ini:
+      server:
+        # Grafana must know its public URL or every generated link and
+        # redirect claims localhost — and B6's OIDC redirect URIs are
+        # built from this value, so it's set correctly BEFORE SSO.
+        # ADR-002: on cloud this becomes https://grafana.<domain>/.
+        root_url: https://grafana.lab.local:8443/
     persistence:
       # Keeps hand-tuned dashboards across pod restarts (local-path PVC;
       # dashboards-as-code lands with the Phase 7 dashboard work).
