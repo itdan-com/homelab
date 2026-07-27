@@ -303,6 +303,10 @@ flips.
 using Terraform — not the web console; the IaC is the point. Apply the
 same root ArgoCD Application; the entire `catalog/` deploys
 unchanged. Enable the cluster autoscaler. Then `terraform destroy` it.
+*(Reframed by ADR-002, 2026-07-26: this is a supported product path,
+not a drill — "domain in, platform out" from one entry command; the
+teardown is cost hygiene after proof, and keeping it up is a
+documented choice. See `docs/adr/ADR-002-cloud-parity-contract.md`.)*
 
 ## Working principles
 

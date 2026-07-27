@@ -78,7 +78,10 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 - [ ] **A5. Consoles get real doors** — IngressRoutes + certs + hosts
   entries for `grafana.lab.local` (and `authentik.lab.local` when B
   lands; `argocd.lab.local` only if B7 lands). README doors table
-  updated as each door opens.
+  updated as each door opens. Scope is set by ADR-002's exposure
+  policy: doors only for browsed **and authenticated** services —
+  Prometheus/Alertmanager are unauthenticated by design and stay
+  port-forward until Phase 7 puts them behind SSO forward-auth.
 
 ### B — SSO (Authentik as OIDC provider)
 
@@ -92,9 +95,10 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 - [ ] **B3. `authentik.lab.local` over TLS** via the A-stage
   machinery; admin login works in the browser.
 - [ ] **B4. OIDC provider + application for OpenWebUI** configured in
-  Authentik — prefer whatever is declaratively reproducible for
-  adopters (Authentik blueprints if practical; else clickops now,
-  export/document after — decide and note here).
+  Authentik — **blueprints (config-as-code) REQUIRED** per ADR-002:
+  SSO must assemble headless on a machine nobody clicked (the cloud
+  deploy). Clickops allowed only as exploration; the committed state
+  must reproduce from git.
 - [ ] **B5. OpenWebUI → Authentik** — OIDC env + SOPS client secret; a
   fresh user signs in via Authentik; admin-role mapping verified;
   decision recorded on the local-password path (disable vs. keep as
@@ -139,8 +143,8 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 - **A3:** `k3d cluster edit --port-add` vs. documented recreate for
   the 443 host mapping — pick based on what the installed k3d
   supports.
-- **B4:** Authentik blueprints (config-as-code) vs. clickops+export —
-  prefer the declaratively reproducible path for adopters.
+- **B4:** ~~blueprints vs. clickops~~ RESOLVED by ADR-002
+  (2026-07-26): blueprints required.
 - **B7:** scope call made live, against remaining session budget.
 
 ## Phase exit criteria (reconciled 2026-07-26)
