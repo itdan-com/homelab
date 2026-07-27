@@ -50,6 +50,26 @@ spec:
           # kube-prometheus-stack CRDs overflow client-side apply's
           # last-applied annotation; server-side apply avoids it.
           - ServerSideApply=true
+          # Without this, ignoreDifferences only affects the DIFF —
+          # a sync would still overwrite the ignored fields.
+          - RespectIgnoreDifferences=true
+      # Live-owned certificate material ArgoCD must not fight. The
+      # upstream ai-gateway chart regenerates its webhook certs on
+      # EVERY render, so each catalog commit rotated the Secret while
+      # the controller-patched caBundle went stale — and the Fail-policy
+      # webhook then blocked ALL EG-provisioned pod creation (fleet
+      # rollouts, KEDA scale-ups). Found at 5.5.4 when the sentinel
+      # fleet's first pod was refused. Name-scoped, so inert for every
+      # other app; caBundles are controller-patched by design generally.
+      ignoreDifferences:
+        - kind: Secret
+          name: self-signed-cert-for-mutating-webhook
+          jsonPointers:
+            - /data
+        - group: admissionregistration.k8s.io
+          kind: MutatingWebhookConfiguration
+          jqPathExpressions:
+            - .webhooks[].clientConfig.caBundle
   # Conditional list items need the go-templated patch (per-field
   # templating can't add array entries).
   templatePatch: |
