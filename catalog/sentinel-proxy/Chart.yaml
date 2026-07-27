@@ -1,0 +1,21 @@
+apiVersion: v2
+name: sentinel-proxy
+description: >-
+  The Sentinel enforcement point: an Envoy Gateway data plane that fronts
+  every MCP server and asks the host-side Sentinel broker's ext_authz
+  endpoint — over mTLS with Sentinel's own CA — before forwarding a single
+  request. Tokens are validated per call (scope + TTL + flow-id), the tool
+  is derived server-side from the request body, and failure of the broker
+  fails CLOSED. Wraps Gateway API + gateway.envoyproxy.io CRs only; the
+  controllers are installed cluster-wide (catalog/envoy-gateway).
+type: application
+version: 0.1.0
+# appVersion tracks the Envoy Gateway CR API generation this chart targets.
+appVersion: "1.8.1"
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  # The proxy GATES MCP traffic; it exposes no MCP tools itself. Charts
+  # that do carry exposes-mcp: "true" and get fronted by this proxy.
+  catalog.homelab/exposes-mcp: "false"

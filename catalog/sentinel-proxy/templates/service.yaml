@@ -1,0 +1,19 @@
+# Stable, human-named entrypoint: http://sentinel-proxy.mcp-servers/
+# <server>/... — an ExternalName alias (DNS CNAME) for the EG-generated
+# data-plane Service, which lives in the controller namespace under a
+# hashed name (see _dataplane.tpl). MCP callers use this name and never
+# track EG's naming; NetworkPolicy on fronted workloads keys off the
+# data-plane pods' owning-gateway labels, not this alias.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  type: ExternalName
+  externalName: {{ include "sentinelproxy.dataplaneName" . }}.{{ .Values.service.controllerNamespace }}.svc.cluster.local
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      protocol: TCP

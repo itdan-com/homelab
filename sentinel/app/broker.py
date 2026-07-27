@@ -12,12 +12,14 @@ the cluster by construction (CLAUDE.md: one-way trust). mTLS in front
 of this listener arrives with the Envoy ext_authz proxy work (5.5.4).
 """
 
-from fastapi import FastAPI, HTTPException, Query, Response
+import re
+
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import __version__
 from .db import SessionLocal, engine
-from .models import RequestStatus
+from .models import AuditEventType, RequestStatus
 from .schemas import (
     CapabilityRequestIn,
     CapabilityRequestOut,
@@ -27,7 +29,8 @@ from .schemas import (
     FLOW_ID_PATTERN,
     TOOL_PATTERN,
 )
-from .service import check_capability, claim_token, create_request, refresh_status
+from .scope import derive_scope
+from .service import audit, check_capability, claim_token, create_request, refresh_status
 
 app = FastAPI(
     title="Sentinel Broker (cluster-facing)",
@@ -128,6 +131,74 @@ def capability_check(
         if not allowed:
             return JSONResponse(status_code=403,
                                 content={"allowed": False, "reason": reason})
+        return CheckAllowed(
+            allowed=True, grant_id=grant.id, flow_id=grant.flow_id,
+            tool=grant.tool, expires_at=grant.expires_at,
+        )
+
+
+_FLOW_ID_RE = re.compile(FLOW_ID_PATTERN)
+
+
+def _authz_deny(reason: str, *, flow_id: str | None, tool: str | None,
+                path: str) -> JSONResponse:
+    """Audit the refusal, then say no. Pre-check denials (bad headers,
+    unparseable body) never reach check_capability, so they write their
+    own DENIAL event here — a garbage request still leaves a trail."""
+    with SessionLocal() as s:
+        audit(s, AuditEventType.DENIAL, flow_id=flow_id, tool=tool,
+              details={"source": "ext-authz", "reason": reason, "path": path})
+        s.commit()
+    return JSONResponse(status_code=403, content={"allowed": False, "reason": reason})
+
+
+@app.api_route(
+    "/v1/ext-authz{original_path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"],
+    response_model=CheckAllowed,
+    tags=["capability"],
+    summary="Envoy ext_authz entry point (the proxy's ONLY question)",
+    responses={403: {"model": CheckDenied,
+                     "description": "Denied — reason in body, and audited."}},
+)
+async def ext_authz(original_path: str, request: Request, response: Response):
+    """The Sentinel proxy's `SecurityPolicy` points Envoy's ext_authz
+    filter here with `path: /v1/ext-authz` (a PREFIX — the original
+    request path is appended: `/echo/mcp` arrives as
+    `/v1/ext-authz/echo/mcp`) and `bodyToExtAuth` (the original body
+    rides along). Identity comes from two forwarded headers,
+    `X-Sentinel-Token` and `X-Flow-Id`; the TOOL is never taken from
+    the caller — it is derived here from the path + JSON-RPC body
+    (see `app.scope`), so a caller cannot name one tool and invoke
+    another. Verdict is HTTP status: 200 forwards the request upstream
+    (with `X-Sentinel-Grant-Id`/`X-Sentinel-Tool` attached for the MCP
+    server's own log), 403 stops it at the proxy. Every deny, including
+    unparseable garbage, is audited with its reason."""
+    token = request.headers.get("x-sentinel-token")
+    flow_id = request.headers.get("x-flow-id")
+    body = await request.body()
+    if not token:
+        return _authz_deny("missing-token", flow_id=flow_id, tool=None,
+                           path=original_path)
+    if not flow_id:
+        return _authz_deny("missing-flow-id", flow_id=None, tool=None,
+                           path=original_path)
+    if not _FLOW_ID_RE.fullmatch(flow_id):
+        return _authz_deny("invalid-flow-id", flow_id=None, tool=None,
+                           path=original_path)
+
+    tool, reason = derive_scope(original_path, body)
+    if tool is None:
+        return _authz_deny(reason, flow_id=flow_id, tool=None, path=original_path)
+
+    with SessionLocal() as s:
+        allowed, reason, grant = check_capability(s, token=token, tool=tool,
+                                                  flow_id=flow_id)
+        if not allowed:
+            return JSONResponse(status_code=403,
+                                content={"allowed": False, "reason": reason})
+        response.headers["x-sentinel-grant-id"] = grant.id
+        response.headers["x-sentinel-tool"] = grant.tool
         return CheckAllowed(
             allowed=True, grant_id=grant.id, flow_id=grant.flow_id,
             tool=grant.tool, expires_at=grant.expires_at,

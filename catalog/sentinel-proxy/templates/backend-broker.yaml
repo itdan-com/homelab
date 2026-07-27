@@ -1,0 +1,16 @@
+# The broker as an addressable backend. It is NOT a cluster workload —
+# it lives on the WSL2 host (systemd), reachable only through the k3d
+# network gateway under a name the CoreDNS override declares. This
+# Backend + its BackendTLSPolicy are the only place the cluster's config
+# even references Sentinel.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: Backend
+metadata:
+  name: {{ include "catalog.fullname" . }}-broker
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  endpoints:
+    - fqdn:
+        hostname: {{ .Values.broker.hostname }}
+        port: {{ .Values.broker.port }}

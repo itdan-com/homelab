@@ -1,0 +1,15 @@
+{{- if .Values.gateway.createClass }}
+# Cluster-scoped, and deliberately NOT shared with the AI gateway's class:
+# a distinct class → a distinct provisioned Envoy fleet → only THIS fleet
+# carries Sentinel's client certificate (EnvoyProxy backendTLS is
+# fleet-wide, so sharing a fleet would hand the AI data plane a Sentinel
+# identity it must never hold).
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ .Values.gateway.className }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+{{- end }}

@@ -1,0 +1,33 @@
+# One rule per declared upstream: /<name>/* → that Service, with the
+# routing prefix stripped (the upstream sees its own natural paths; the
+# <name> segment is proxy metadata — and the server half of the
+# capability scope the broker checks). ext_authz runs BEFORE this
+# rewrite, so the broker always derives scope from the path the CALLER
+# sent. Cross-namespace backendRefs are inert until the target namespace
+# grants them (ReferenceGrant — the fronted workload's consent).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "catalog.fullname" . }}-upstreams
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "catalog.fullname" . }}
+  rules:
+    {{- range .Values.upstreams }}
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /{{ .name }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: {{ .service }}
+          namespace: {{ .namespace }}
+          port: {{ .port }}
+    {{- end }}

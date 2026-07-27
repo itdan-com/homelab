@@ -1,0 +1,4 @@
+# GitOps self-declaration (see catalog/argocd ApplicationSet).
+name: sentinel-proxy
+namespace: mcp-servers
+secrets: "false"

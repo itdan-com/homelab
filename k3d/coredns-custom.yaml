@@ -39,6 +39,14 @@
 # OIDC discovery/token endpoints (Phase 5 B5). Traffic hairpins:
 # pod -> 172.18.0.1:8443 (docker publish) -> serverlb -> Traefik.
 # In cloud, public DNS answers these names and this block is dead.
+#
+# The sentinel-broker.internal block (Phase 5.5.4) gives the Sentinel
+# broker — which listens on the k3d network gateway (172.18.0.1:8401,
+# the WSL2 VM itself, OUTSIDE the cluster) — a stable DNS name. The
+# sentinel-proxy's ext_authz Backend and its BackendTLSPolicy SNI
+# validation key off this name, and the broker's server cert carries
+# it as a SAN, so no chart hardcodes the IP. Local-only shim like
+# lab.local: in cloud, Sentinel's address is a real DNS record.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -58,5 +66,11 @@ data:
         }
         template IN AAAA {
             rcode NOERROR
+        }
+    }
+  sentinel-broker.server: |
+    sentinel-broker.internal:53 {
+        hosts {
+            172.18.0.1 sentinel-broker.internal
         }
     }

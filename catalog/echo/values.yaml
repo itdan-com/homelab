@@ -83,6 +83,35 @@ securityContext:
   # default this one can genuinely run with a read-only root filesystem.
   readOnlyRootFilesystem: true
 
+# --- Sentinel fronting (Phase 5.5.4) -----------------------------------------
+# echo stands in for an MCP server while the enforcement chain is proven:
+# reachable through the sentinel-proxy at /echo/* (after a broker-granted
+# capability) and through its own Traefik door — nothing else.
+
+sentinelFronting:
+  # Emit the ReferenceGrant that lets the sentinel-proxy's HTTPRoute
+  # (in routeNamespace) target this chart's Service across namespaces.
+  enabled: true
+  routeNamespace: mcp-servers
+
+networkPolicy:
+  # Ingress allowlist: ONLY these sources may reach the pod; Cilium drops
+  # (and Hubble records) everything else. Each entry is a namespace plus
+  # optional pod-label match inside it.
+  enabled: true
+  allowFrom:
+    # The platform door — Traefik serving https://echo.lab.local.
+    - namespace: kube-system
+      podLabels:
+        app.kubernetes.io/name: traefik
+    # The Sentinel proxy's OWN Envoy fleet (EG provisions it into the
+    # controller namespace; the owning-gateway pair pins exactly our
+    # Gateway's pods — the same selector the AI gateway's PodMonitor uses).
+    - namespace: envoy-gateway-system
+      podLabels:
+        gateway.envoyproxy.io/owning-gateway-name: sentinel-proxy
+        gateway.envoyproxy.io/owning-gateway-namespace: mcp-servers
+
 nodeSelector: {}
 tolerations: []
 affinity: {}

@@ -1,0 +1,24 @@
+# TLS half of the broker handshake: validate the broker's server cert
+# against SENTINEL'S CA (the mint-certs.sh ConfigMap — deliberately not
+# cert-manager, not the lab CA: the cluster must not be able to mint a
+# certificate this policy would accept), with SNI + SAN pinned to the
+# broker's name. The client half — the certificate this fleet PRESENTS —
+# is the EnvoyProxy backendTLS.clientCertificateRef. Both halves present
+# = mTLS; the broker refuses the handshake without the client half.
+apiVersion: gateway.networking.k8s.io/v1
+kind: BackendTLSPolicy
+metadata:
+  name: {{ include "catalog.fullname" . }}-broker-tls
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.envoyproxy.io
+      kind: Backend
+      name: {{ include "catalog.fullname" . }}-broker
+  validation:
+    caCertificateRefs:
+      - group: ""
+        kind: ConfigMap
+        name: {{ .Values.broker.caConfigMap }}
+    hostname: {{ .Values.broker.hostname }}

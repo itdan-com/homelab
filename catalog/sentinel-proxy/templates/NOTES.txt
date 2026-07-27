@@ -1,0 +1,17 @@
+sentinel-proxy {{ .Chart.Version }} — the only door to MCP servers.
+
+Prerequisite (out-of-git, once per install):
+  sentinel/scripts/mint-certs.sh     # mints Sentinel's CA, injects
+                                     # sentinel-ca ConfigMap + sentinel-proxy-client
+                                     # Secret into {{ .Release.Namespace }}
+
+Broker must be up on the host:  sentinel/scripts/run-broker.sh
+
+Try it (from any pod allowed by NetworkPolicy):
+  # no token → 403 at the proxy, audited by Sentinel:
+  curl -i http://{{ include "catalog.fullname" . }}.{{ .Release.Namespace }}/echo/mcp \
+    -H 'content-type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"say"}}'
+
+  # with a granted token (request → human grant → poll; see sentinel/README.md):
+  #   add  -H "X-Sentinel-Token: snt_..." -H "X-Flow-Id: <your-flow>"

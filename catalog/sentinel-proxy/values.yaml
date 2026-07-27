@@ -1,0 +1,90 @@
+# values.yaml — the Sentinel proxy (Phase 5.5.4).
+#
+# TRUST MODEL, in one paragraph: this chart deploys the only door to MCP
+# servers. Its Envoy fleet asks the Sentinel broker (a systemd service on
+# the host, OUTSIDE the cluster) about every single request via ext_authz:
+# the caller's X-Sentinel-Token + X-Flow-Id headers and the request BODY
+# are forwarded to the broker, which derives the tool being invoked from
+# the body itself (a caller cannot name one tool and call another) and
+# answers 200 (forward) or 403 (refuse). The broker speaks mTLS with its
+# OWN CA — not the cluster's — so a compromised cluster cannot mint a
+# certificate the broker trusts. If the broker is down, everything fails
+# closed. NetworkPolicy on the fronted workloads makes this proxy the only
+# path to them (see catalog/echo's networkPolicy block for the pattern).
+#
+# OUT-OF-GIT PREREQUISITE: sentinel/scripts/mint-certs.sh must have run
+# once against the cluster — it creates the sentinel-ca ConfigMap and
+# sentinel-proxy-client Secret in this namespace (per-install material,
+# never in git, same pattern as bootstrap's age-key Secret). Until then
+# the fleet cannot present its client cert and stays un-Programmed.
+
+# Release-level labels: security infrastructure, prod trust gradient —
+# Sentinel never auto-approves anything here.
+catalog:
+  tier: prod
+  dataClass: none
+
+gateway:
+  # This chart owns its GatewayClass: the sentinel fleet must be a
+  # SEPARATE Envoy deployment from the AI gateway's — only this fleet
+  # holds Sentinel's client identity.
+  createClass: true
+  className: sentinel-proxy
+  listenerPort: 80
+
+envoyProxy:
+  # ClusterIP: in-cluster consumers only. LoadBalancer would make k3s's
+  # svclb fight Traefik for host ports (same lesson as the AI gateway).
+  serviceType: ClusterIP
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+service:
+  # Stable in-namespace alias for the EG-generated data-plane Service:
+  # callers use http://sentinel-proxy.mcp-servers/<server>/... and never
+  # learn EG's hashed name. Must match where catalog/envoy-gateway runs.
+  port: 80
+  controllerNamespace: envoy-gateway-system
+
+broker:
+  # DNS name for the host-side broker — declared in k3d/coredns-custom.yaml
+  # (LOCAL-ONLY shim; a real DNS record in cloud, per ADR-002). The IP is
+  # deliberately absent here: charts never hardcode host IPs.
+  hostname: sentinel-broker.internal
+  port: 8401
+  # ext_authz callout prefix: the broker sees <prefix> + the original
+  # request path, e.g. POST /v1/ext-authz/echo/mcp for a call to /echo/mcp.
+  authzPathPrefix: /v1/ext-authz
+  # Cluster-side halves of the mTLS handshake, created by mint-certs.sh:
+  caConfigMap: sentinel-ca              # validates the broker's server cert
+  clientCertSecret: sentinel-proxy-client  # the identity this fleet presents
+  # The body rides to the broker for tool derivation; Envoy buffers up to
+  # this many bytes and answers 413 above it. MCP tool calls are small
+  # JSON-RPC documents; raise deliberately if a tool ships large payloads.
+  maxRequestBytes: 262144
+  # Broker slow/unreachable → this timeout → DENY (failOpen: false below).
+  timeout: 10s
+
+# Every entry becomes a path-routed upstream: /<name>/* is stripped of its
+# prefix and forwarded to the Service — after the broker says yes. The
+# <name> segment is ALSO the server half of the capability scope the
+# broker enforces ("<name>.<tool>"), so renaming an entry invalidates
+# existing grants by construction.
+#
+# echo (sandbox) is the Phase 5.5.4 stand-in upstream proving the
+# enforcement chain; 5.5.8 adds the real mock MCP server alongside it.
+# Cross-namespace targets need a ReferenceGrant in THEIR namespace — the
+# workload's chart consents to being fronted (see catalog/echo).
+upstreams:
+  - name: echo
+    namespace: sandbox
+    service: echo
+    port: 80
+
+nameOverride: ""
+fullnameOverride: ""

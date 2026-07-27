@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 *.db
 *.sqlite3
+# Sentinel's private CA + leaf keys (minted per-install by
+# scripts/mint-certs.sh) — never in git, encrypted or not: the CA
+# key IS the authority to impersonate the broker.
+certs/

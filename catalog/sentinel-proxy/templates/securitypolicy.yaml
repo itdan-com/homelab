@@ -1,0 +1,42 @@
+# The enforcement filter. Targeting the GATEWAY means every route this
+# proxy ever serves is authz'd — adding an upstream cannot bypass the
+# broker. Per request, Envoy sends the broker: the original method +
+# path (appended to authzPathPrefix), the two identity headers, and the
+# body (for server-side tool derivation). 200 forwards; anything else
+# refuses at the proxy. failOpen is pinned false: a dead broker means a
+# closed door, never an open one.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ include "catalog.fullname" . }}-authz
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ include "catalog.fullname" . }}
+  extAuth:
+    http:
+      backendRefs:
+        - group: gateway.envoyproxy.io
+          kind: Backend
+          name: {{ include "catalog.fullname" . }}-broker
+      path: {{ .Values.broker.authzPathPrefix }}
+      # Verified-by-Sentinel identity, attached by the broker's 200 and
+      # forwarded upstream so the MCP server's own log can record which
+      # grant let the call through (defense-in-depth layer 2 reads these,
+      # it does not trust them alone).
+      headersToBackend:
+        - x-sentinel-grant-id
+        - x-sentinel-tool
+    # HTTP-mode ext_authz forwards only Host/Method/Path/Content-Length/
+    # Authorization by default — the Sentinel identity headers must be
+    # named explicitly or the broker never sees them.
+    headersToExtAuth:
+      - x-sentinel-token
+      - x-flow-id
+    bodyToExtAuth:
+      maxRequestBytes: {{ .Values.broker.maxRequestBytes }}
+    failOpen: false
+    timeout: {{ .Values.broker.timeout }}

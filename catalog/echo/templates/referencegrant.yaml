@@ -1,0 +1,22 @@
+{{- if .Values.sentinelFronting.enabled }}
+# Consent to be fronted: Gateway API requires the TARGET namespace to
+# grant cross-namespace backendRefs, so this is the workload saying "the
+# sentinel-proxy's routes may point at my Service" — in the workload's
+# own chart, where offboarding it is deleting these lines. Without this,
+# the proxy's HTTPRoute rule for this service stays unresolved.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: {{ include "catalog.fullname" . }}-from-sentinel-proxy
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ .Values.sentinelFronting.routeNamespace }}
+  to:
+    - group: ""
+      kind: Service
+      name: {{ include "catalog.fullname" . }}
+{{- end }}
