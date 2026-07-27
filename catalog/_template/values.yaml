@@ -64,13 +64,28 @@ service:
   targetPort: 8080
 
 # Ingress via Traefik IngressRoute (k3d's default ingress controller).
-# host defaults to "<release-name>.lab.local" — add the entry to your
-# Mac's /etc/hosts. Phase 5 adds cert-manager + TLS automatically.
+# host defaults to "<release-name>.lab.local" — add the entry to the
+# client machine's hosts file (SETUP.md).
 ingress:
   enabled: true
   host: ""  # defaults to "<release-name>.lab.local" if blank
-  # entrypoint: which Traefik entrypoint to listen on (web=80, websecure=443)
+  # entrypoint: ONLY used when tls.enabled is false (plain-HTTP mode).
+  # With TLS on, the chart renders both doors: websecure + a web route
+  # that 308-redirects to it.
   entrypoint: web
+  # TLS via the chart's own cert-manager Certificate (Phase 5 pattern:
+  # per-service certs, no shared wildcard key).
+  tls:
+    enabled: true
+    # ClusterIssuer that signs this chart's certificate. lab-local-ca
+    # is the private lab CA (catalog/cert-manager); on a public
+    # cluster (Phase 8) swap to a Let's Encrypt issuer — that value
+    # swap is the entire cloud TLS migration.
+    issuer: lab-local-ca
+    # Port appended to the HTTP→HTTPS redirect target, because the
+    # local host maps 8443→443 (k3d/devlab-cluster.yaml). Set "" on
+    # clusters where HTTPS lives on real 443.
+    redirectPort: "8443"
 
 # Pod-level security context — defaults follow restricted PodSecurityStandard.
 # Override if the workload genuinely needs to run as root (most don't).

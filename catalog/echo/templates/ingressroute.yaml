@@ -1,4 +1,47 @@
 {{- if .Values.ingress.enabled }}
+{{- if .Values.ingress.tls.enabled }}
+# HTTPS door: TLS terminates at Traefik with this chart's own
+# certificate (templates/certificate.yaml).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ include "catalog.ingressHost" . }}`)
+      kind: Rule
+      services:
+        - name: {{ include "catalog.fullname" . }}
+          port: {{ .Values.service.port }}
+  tls:
+    secretName: {{ include "catalog.fullname" . }}-tls
+---
+# HTTP door: exists only to bounce clients to HTTPS via the redirect
+# middleware. Traefik's CRD requires a service on every route even
+# though the middleware answers before any request reaches it.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "catalog.fullname" . }}-redirect
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`{{ include "catalog.ingressHost" . }}`)
+      kind: Rule
+      middlewares:
+        - name: {{ include "catalog.fullname" . }}-redirect-https
+      services:
+        - name: {{ include "catalog.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- else }}
+# Plain-HTTP mode (ingress.tls.enabled: false) — the pre-Phase-5 shape.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -14,4 +57,5 @@ spec:
       services:
         - name: {{ include "catalog.fullname" . }}
           port: {{ .Values.service.port }}
+{{- end }}
 {{- end }}

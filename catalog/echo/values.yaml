@@ -54,7 +54,14 @@ service:
 ingress:
   enabled: true
   host: ""
+  # entrypoint: ONLY used when tls.enabled is false (plain-HTTP mode).
   entrypoint: web
+  # TLS via the chart's own cert-manager Certificate (Phase 5 skeleton
+  # default) — even the demo service refuses plaintext.
+  tls:
+    enabled: true
+    issuer: lab-local-ca
+    redirectPort: "8443"
 
 # The image ships its own nonroot user (uid 65532, the distroless
 # convention) and a WorkingDir of /home/nonroot owned by it. Matching that

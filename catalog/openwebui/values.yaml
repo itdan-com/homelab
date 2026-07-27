@@ -109,7 +109,16 @@ service:
 ingress:
   enabled: true
   host: ""  # defaults to "<release-name>.lab.local" if blank
+  # entrypoint: ONLY used when tls.enabled is false (plain-HTTP mode).
   entrypoint: web
+  # TLS via this chart's own cert-manager Certificate (Phase 5): the
+  # HTTPS door is https://openwebui.lab.local:8443; the old HTTP door
+  # 308-redirects there. Issuer is the lab CA; Phase 8 swaps it to
+  # Let's Encrypt with this one value.
+  tls:
+    enabled: true
+    issuer: lab-local-ca
+    redirectPort: "8443"
 
 # SECURITY POSTURE — hardened root.
 # OpenWebUI's official image is built to run as root (USER 0:0) with

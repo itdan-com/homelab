@@ -1,0 +1,27 @@
+{{- if and .Values.ingress.enabled .Values.ingress.tls.enabled }}
+# This chart's own TLS certificate (Phase 5 pattern): every service
+# brings its cert like it brings its Service — nothing shared, no
+# wildcard key sprawl. cert-manager issues + renews it (default ~90 d,
+# re-issued ~30 d early) against the ClusterIssuer named in values.
+# Locally that's the lab CA; on a public cluster (Phase 8) swapping
+# ingress.tls.issuer to a Let's Encrypt issuer is the entire migration.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "catalog.fullname" . }}-tls
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "catalog.fullname" . }}-tls
+  dnsNames:
+    - {{ include "catalog.ingressHost" . }}
+  privateKey:
+    # Leaf certs get a fresh key at every renewal — the opposite of
+    # the CA's pinned key (catalog/cert-manager). Rotating leafs is
+    # invisible to clients; rotating the CA would strand them.
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ .Values.ingress.tls.issuer }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+{{- end }}
