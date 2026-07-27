@@ -1,0 +1,10 @@
+# Upstream defaults are deliberate for both subcharts. One contract to
+# know: the controller's Service must stay named `ai-gateway-controller`
+# (upstream's static name) — catalog/envoy-gateway's pinned
+# extensionManager FQDN points at
+# ai-gateway-controller.envoy-ai-gateway-system.svc.cluster.local:1063.
+# If a future chart bump makes that name release-derived, pin it back
+# via the subchart's fullnameOverride and re-check the FQDN pair.
+
+ai-gateway-crds-helm: {}
+ai-gateway-helm: {}

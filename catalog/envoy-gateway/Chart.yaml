@@ -1,0 +1,31 @@
+apiVersion: v2
+name: envoy-gateway
+description: >-
+  Envoy Gateway control plane wrapped for the catalog — the Gateway
+  API implementation whose managed data plane carries all LLM traffic
+  (the data-plane CRs — Gateway, routes, backends, policies — live in
+  catalog/ai-gateway). Hand-installed in Phase 2.5 and undocumented as
+  a running pet until the 2026-07-27 DR rebuild proved pets die with
+  the cluster; now a catalog citizen like everything else. The pinned
+  values in values.yaml ARE the AI Gateway integration: they wire
+  EG's extensionManager to the AI controller service and enable the
+  Backend API.
+type: application
+version: 0.1.0
+appVersion: "v1.8.1"
+
+dependencies:
+  - name: gateway-helm
+    # Pinned — bump deliberately, together with catalog/envoy-ai-gateway
+    # (the extensionManager contract spans both), record in phase Notes.
+    version: v1.8.1
+    repository: oci://docker.io/envoyproxy
+
+annotations:
+  catalog.homelab/needs-sso: "false"
+  # The labeled llm-traffic surface is catalog/ai-gateway (the CRs that
+  # define the listener, routes and backends); this chart is management
+  # plane for it.
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

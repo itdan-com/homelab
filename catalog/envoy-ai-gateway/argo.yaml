@@ -1,0 +1,6 @@
+# GitOps self-declaration: presence of this file onboards the chart to
+# ArgoCD via the catalog ApplicationSet. name MUST equal the existing
+# helm release name so adopted resources line up.
+name: envoy-ai-gateway
+namespace: envoy-ai-gateway-system
+secrets: "false"
