@@ -53,11 +53,18 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
   valid to 2036, ECDSA P-256, key pinned `rotationPolicy: Never`;
   cross-namespace smoke leaf issued in seconds, `openssl verify` OK,
   test residue deleted; cheatsheet gained "TLS: the lab CA".)*
-- [ ] **A3. HTTPS path to the browser** — expose the cluster's 443 at
+- [x] **A3. HTTPS path to the browser** — expose the cluster's 443 at
   the host (prefer `k3d cluster edit --port-add`; fallback: documented
   recreate via `k3d/devlab-cluster.yaml`), issue OpenWebUI's cert,
   switch its IngressRoute to `websecure` + `tls.secretName`, keep an
   HTTP→HTTPS redirect.
+  *(Done 2026-07-26, commit `2b3cd95`: zero cluster surgery — 8443:443
+  was already declarative in `devlab-cluster.yaml` since Phase 2.
+  Pattern landed in `_template` (chart-owned Certificate + redirect
+  Middleware + two-door IngressRoute), adopted byte-identically by
+  openwebui AND echo. Verified: served cert chains to the lab CA,
+  https 200 both services, http 301→`:8443` both. Gate/docs swept to
+  the new URLs.)*
 - [ ] **A4. Trust the CA on the Windows box** — export the CA cert,
   import into the Windows trust store (elevated step: snapshot-first
   rule applies), then `https://openwebui.lab.local:<port>` shows a
@@ -143,6 +150,19 @@ old exit criteria demanded Langfuse/MinIO despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-26 (A3): Traefik's `redirectScheme permanent: true` emits
+  **301**, not 308 — comments/docs corrected after observing the live
+  header. Leaf certs are SAN-only (empty subject) — cert-manager
+  omits CN when only `dnsNames` are given; browsers require SAN
+  anyway, so this is correct, just surprising in `openssl -subject`.
+  The 8443:443 host mapping needed no work: declarative in
+  `k3d/devlab-cluster.yaml` since the Phase 2 rebuild ("avoid
+  clashing with Portainer"), published on the running serverlb all
+  along. Liveness gate step 5 updated: https 200 on :8443; :8080
+  returning 301 is the redirect working, not a failure. Consumers'
+  Certificates apply before cert-manager finishes on a cold
+  bootstrap — ArgoCD selfHeal retries absorb it (same no-ordering
+  stance as A2; watch it on the next full rebuild).
 - 2026-07-26 (A2): the CA chain self-converges with no ordering
   machinery — ClusterIssuer applied before its Secret existed, went
   Ready ~90 s later when the CA Certificate issued (cert-manager

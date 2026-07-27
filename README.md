@@ -75,10 +75,10 @@ Mac (daily driver)
 
 Two paths explain the whole system:
 
-- **A chat message:** browser → `openwebui.lab.local` (hosts entry →
-  k3d serverlb :8080) → Traefik → OpenWebUI → AI gateway (Envoy, API
-  key + token metering) → `host.docker.internal:11434` → Ollama on the
-  Windows GPU.
+- **A chat message:** browser → `https://openwebui.lab.local:8443`
+  (hosts entry → k3d serverlb; TLS from the lab CA, chart-owned cert)
+  → Traefik → OpenWebUI → AI gateway (Envoy, API key + token metering)
+  → `host.docker.internal:11434` → Ollama on the Windows GPU.
 - **A change:** operator Claude opens a PR → a human merges (the only
   write path to `main`) → ArgoCD pulls and the cluster converges.
 
@@ -93,13 +93,13 @@ doors.
 
 | Service | What it's for | Open it |
 |---|---|---|
-| **OpenWebUI** | The chat UI | `http://openwebui.lab.local:8080` (hosts file: `127.0.0.1 openwebui.lab.local`) |
+| **OpenWebUI** | The chat UI | `https://openwebui.lab.local:8443` (hosts file: `127.0.0.1 openwebui.lab.local`; http on :8080 redirects) |
 | **Argo CD** | The GitOps board — platform vs. git, every sync and diff | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` |
 | **Grafana** | Dashboards — cluster health, token-rate autoscaling | `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → `http://localhost:3000` |
 | **Prometheus** | Raw metrics + PromQL console | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090` → `http://localhost:9090` |
 | **Alertmanager** | Alert routing (chat channels in Phase 7) | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093` → `http://localhost:9093` |
 | **Portainer** | Docker/Kubernetes visual manager | `https://localhost:9443` |
-| **echo** | Template-born demo service | `http://echo.lab.local:8080` (hosts entry likewise) |
+| **echo** | Template-born demo service | `https://echo.lab.local:8443` (hosts entry likewise) |
 | **AI gateway** | OpenAI-compatible LLM API | Not a browser door — in-cluster only, `http://ai-gateway/v1` + consumer key |
 
 Usernames and where each password actually comes from:

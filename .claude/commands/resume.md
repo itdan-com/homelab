@@ -22,7 +22,7 @@ first and report PASS/FAIL on each line before reading further:
    games/apps: `powershell.exe nvidia-smi` — a game + the model can
    exceed the 4070's 12 GB and trigger the NVIDIA driver's silent
    system-RAM fallback (~0.05 tok/s; observed 2026-07-25).
-5. Ingress: `curl -s -o /dev/null -w '%{http_code}' -H 'Host: openwebui.lab.local' localhost:8080` → 200.
+5. Ingress (TLS since Phase 5 A3): `curl -sk -o /dev/null -w '%{http_code}' -H 'Host: openwebui.lab.local' https://localhost:8443` → 200. (Plain `http://localhost:8080` answers 301 now — that's the redirect middleware working, not a failure.)
 
 Any FAIL: diagnose and fix (or log to STATUS.md Backlog) before phase
 work. A green gate is the entry criterion for every session.

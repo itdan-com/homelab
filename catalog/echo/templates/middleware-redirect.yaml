@@ -1,6 +1,6 @@
 {{- if and .Values.ingress.enabled .Values.ingress.tls.enabled }}
 # Bounces every plain-HTTP request to the HTTPS door, permanently
-# (308). Per-chart rather than a global entrypoint redirect so each
+# (301). Per-chart rather than a global entrypoint redirect so each
 # chart stays self-contained and can opt out — catalog pluggability
 # over cluster-wide mutable state.
 apiVersion: traefik.io/v1alpha1

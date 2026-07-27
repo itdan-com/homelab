@@ -11,7 +11,7 @@ does not type git.
 
 | Thing | URL | Notes |
 |---|---|---|
-| **OpenWebUI (chat)** | `http://openwebui.lab.local:8080` | From the Windows browser. Needs the hosts entry below. First account you create = **admin**. Pick model **qwen3.5**. |
+| **OpenWebUI (chat)** | `https://openwebui.lab.local:8443` | From the Windows browser. Needs the hosts entry below; http on :8080 redirects here. Cert warning until the lab CA is trusted (see "TLS: the lab CA"). First account you create = **admin**. Pick model **qwen3.5**. |
 | Portainer | `https://localhost:9443` | From Windows browser. Self-signed cert → click "Advanced → Proceed". |
 | Portainer (from Mac) | `https://<windows-LAN-ip>:9443` | Get the Windows IP via `ipconfig` in PowerShell. |
 | AI Gateway (API only) | `http://ai-gateway/v1` — in-cluster only | OpenAI-compatible LLM gateway (Envoy AI Gateway). Needs a per-consumer Bearer key; deliberately NOT reachable from a browser — OpenWebUI is the only user-facing door. |
@@ -37,7 +37,9 @@ ingress (Traefik). Two things make them work:
    ```
 2. **The port is `:8080`.** k3d maps the WSL2 host's port 8080 to the
    cluster ingress (and 8443 → HTTPS, once cert-manager lands in Phase
-   5). So the URL is always `http://<name>.lab.local:8080`.
+   5). So the URL is always `https://<name>.lab.local:8443` — plain
+   `http://<name>.lab.local:8080` still works but 301-redirects there
+   (Phase 5 A3).
 
 **No-hosts-file fallback** (quick test, bypasses ingress — tunnels
 straight to the Service):

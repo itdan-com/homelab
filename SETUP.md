@@ -203,7 +203,7 @@ comments; bootstrap integration is on the roadmap).
 
 | Interface | What it does | How to reach it | Login |
 |---|---|---|---|
-| **OpenWebUI** | The chat UI — what end users see | `http://openwebui.lab.local:8080` (add `127.0.0.1 openwebui.lab.local` to your hosts file) | **First account you sign up becomes admin.** No default password exists — the signup is the setup. |
+| **OpenWebUI** | The chat UI — what end users see | `https://openwebui.lab.local:8443` (add `127.0.0.1 openwebui.lab.local` to your hosts file; http on :8080 redirects here). Browser warns until you trust the lab CA — export + import per the cheatsheet's "TLS: the lab CA". | **First account you sign up becomes admin.** No default password exists — the signup is the setup. |
 | **ArgoCD** | GitOps engine — the platform as it compares to git; every deploy, diff, and sync | `kubectl port-forward -n argocd svc/argocd-server 8081:80` → `http://localhost:8081` | `admin` / `kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' \| base64 -d` |
 | **Grafana** | Dashboards — cluster health, and the AI token-rate/autoscaling view | `kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80` → `http://localhost:3000` | `admin` / the value YOU put in `catalog/monitoring/secrets.enc.yaml` — read it back with `sops -d catalog/monitoring/secrets.enc.yaml` |
 | **Prometheus** | Raw metrics + PromQL console (KEDA's data source) | `kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090` → `http://localhost:9090` | none (unauthenticated, cluster-internal by design) |
