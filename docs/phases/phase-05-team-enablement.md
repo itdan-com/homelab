@@ -17,11 +17,13 @@ passkeys are exactly where this platform is headed (Authentik admin
 now, Sentinel in 5.5).
 
 **Status:** In progress — **stage A (TLS foundation) COMPLETE
-2026-07-26** (A1–A5) **+ stage B 3/7** (B1–B3 done same day:
-Authentik live, akadmin verified). Next: **B4 — OIDC blueprints for
-OpenWebUI** (config-as-code REQUIRED, ADR-002). Kickoff 2026-07-26
-reconciled this doc (old exit criteria demanded Langfuse/MinIO
-despite the slimmed goal).
+2026-07-26** (A1–A5) **+ stage B 4/7** (B1–B3 2026-07-26; B4
+2026-07-27: OpenWebUI OIDC provider+application assembled headless
+from blueprints). Next: **B5 — wire OpenWebUI to Authentik** (OIDC
+env + SOPS client secret; see B4 notes for the two knowns: in-cluster
+resolution of the discovery URL, issuer/Host-header port). Kickoff
+2026-07-26 reconciled this doc (old exit criteria demanded
+Langfuse/MinIO despite the slimmed goal).
 
 **Kickoff decisions on record:**
 
@@ -124,11 +126,22 @@ despite the slimmed goal).
   one mistyped password visible as a failed-login event: the audit
   trail works. Doors tables (README/SETUP/cheatsheet) gained the
   Authentik row at wrap-up.)*
-- [ ] **B4. OIDC provider + application for OpenWebUI** configured in
+- [x] **B4. OIDC provider + application for OpenWebUI** configured in
   Authentik — **blueprints (config-as-code) REQUIRED** per ADR-002:
   SSO must assemble headless on a machine nobody clicked (the cloud
   deploy). Clickops allowed only as exploration; the committed state
   must reproduce from git.
+  *(Done 2026-07-27, commit `19c4106`: `templates/oidc-blueprints.yaml`
+  renders CM `authentik-blueprints` into the worker via the chart's
+  `blueprints.configMaps` hook — provider (confidential, client_id
+  `openwebui`, RS256 via the built-in cert, implicit-consent flow,
+  strict redirect derived from `oidcClients.openwebui.baseUrl`) +
+  application, both `state: present` so git overwrites UI drift.
+  Client secret is a SOPS-only leaf → AUTHENTIK_* env var → `!Env` in
+  the blueprint; added with `sops set` (in-place, zero plaintext on
+  disk). Verified headless: blueprint instance `successful`, provider
+  + application via API, discovery doc over the TLS door advertising
+  RS256. One rolling-update race found and understood — see note.)*
 - [ ] **B5. OpenWebUI → Authentik** — OIDC env + SOPS client secret; a
   fresh user signs in via Authentik; admin-role mapping verified;
   decision recorded on the local-password path (disable vs. keep as
@@ -190,6 +203,28 @@ despite the slimmed goal).
 
 ## Notes captured during execution
 
+- 2026-07-27 (B4): **Rolling-update race on first blueprint
+  delivery:** the discovery tasks enqueued at new-worker boot were
+  consumed by the OLD worker — the task queue is Postgres-backed and
+  a terminating pod keeps consuming through its grace period — which
+  has no CM mount, so both tasks reported "done" with no instance
+  created and nothing marked failed. Self-heals at the next scheduled
+  discovery; we fast-forwarded with `blueprints_discovery.send()`
+  from `ak shell`. A cold bootstrap (the cloud deploy) is immune —
+  there is no old worker. Debug path worth keeping: `blueprints_find()`
+  in `ak shell` shows exactly what the scanner sees;
+  `/api/v3/managed/blueprints/` shows instance status. Also learned:
+  `sops set` edits the encrypted file in place honoring the stored
+  encrypted_regex — zero plaintext on disk, stricter than the B1
+  rule; prefer it when adding single keys. **Two knowns for B5:**
+  (1) authentik derives the OIDC issuer from the request's Host
+  header — a client hitting the :8443 door sends the port and gets
+  `https://authentik.lab.local:8443/...`; my portless test curl got
+  the portless issuer. Pick OpenWebUI's provider URL so both fetch
+  path and issuer agree. (2) OpenWebUI's BACKEND fetches the
+  discovery URL server-side — `authentik.lab.local` does not resolve
+  in-cluster and the pod does not trust the lab CA; B5 must choose
+  internal service URL vs. CoreDNS rewrite + CA trust and record it.
 - 2026-07-26 (B1+B2): **SOPS rule, learned via near-miss:** `sops -e`
   with explicit `--age`/`--encrypted-regex` STILL requires a matching
   creation rule for the input path — encrypting from a /tmp path
