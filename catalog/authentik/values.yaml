@@ -35,6 +35,9 @@ oidcClients:
     clientId: openwebui
     # The app's public origin; the OIDC redirect URI derives from it.
     baseUrl: https://openwebui.lab.local:8443
+  grafana:
+    clientId: grafana
+    baseUrl: https://grafana.lab.local:8443
 
 # ---------------------------------------------------------------------------
 # Subchart values. Every leaf under `authentik:` below becomes an

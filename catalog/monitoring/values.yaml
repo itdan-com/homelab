@@ -25,6 +25,18 @@ catalog:
   # admin password, SOPS-encrypted in secrets.enc.yaml).
   dataClass: secret
 
+# SSO (Phase 5 B6): the OIDC client secret for Grafana's "Authentik"
+# login. SOPS-only (secrets.enc.yaml, same value as the authentik
+# chart's grafana_oidc_client_secret — two ends of one credential).
+# templates/grafana-oidc-secret.yaml renders it as env var
+# GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET (Grafana's env-over-ini
+# convention keeps it out of the grafana.ini ConfigMap); the grafana
+# subchart attaches it via envFromSecret below. NOTE: rotating it
+# does NOT roll the pod (external secret, no checksum) — restart
+# grafana manually after rotation.
+oidc:
+  clientSecret: ""
+
 # ---------------------------------------------------------------------------
 # UMBRELLA-CHART LABEL EXCEPTION: resources rendered by the dependency
 # below can't use our _helpers.tpl include, so the six catalog labels are
@@ -102,7 +114,22 @@ kube-prometheus-stack:
 
   grafana:
     # Real value injected from secrets.enc.yaml (SOPS) at install time.
+    # Post-B6 this account is the BREAK-GLASS login (same decision as
+    # OpenWebUI): humans arrive via SSO; admin + the form stay for
+    # IdP-down days.
     adminPassword: ""
+    # OIDC client secret as env (see top-level `oidc:` block).
+    envFromSecret: grafana-oidc
+    # Local-only (ADR-002): the lab CA so Grafana's SERVER-SIDE OAuth
+    # calls (token_url/api_url over the canonical public URL) verify.
+    # The cert comes from this chart's own door secret (grafana-tls,
+    # ca.crt key). On cloud (Let's Encrypt): delete this mount and the
+    # tls_client_ca line below.
+    extraSecretMounts:
+      - name: lab-ca
+        secretName: grafana-tls
+        mountPath: /etc/grafana/lab-ca
+        readOnly: true
     grafana.ini:
       server:
         # Grafana must know its public URL or every generated link and
@@ -110,6 +137,32 @@ kube-prometheus-stack:
         # built from this value, so it's set correctly BEFORE SSO.
         # ADR-002: on cloud this becomes https://grafana.<domain>/.
         root_url: https://grafana.lab.local:8443/
+      # SSO via Authentik (Phase 5 B6). ONE canonical issuer for
+      # browser AND backend (B5 decision): all three URLs are the
+      # public door — auth_url is followed by the BROWSER; token_url
+      # and api_url are called by the POD (resolvable via the
+      # lab.local CoreDNS zone, verified via tls_client_ca). Client
+      # secret arrives as env, never in this ConfigMap.
+      auth.generic_oauth:
+        enabled: true
+        name: Authentik
+        client_id: grafana
+        scopes: openid email profile roles
+        auth_url: https://authentik.lab.local:8443/application/o/authorize/
+        token_url: https://authentik.lab.local:8443/application/o/token/
+        api_url: https://authentik.lab.local:8443/application/o/userinfo/
+        # First SSO login creates the Grafana user (authorization
+        # happens at Authentik: only grafana-* group members pass).
+        allow_sign_up: true
+        use_pkce: true
+        # Role from the prefix-filtered roles claim: grafana-admins ->
+        # org Admin; any other permitted user -> Viewer.
+        role_attribute_path: contains(roles[*], 'grafana-admins') && 'Admin' || 'Viewer'
+        # Local-only (see extraSecretMounts above).
+        tls_client_ca: /etc/grafana/lab-ca/ca.crt
+      auth:
+        # Break-glass parity with OpenWebUI: the admin form stays.
+        disable_login_form: false
     persistence:
       # Keeps hand-tuned dashboards across pod restarts (local-path PVC;
       # dashboards-as-code lands with the Phase 7 dashboard work).
