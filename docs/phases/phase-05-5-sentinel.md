@@ -23,9 +23,9 @@ Sentinel is a systemd unit on the WSL2 host. The k3d cluster has no path to its 
 
 ### 5.5.1 Tech choice + skeleton
 
-- [ ] Choose stack: Python (FastAPI) or Node (Fastify). Decide on personal preference + WebAuthn library quality. Recommendation: Python + FastAPI + `webauthn` package.
-- [ ] Initialize repo subdirectory `sentinel/` (it lives inside `~/homelab` for now; can split later).
-- [ ] Set up SQLite migration tooling (Alembic for Python, or Prisma for Node).
+- [x] Choose stack: **Python 3.12 + FastAPI + SQLAlchemy/Alembic on SQLite** (2026-07-27; `py_webauthn` joins at 5.5.6). Boring-and-proven beats novel in the trust anchor; zero new host toolchain (venv + pip, pins frozen in `sentinel/requirements.txt`).
+- [x] `sentinel/` initialized (`app/` package, `/healthz` live, README states the trust model). Deliberately NOT a catalog chart — it must survive cluster deletion.
+- [x] Alembic wired to app metadata + env-driven `SENTINEL_DB` (`render_as_batch=True` for SQLite); `upgrade head` clean; first real migration is 5.5.2's.
 
 ### 5.5.2 Data model
 
@@ -93,6 +93,7 @@ These layer on after Phase 7 without architectural change.
 
 - ~~Sentinel proxy placement~~ **DECIDED (ADR-001):** proxy-as-Deployment-in-cluster, implemented as Envoy with an `ext_authz` filter calling out to Sentinel's `/capability-check` on the host. NetworkPolicy is straightforward; the admin API stays untouched on the host; one-way trust preserved (the proxy holds no grant-issuing power — it only asks).
 - mTLS between Sentinel proxy and Sentinel admin: private CA generated at install time; certs rotate every 90 days.
+- **Listener split (raised at 5.5.1, decide at 5.5.3):** `/capability-check` must be reachable FROM the cluster (the in-cluster Envoy proxy calls it via the host-gateway IP), while grants/GUI/kill must NOT be. The admin app binds 127.0.0.1 — unreachable from pods by construction (proven 2026-07-27: pod → host-gateway:8400 URLError while loopback answered; positive control Ollama:11434 → 200). The check endpoint therefore needs its own listener bound on the host-gateway address + mTLS — likely a second uvicorn socket or a separate minimal app sharing the DB layer.
 - Where do MCP server upstream secrets (OAuth tokens for Gmail, GitHub, etc.) actually live? **Recommendation: encrypted at rest in `/var/lib/sentinel/secrets/`, read only by Sentinel — never mounted into pods.** MCP servers get short-lived service tokens from Sentinel, not the upstream secret.
 
 ---
@@ -107,6 +108,19 @@ These layer on after Phase 7 without architectural change.
 - `STATUS.md` updated.
 
 ## Notes captured during execution
+
+- **2026-07-27 — 5.5.1 done (stack + skeleton).** Python 3.12/FastAPI/
+  SQLAlchemy/Alembic; `sentinel/` scaffolded with the trust model
+  written into `README.md` and `app/main.py`'s module docstring.
+  Verified: `alembic upgrade head` clean (env.py wired to app
+  metadata, batch mode for SQLite), `/healthz` 200 with a real DB
+  round-trip, and the **layer-3 one-way-trust probe**: with Sentinel
+  up on 127.0.0.1:8400, a pod reached host Ollama (11434 → 200,
+  positive control) but got URLError on 8400 — the admin surface is
+  invisible to the cluster by construction. Host gap found: Ubuntu
+  needed `python3.12-venv` (apt) before venv creation worked — worth
+  a prereq line when Sentinel reaches SETUP.md at 5.5.7. Listener-split
+  question for /capability-check added to Open Questions.
 
 - **2026-07-27 — entry criteria executed (the Cilium rebuild + DR drill).**
   Full teardown → `bootstrap.sh` → 10/10 apps Synced/Healthy → gate 5/5,

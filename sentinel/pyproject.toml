@@ -1,0 +1,13 @@
+[project]
+name = "sentinel"
+version = "0.0.1"
+description = "Trust-domain-separated capability broker for the homelab platform (Phase 5.5): per-flow short-lived grants, human approval GUI, global kill switch, canonical audit log."
+requires-python = ">=3.12"
+# Intent lives here; exact reproducible pins live in requirements.txt
+# (pip freeze). py_webauthn joins at 5.5.6 (human auth).
+dependencies = [
+  "fastapi",
+  "uvicorn[standard]",
+  "sqlalchemy",
+  "alembic",
+]
