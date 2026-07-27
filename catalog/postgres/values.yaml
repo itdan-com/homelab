@@ -43,7 +43,22 @@ auth:
   # data directory — i.e. a brand-new PV. An already-initialized instance
   # will NOT pick these up; create those manually, e.g.:
   #   kubectl exec -n chat postgres-0 -- psql -U postgres -c 'CREATE DATABASE langfuse'
-  extraDatabases: []
+  extraDatabases:
+    # Authentik's store (Phase 5 B1). Created on fresh init by the
+    # initdb script; was created manually on the live instance
+    # 2026-07-26 (see phase-05 notes).
+    - authentik
+  # App roles, one per consuming service — least-privilege over
+  # handing apps the postgres superuser. Same fresh-init-only rule as
+  # extraDatabases (mirrored manually on a live instance, once).
+  # Passwords: REAL values live in this chart's SOPS secrets.enc.yaml,
+  # which overrides this WHOLE list (helm list-merge semantics) — keep
+  # the entries there complete. Keep passwords alphanumeric: the value
+  # passes through env + SQL quoting in the initdb script.
+  extraUsers:
+    - name: authentik
+      database: authentik
+      password: CHANGE_ME_VIA_SOPS_SECRETS
 
 # Storage — explicit PV with hostPath pointing at the WSL2 directory
 # mounted into the k3d nodes (see k3d/devlab-cluster.yaml `volumes:`).

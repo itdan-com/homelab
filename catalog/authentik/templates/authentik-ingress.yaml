@@ -1,0 +1,71 @@
+{{- if .Values.authentikIngress.enabled }}
+# Authentik's door (Phase 5 B3) — the house TLS pattern (certificate +
+# redirect middleware + two IngressRoutes), chart-local because the
+# umbrella fronts a subchart service. One file: one feature.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: authentik-tls
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  secretName: authentik-tls
+  dnsNames:
+    - {{ .Values.authentikIngress.host }}
+  privateKey:
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ .Values.authentikIngress.tls.issuer }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: authentik-redirect-https
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
+    {{- with .Values.authentikIngress.tls.redirectPort }}
+    port: {{ . | quote }}
+    {{- end }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ .Values.authentikIngress.host }}`)
+      kind: Rule
+      services:
+        - name: {{ .Values.authentikIngress.service }}
+          port: {{ .Values.authentikIngress.port }}
+  tls:
+    secretName: authentik-tls
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-redirect
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`{{ .Values.authentikIngress.host }}`)
+      kind: Rule
+      middlewares:
+        - name: authentik-redirect-https
+      services:
+        - name: {{ .Values.authentikIngress.service }}
+          port: {{ .Values.authentikIngress.port }}
+{{- end }}

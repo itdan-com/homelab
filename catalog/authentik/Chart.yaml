@@ -1,0 +1,28 @@
+apiVersion: v2
+name: authentik
+description: >-
+  Authentik wrapped for the catalog: the platform's identity provider
+  (Phase 5 stage B). One SSO identity for OpenWebUI, Grafana, and
+  every future service — accounts live here, apps trust OIDC tokens
+  it signs. Pinned >= 2025.10 on purpose: that release removed the
+  Redis dependency (Postgres-only), so it rides catalog/postgres and
+  nothing else. Umbrella chart — pinned upstream dependency, catalog
+  labels on our own templates; configuration ships as blueprints
+  (config-as-code, ADR-002: SSO must assemble headless).
+type: application
+version: 0.1.0
+appVersion: "2026.5.6"
+
+dependencies:
+  - name: authentik
+    # Pinned — bump deliberately, record in phase Notes.
+    version: 2026.5.6
+    repository: https://charts.goauthentik.io
+
+annotations:
+  # needs-sso false: this chart PROVIDES the SSO; the label marks
+  # charts that want to sit BEHIND it.
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

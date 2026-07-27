@@ -1,0 +1,76 @@
+nameOverride: ""
+fullnameOverride: ""
+
+catalog:
+  tier: dev
+  # dataClass secret: this release holds the session-signing
+  # secret_key, akadmin bootstrap credentials, and the DB password —
+  # all SOPS-encrypted in secrets.enc.yaml (argo.yaml: secrets "true").
+  dataClass: secret
+
+# Authentik's public door (Phase 5 B3) — house TLS pattern, rendered
+# by OUR template (templates/authentik-ingress.yaml); the subchart's
+# own ingress stays disabled. Passes ADR-002's exposure policy: it is
+# literally the thing that authenticates.
+authentikIngress:
+  enabled: true
+  host: authentik.lab.local
+  # The subchart's server Service (release name + "-server"), stated
+  # explicitly; release name is pinned by argo.yaml.
+  service: authentik-server
+  port: 80
+  tls:
+    issuer: lab-local-ca
+    redirectPort: "8443"
+
+# ---------------------------------------------------------------------------
+# Subchart values. Every leaf under `authentik:` below becomes an
+# AUTHENTIK_* env var via the chart's rendered Secret — which is how
+# the SOPS overrides (secret_key, bootstrap_*, postgresql.password)
+# reach the pods without a hand-rolled Secret template.
+# NOTE: no commonLabels-style knob upstream (keda precedent: skip
+# where unsupported) — catalog labels ride on OUR door template.
+# ---------------------------------------------------------------------------
+authentik:
+  authentik:
+    # Signs sessions/cookies/tokens. Rotating it logs everyone out.
+    # Real value via SOPS; this default fails closed.
+    secret_key: CHANGE_ME_VIA_SOPS_SECRETS
+    error_reporting:
+      # No telemetry to authentik's cloud from a reference platform.
+      enabled: false
+    # First-boot-only bootstrap of the akadmin account (password +
+    # API token via SOPS). Changing these later does nothing — that
+    # is upstream behavior, not a bug here.
+    bootstrap_email: admin@lab.local
+    postgresql:
+      # Our platform store (catalog/postgres) across namespaces —
+      # authentik pods live in `authentik`, postgres in `chat`.
+      host: postgres.chat.svc.cluster.local
+      port: 5432
+      name: authentik
+      user: authentik
+      password: CHANGE_ME_VIA_SOPS_SECRETS
+
+  server:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+
+  worker:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 384Mi
+      limits:
+        memory: 768Mi
+
+  # We bring our own Postgres; the bundled subchart stays off. (Redis
+  # is gone entirely upstream since 2025.10 — nothing to disable.)
+  postgresql:
+    enabled: false

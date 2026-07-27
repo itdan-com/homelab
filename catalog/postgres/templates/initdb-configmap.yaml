@@ -1,4 +1,4 @@
-{{- if .Values.auth.extraDatabases }}
+{{- if or .Values.auth.extraDatabases .Values.auth.extraUsers }}
 {{/*
 Mounted at /docker-entrypoint-initdb.d/. The official postgres image runs
 *.sql/*.sh here ONLY when initializing an EMPTY data directory (first boot
@@ -19,9 +19,27 @@ metadata:
   labels:
     {{- include "catalog.labels" . | nindent 4 }}
 data:
+  {{- if .Values.auth.extraDatabases }}
   10-extra-databases.sql: |
     -- Create extra databases on fresh init (idempotent).
     {{- range .Values.auth.extraDatabases }}
     SELECT 'CREATE DATABASE {{ . }}' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '{{ . }}')\gexec
     {{- end }}
+  {{- end }}
+  {{- if .Values.auth.extraUsers }}
+  20-extra-users.sh: |
+    #!/bin/sh
+    # App roles on fresh init. Runs AFTER 10-*.sql (lexical order), so
+    # the databases already exist. Passwords arrive via env (see
+    # secret.yaml's EXTRA_USER_PASSWORD_* exports) — never via this
+    # ConfigMap. No existence guards: a fresh PGDATA cannot already
+    # hold these roles, and ON_ERROR_STOP failing loudly beats
+    # half-initialized auth.
+    set -eu
+    {{- range .Values.auth.extraUsers }}
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      -c "CREATE ROLE {{ .name }} LOGIN PASSWORD '$EXTRA_USER_PASSWORD_{{ .name | upper }}'" \
+      -c 'ALTER DATABASE {{ .database }} OWNER TO {{ .name }}'
+    {{- end }}
+  {{- end }}
 {{- end }}

@@ -1,0 +1,23 @@
+{{ .Chart.Name }} deployed as release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Wrapped dependency: authentik {{ (index .Chart.Dependencies 0).Version }}
+(server + worker; Postgres-only — Redis was removed upstream in
+2025.10, which is why the pin floor exists).
+
+The platform's identity provider: accounts live here; apps trust the
+OIDC tokens it signs. Database rides catalog/postgres (chat ns), role
++ DB `authentik` (rebuild-safe via that chart's extraUsers/initdb).
+
+First login: https://{{ .Values.authentikIngress.host }}:8443 as
+`akadmin` with the SOPS bootstrap password:
+  sops -d catalog/authentik/secrets.enc.yaml   # authentik.bootstrap_password
+
+Configuration is BLUEPRINTS ONLY (ADR-002): OIDC providers/apps ship
+as config-as-code in this chart — clickops does not survive review.
+
+Install/upgrade (from this directory; charts/ via `helm dependency build`):
+  helm secrets upgrade --install {{ .Release.Name }} . -n {{ .Release.Namespace }} --create-namespace -f values.yaml -f secrets.enc.yaml
+
+Health:
+  kubectl get pods -n {{ .Release.Namespace }}
+  curl -sk https://{{ .Values.authentikIngress.host }}:8443/-/health/ready/
