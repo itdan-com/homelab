@@ -103,15 +103,19 @@ class PendingRequest(SentinelModel):
     expires_at: datetime
 
 
-class GrantIn(SentinelModel):
+class AdminAction(SentinelModel):
+    """Base for admin request bodies. `extra="forbid"` on purpose: the
+    actor fields (`granted_by`, `denied_by`, …) USED to live here and
+    now come from the server (app.actor). Rejecting them loudly beats
+    accepting and ignoring them — a caller who thinks it is naming the
+    approver would otherwise be silently wrong in the audit log."""
+    model_config = ConfigDict(from_attributes=True, extra="forbid")
+
+
+class GrantIn(AdminAction):
     ttl_minutes: int = Field(
         default=5, ge=1, le=1440,
-        description="Grant lifetime. The GUI offers 5 (default) and 60.")
-    granted_by: str = Field(
-        max_length=128,
-        description="Human identity making the call (bound to WebAuthn at 5.5.6).",
-        examples=["bob"],
-    )
+        description="Grant lifetime. The console offers 5 (default) and 60.")
 
 
 class GrantOut(SentinelModel):
@@ -125,20 +129,14 @@ class GrantOut(SentinelModel):
         description="Why there is no token in this response.")
 
 
-class DenyIn(SentinelModel):
-    denied_by: str = Field(max_length=128, examples=["bob"])
+class DenyIn(AdminAction):
     reason: str | None = Field(
         default=None, max_length=512,
         description="Optional; delivered verbatim to the requester's poll.")
 
 
-class KillIn(SentinelModel):
-    engaged_by: str = Field(max_length=128, examples=["bob"])
+class KillIn(AdminAction):
     reason: str | None = Field(default=None, max_length=512)
-
-
-class ReleaseIn(SentinelModel):
-    released_by: str = Field(max_length=128, examples=["bob"])
 
 
 class KillStatus(SentinelModel):
@@ -169,3 +167,12 @@ class FlowOut(SentinelModel):
     agent: str
     started_at: datetime
     ended_at: datetime | None
+    # Derived, not stored: nothing closes a flow yet (an agent would have
+    # to say so), so "is it active" has to be answered from evidence —
+    # a live grant, or recent activity in the audit log.
+    last_seen: datetime | None = Field(
+        default=None, description="Timestamp of this flow's most recent audit event.")
+    live_grants: int = Field(
+        default=0, description="Grants that are neither expired nor revoked right now.")
+    pending_requests: int = Field(
+        default=0, description="Requests still waiting on a human.")

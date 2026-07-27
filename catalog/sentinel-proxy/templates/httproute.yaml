@@ -26,6 +26,20 @@ spec:
             type: PathPrefix
             value: /{{ .name }}
       filters:
+        # Strip the bearer credential before the upstream sees it. Route-
+        # level header mutation runs in the router filter — AFTER
+        # ext_authz — so the broker still validates the token and the MCP
+        # server never receives it. Verified 2026-07-27 with a
+        # header-echo upstream: without this the live token reached the
+        # backend, where a hostile or compromised MCP server could replay
+        # it for the remainder of its TTL. The server gets the broker's
+        # VERIFIED x-sentinel-grant-id / x-sentinel-tool instead (those
+        # are overwritten by the auth response, so a client cannot forge
+        # them — also verified).
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - x-sentinel-token
         - type: URLRewrite
           urlRewrite:
             path:

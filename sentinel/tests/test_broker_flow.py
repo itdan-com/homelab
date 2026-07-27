@@ -23,7 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Point the app at a throwaway DB BEFORE importing anything that binds
 # the engine at import time.
-os.environ["SENTINEL_DB"] = os.path.join(tempfile.mkdtemp(), "test.db")
+os.environ.setdefault("SENTINEL_DB", os.path.join(tempfile.mkdtemp(), "test.db"))
+# TestClient sends `Host: testserver`, which the admin app's
+# anti-DNS-rebinding allowlist would otherwise (correctly) refuse.
+os.environ.setdefault("SENTINEL_CONSOLE_HOSTS", "127.0.0.1,localhost,testserver")
 
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
@@ -35,6 +38,7 @@ from app.main import app as admin_app  # noqa: E402
 _HERE = os.path.dirname(__file__)
 broker = TestClient(broker_app)
 admin = TestClient(admin_app)
+CONSOLE = {"x-sentinel-console": "1"}  # the admin app's CSRF guard
 
 
 def _migrate() -> None:
@@ -71,7 +75,7 @@ def test_broker_lifecycle():
         "poll before decision has no token"
 
     g = admin.post(f"/v1/capability-requests/{rid}/grant",
-                   json={"ttl_minutes": 5, "granted_by": "bob"})
+                   json={"ttl_minutes": 5}, headers=CONSOLE)
     assert g.status_code == 201 and "token" not in g.json(), "grant 201, no token echoed"
 
     token = _poll(rid).json().get("token")
@@ -91,21 +95,21 @@ def test_broker_lifecycle():
     assert d2.status_code == 200 and d2.json()["request_id"] == d1.json()["request_id"], \
         "duplicate pending dedupes to same id"
     did = d1.json()["request_id"]
-    admin.post(f"/v1/capability-requests/{did}/deny", json={"denied_by": "bob", "reason": "nope"})
+    admin.post(f"/v1/capability-requests/{did}/deny", json={"reason": "nope"}, headers=CONSOLE)
     pd = _poll(did).json()
     assert pd["status"] == "denied" and pd["denied_reason"] == "nope", "denied poll carries reason"
     assert admin.post(f"/v1/capability-requests/{did}/grant",
-                      json={"granted_by": "bob"}).status_code == 409, "grant on denied = 409"
+                      json={}, headers=CONSOLE).status_code == 409, "grant on denied = 409"
 
     # --- kill = revocation ----------------------------------------------------
     assert _check(token, "github.create_pr", "flow-A").status_code == 200, "token live until kill"
-    k = admin.post("/v1/kill", json={"engaged_by": "bob", "reason": "drill"})
+    k = admin.post("/v1/kill", json={"reason": "drill"}, headers=CONSOLE)
     assert k.json()["grants_revoked"] >= 1, "kill revoked the live grant"
     assert _check(token, "github.create_pr", "flow-A").json()["reason"] == "kill-engaged", \
         "post-kill check = kill-engaged"
     blocked = _ask("flow-D", "x.y").json()["request_id"]
     assert admin.post(f"/v1/capability-requests/{blocked}/grant",
-                      json={"granted_by": "bob"}).status_code == 409, "no new grants while killed"
+                      json={}, headers=CONSOLE).status_code == 409, "no new grants while killed"
 
     # --- kill survives a restart ----------------------------------------------
     import app.db as dbmod
@@ -115,7 +119,7 @@ def test_broker_lifecycle():
     assert TestClient(admin2).get("/v1/kill").json()["engaged"] is True, \
         "kill state persists across restart"
 
-    admin.post("/v1/kill/release", json={"released_by": "bob"})
+    admin.post("/v1/kill/release", headers=CONSOLE)
     assert _check(token, "github.create_pr", "flow-A").json()["reason"] == "revoked", \
         "release resumes flow; old token stays revoked"
 

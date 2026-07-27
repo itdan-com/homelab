@@ -20,6 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # First-imported test module binds the engine; setdefault keeps this
 # file standalone-runnable without stomping a sibling's DB in-process.
 os.environ.setdefault("SENTINEL_DB", os.path.join(tempfile.mkdtemp(), "test.db"))
+# TestClient sends `Host: testserver`, which the admin app's
+# anti-DNS-rebinding allowlist would otherwise (correctly) refuse.
+os.environ.setdefault("SENTINEL_CONSOLE_HOSTS", "127.0.0.1,localhost,testserver")
 
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
@@ -34,6 +37,7 @@ broker = TestClient(broker_app)
 admin = TestClient(admin_app)
 
 AUTHZ = "/v1/ext-authz"
+CONSOLE = {"x-sentinel-console": "1"}  # the admin app's CSRF guard
 
 
 def _migrate() -> None:
@@ -47,7 +51,7 @@ def _granted_token(flow: str, tool: str) -> str:
                       json={"flow_id": flow, "tool": tool,
                             "reason": "test", "agent": "pytest"}).json()["request_id"]
     admin.post(f"/v1/capability-requests/{rid}/grant",
-               json={"ttl_minutes": 5, "granted_by": "bob"})
+               json={"ttl_minutes": 5}, headers=CONSOLE)
     return broker.get(f"/v1/capability-requests/{rid}").json()["token"]
 
 

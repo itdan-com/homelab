@@ -57,10 +57,11 @@ Admin listener (`app/main.py`, binds 127.0.0.1 only — unreachable from pods by
 
 ### 5.5.5 One-screen web GUI
 
-- [ ] Active flows list (live).
-- [ ] Pending requests panel: shows flow-id, tool, reason, recent actions from the flow. Buttons: **Grant 5m**, **Grant 1h**, **Deny**.
-- [ ] Global kill switch button (with confirmation).
-- [ ] Recent audit events tail (last 50).
+- [x] Active flows list (live) — activity **derived** (live grants + last audit event within `SENTINEL_FLOW_ACTIVE_MINUTES`), because nothing closes a flow yet and `ended_at IS NULL` would mark every flow ever run as active. *(2026-07-27)*
+- [x] Pending requests panel: flow-id, tool, reason, agent, countdown, the flow's recent audit actions as context. Buttons: **Grant 5m**, **Grant 1h**, **Deny** (grants disabled while kill is engaged).
+- [x] Global kill switch button — two-step inline confirm (revocation is permanent; it must not be one stray click away), plus a **Release** control and a loud engaged-state banner.
+- [x] Recent audit events tail (last 50), colour-coded by event type.
+- [x] **Beyond the checklist, because the console is a web page:** Host allowlist (anti-DNS-rebinding), Origin check, and a required `X-Sentinel-Console: 1` header on every state-changing route — three independent CSRF layers *below* the 5.5.6 auth that will stack on them. Strict CSP (`default-src 'none'`, no CDN), `textContent`-only rendering (agent-written `reason` strings must never become markup in the page that holds the kill switch), and **server-resolved operator identity** — the `*_by` body fields are gone; `extra="forbid"` rejects them loudly rather than silently ignoring a caller who thinks it is naming the approver. All proven in `tests/test_console_guards.py`.
 
 ### 5.5.6 Human auth
 
@@ -117,6 +118,48 @@ These layer on after Phase 7 without architectural change.
 - `STATUS.md` updated.
 
 ## Notes captured during execution
+
+- **2026-07-27 — 5.5.5 done (the console), and a real token leak found
+  and closed on the way in.**
+  - **Bug found by probing, not reading (owner ask: keep hunting).** A
+    header-echo upstream behind the proxy showed the live capability
+    token arriving at the backend: `x-sentinel-token: snt_…`. A hostile
+    or compromised MCP server could replay it for the rest of its TTL.
+    Fixed with an HTTPRoute `RequestHeaderModifier` — route-level header
+    mutation runs in the router filter, AFTER ext_authz, so the broker
+    still validates the token and the upstream never sees it (re-probed:
+    header gone, request still 200). **Cleared in the same probe:** a
+    client-forged `x-sentinel-grant-id` WAS overwritten by the auth
+    response, so the upstream's identity headers are trustworthy.
+  - **The console changed the threat model, so the API changed first.**
+    Loopback stops the cluster; it does not stop the operator's own
+    browser. Three layers now guard every state-changing route — Host
+    allowlist (DNS rebinding), Origin check, and a required
+    `X-Sentinel-Console: 1` (a custom header forces a CORS preflight
+    that Sentinel never answers). Independent of, and below, 5.5.6 auth.
+  - **Actor identity moved server-side** (`app/actor.py`): `granted_by`
+    / `denied_by` / `engaged_by` / `released_by` are gone from request
+    bodies — an actor a caller can type is a signature anyone can
+    forge, and these end up in the canonical record. `extra="forbid"`
+    makes old callers fail loudly instead of being silently mis-attributed.
+    5.5.6 is now a one-file change: `current_operator()` starts
+    returning the verified passkey identity.
+  - **`GET /v1/flows?active=true` stopped lying.** It filtered on
+    `ended_at IS NULL`, which nothing ever sets — so "active flows"
+    meant "every flow ever". Now derived from evidence (live grants,
+    last audit event within a window) and enriched with `last_seen` /
+    `live_grants` / `pending_requests`.
+  - XSS discipline is written into `console.js`'s header as a rule, not
+    a habit: every agent-written string (`reason`, tool, flow id) is
+    rendered with `textContent`. The console also says **NO CONTACT
+    WITH SENTINEL** on a failed poll rather than showing stale state —
+    an operator who thinks "nothing is pending" while looking at a dead
+    socket is worse off than one who knows they are blind.
+  - Battery: 4/4 pytest files; live guard checks (403/400/403); and the
+    full console loop end-to-end — agent asks → console panel shows it →
+    Grant 5m → agent claims token → **200 through the proxy** → console
+    **kill** revokes 2 grants → same call `kill-engaged` → release →
+    same call `revoked` (release does not resurrect, proven at the wire).
 
 - **2026-07-27 — 5.5.4 done (the enforcement point is live and it cannot
   be lied to).** Full battery through the REAL data path (pod → alias

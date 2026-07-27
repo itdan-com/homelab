@@ -1,0 +1,132 @@
+/* Sentinel console — one screen, no dependencies, no network calls off
+   this origin (see the CSP in app/main.py). Light and dark both, because
+   the operator taps this at 2am as often as at noon. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --ink: #14161a;
+  --muted: #626b78;
+  --line: #dfe3e8;
+  --accent: #2f6fed;
+  --ok: #1a7f56;
+  --warn: #b25e00;
+  --bad: #c02a2a;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101317;
+    --panel: #171b21;
+    --ink: #e7eaee;
+    --muted: #98a2b0;
+    --line: #262c35;
+    --accent: #6f9bff;
+    --ok: #4ec08c;
+    --warn: #e0954a;
+    --bad: #ff6b6b;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+header {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 20px; border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+h1 { font-size: 15px; letter-spacing: .18em; margin: 0; }
+.who { color: var(--muted); font-size: 13px; }
+.who b { color: var(--ink); }
+.link { margin-left: auto; font-size: 13px; color: var(--muted); }
+.link.live::before { content: "● "; color: var(--ok); }
+.link.lost { color: var(--bad); font-weight: 600; }
+.link.lost::before { content: "● "; }
+
+.killbar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 20px; border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.killbar.engaged {
+  background: color-mix(in srgb, var(--bad) 14%, var(--panel));
+  border-bottom-color: var(--bad);
+}
+.killbar.engaged #kill-state { color: var(--bad); font-weight: 700; }
+.kill-actions { margin-left: auto; display: flex; gap: 8px; }
+.detail { color: var(--muted); font-size: 13px; margin-left: 10px; }
+
+main {
+  display: grid; gap: 16px; padding: 16px 20px 40px;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  align-items: start;
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; min-width: 0;
+}
+.panel.wide { grid-column: 1 / -1; }
+h2 {
+  font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); margin: 0 0 10px;
+}
+.count {
+  font-size: 11px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 20px; padding: 1px 8px; margin-left: 6px; letter-spacing: 0;
+}
+.empty { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
+
+/* --- pending request cards --- */
+.req {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+}
+.req .tool { font-family: var(--mono); font-weight: 600; font-size: 15px; }
+.req .meta { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.req .meta code { font-family: var(--mono); }
+.req .reason {
+  margin: 9px 0 11px; padding-left: 10px;
+  border-left: 2px solid var(--line); color: var(--ink);
+}
+.req .acts { display: flex; gap: 8px; flex-wrap: wrap; }
+.req .ctx { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.req .ctx span { font-family: var(--mono); }
+
+button {
+  font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 7px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.grant { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.deny { border-color: var(--bad); color: var(--bad); }
+button.danger { border-color: var(--bad); color: var(--bad); }
+button.danger.confirm { background: var(--bad); color: #fff; }
+button.ghost { color: var(--muted); }
+button:disabled { opacity: .5; cursor: default; }
+.hidden { display: none !important; }
+
+/* --- flows + audit rows --- */
+.row {
+  display: flex; gap: 10px; align-items: baseline;
+  padding: 5px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.row:last-child { border-bottom: 0; }
+.row .t { font-family: var(--mono); color: var(--muted); font-size: 12px; }
+.row .id { font-family: var(--mono); }
+.row .tail { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
+.tag {
+  font-family: var(--mono); font-size: 11px; padding: 1px 7px;
+  border-radius: 20px; border: 1px solid var(--line);
+}
+.tag.grant, .tag.use { color: var(--ok); }
+.tag.denial, .tag.revocation { color: var(--bad); }
+.tag.kill_engaged, .tag.kill_released { color: var(--warn); font-weight: 600; }
+.live { color: var(--ok); font-weight: 600; }

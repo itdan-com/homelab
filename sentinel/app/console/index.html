@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sentinel</title>
+  <link rel="stylesheet" href="/static/console.css">
+</head>
+<body>
+  <header>
+    <h1>SENTINEL</h1>
+    <div class="who">operator <b id="operator">…</b></div>
+    <div id="link" class="link">connecting…</div>
+  </header>
+
+  <!-- Kill-switch state is the loudest thing on the page: if it is
+       engaged, nothing else on screen matters. -->
+  <section id="killbar" class="killbar">
+    <div>
+      <span id="kill-state">kill switch: off</span>
+      <span id="kill-detail" class="detail"></span>
+    </div>
+    <div class="kill-actions">
+      <button id="kill-btn" class="danger">Engage kill switch</button>
+      <button id="kill-confirm" class="danger confirm hidden">
+        Confirm — revoke every live grant
+      </button>
+      <button id="kill-cancel" class="ghost hidden">Cancel</button>
+      <button id="release-btn" class="ghost hidden">Release</button>
+    </div>
+  </section>
+
+  <main>
+    <section class="panel wide">
+      <h2>Asking for power <span id="pending-count" class="count">0</span></h2>
+      <div id="pending"></div>
+      <p id="pending-empty" class="empty">Nothing is asking right now.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Active flows <span id="flow-count" class="count">0</span></h2>
+      <div id="flows"></div>
+      <p id="flows-empty" class="empty">No flow has been active recently.</p>
+    </section>
+
+    <section class="panel">
+      <h2>The record <span class="count">last 50</span></h2>
+      <div id="audit"></div>
+    </section>
+  </main>
+
+  <script src="/static/console.js"></script>
+</body>
+</html>

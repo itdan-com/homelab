@@ -34,7 +34,32 @@ the security model — not a convention that can be forgotten:
 | App | Binds | Who reaches it | Routes |
 |---|---|---|---|
 | `app.broker` | k3d gateway IP, **mTLS required** | cluster pods (via the Sentinel proxy) | request a capability, poll for the answer, **check** a token, **/v1/ext-authz** (Envoy's per-call question) |
-| `app.main` (admin) | `127.0.0.1` | the human at the console | **grant**, **deny**, **kill**/release, audit, flows |
+| `app.main` (admin) | `127.0.0.1` | the human at the console (`http://127.0.0.1:8400/`) | **grant**, **deny**, **kill**/release, audit, flows |
+
+### The console is a web page, so loopback is not the whole story
+
+Binding to loopback stops the *cluster*. It does not stop the
+operator's own browser, which will carry a request from any tab to
+`127.0.0.1`. Three independent controls sit in front of every
+state-changing route — none of them authentication, which arrives at
+5.5.6 and stacks on top:
+
+1. **Host allowlist** — defeats DNS rebinding (`Host: evil.com` → 400).
+2. **Origin check** — defeats plain cross-site requests (→ 403).
+3. **Console header** — `X-Sentinel-Console: 1` on every POST. A
+   cross-origin page cannot set a custom header without a CORS
+   preflight, and this app answers none. **curl users must send it too.**
+
+The page itself loads nothing from anywhere (`default-src 'none'` CSP,
+no CDN) and renders every agent-written string — tool names, reasons,
+flow ids — with `textContent`, never as markup: the one screen holding
+the kill switch is the last place to accept markup from the thing
+asking for power.
+
+**Identity is resolved by the server, never asserted by the caller.**
+There is no `granted_by` field to send; the audit log records
+`SENTINEL_OPERATOR` (default: the host user), and 5.5.6 swaps that for
+the verified passkey without touching any route.
 
 Granting has no route on the broker app. A pod cannot reach loopback
 via the gateway IP, so the grant/kill surface is unreachable from k3d
@@ -73,9 +98,10 @@ python3 -m venv .venv                        # needs the python3.12-venv apt pkg
 .venv/bin/pip install -r requirements.txt
 .venv/bin/alembic upgrade head               # create/upgrade the SQLite schema
 
-# admin (human) API + interactive docs on loopback:
+# admin (human) console + interactive docs on loopback:
 .venv/bin/uvicorn app.main:app --reload --port 8400
-#   → http://127.0.0.1:8400/docs
+#   → http://127.0.0.1:8400/       the one-screen console
+#   → http://127.0.0.1:8400/docs   generated API reference
 
 # once per install: mint Sentinel's CA + broker/client certs and inject
 # the cluster-side ConfigMap/Secret (rotation: re-run with --rotate):
@@ -102,12 +128,14 @@ and `SENTINEL_GRANT_TTL_MINUTES` (5) tune the default lifetimes.
 ```
 sentinel/
 ├── app/
-│   ├── main.py        # ADMIN listener: grant/deny/kill/audit (loopback only)
+│   ├── main.py        # ADMIN listener: console + grant/deny/kill/audit
 │   ├── broker.py      # CLUSTER listener: request/poll/check/ext-authz (mTLS)
 │   ├── service.py     # every state transition + its audit, in one place
 │   ├── scope.py       # request → capability-scope derivation (pure, tested)
+│   ├── actor.py       # who is acting (server-resolved) + the CSRF guard
+│   ├── console/       # the one-screen GUI (no build step, no CDN)
 │   ├── schemas.py     # Pydantic shapes = the /docs human documentation
-│   ├── config.py      # env-driven settings (DB path/URL, TTLs)
+│   ├── config.py      # env-driven settings (DB path/URL, TTLs, operator)
 │   ├── db.py          # SQLAlchemy engine/session/Base
 │   └── models.py      # data model (flows, grants, requests, audit, kill)
 ├── scripts/
