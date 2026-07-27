@@ -23,6 +23,19 @@ authentikIngress:
     issuer: lab-local-ca
     redirectPort: "8443"
 
+# OIDC clients this IdP serves (Phase 5 B4) — rendered into blueprints
+# by templates/oidc-blueprints.yaml, applied headless by the worker
+# (config-as-code, ADR-002). Client secrets live ONLY in the SOPS file
+# (authentik.authentik.<app>_oidc_client_secret → AUTHENTIK_* env var,
+# referenced in the blueprint via !Env) — never here, never in git.
+oidcClients:
+  openwebui:
+    # client_id is public and deterministic on purpose: OpenWebUI's
+    # side (B5) can hardcode it in values; only the secret is secret.
+    clientId: openwebui
+    # The app's public origin; the OIDC redirect URI derives from it.
+    baseUrl: https://openwebui.lab.local:8443
+
 # ---------------------------------------------------------------------------
 # Subchart values. Every leaf under `authentik:` below becomes an
 # AUTHENTIK_* env var via the chart's rendered Secret — which is how
@@ -32,6 +45,12 @@ authentikIngress:
 # where unsupported) — catalog labels ride on OUR door template.
 # ---------------------------------------------------------------------------
 authentik:
+  # Mount our blueprint ConfigMap into the worker (literal names —
+  # see templates/oidc-blueprints.yaml). Content changes re-apply via
+  # the worker's file watcher; no restart needed after the first roll.
+  blueprints:
+    configMaps:
+      - authentik-blueprints
   authentik:
     # Signs sessions/cookies/tokens. Rotating it logs everyone out.
     # Real value via SOPS; this default fails closed.
