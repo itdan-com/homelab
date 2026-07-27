@@ -21,6 +21,22 @@ PASS=0; FAIL=0
 ok()  { PASS=$((PASS+1)); printf 'PASS  %s\n' "$*"; }
 bad() { FAIL=$((FAIL+1)); printf 'FAIL  %s\n' "$*"; }
 probe() { kubectl exec -n "$NS" client -- curl -s -o /dev/null -m 4 -w '%{http_code}' "http://web.${NS}/" 2>/dev/null; }
+# Service programming and policy enforcement both propagate
+# asynchronously (endpoints -> kube-proxy, policy -> per-node eBPF
+# maps) — a single instant probe races them. Retry until the expected
+# state holds, up to ~20s, so we assert the SETTLED behavior.
+probe_until() { # probe_until open|blocked
+  local want="$1" i code
+  for i in $(seq 1 10); do
+    code="$(probe)"
+    case "$want" in
+      open)    [ "$code" = "200" ] && return 0 ;;
+      blocked) [ "$code" != "200" ] && return 0 ;;
+    esac
+    sleep 2
+  done
+  return 1
+}
 
 kubectl delete ns "$NS" --ignore-not-found --wait=true >/dev/null 2>&1
 kubectl create ns "$NS" >/dev/null
@@ -33,8 +49,8 @@ kubectl wait -n "$NS" --for=condition=Ready pod/web pod/client --timeout=120s >/
   || { echo "pods never became Ready"; kubectl delete ns "$NS" --wait=false; exit 1; }
 
 # 1 — baseline connectivity (otherwise later "blocked" would be meaningless)
-[ "$(probe)" = "200" ] && ok "baseline: client -> web reachable" \
-                       || { bad "baseline: client cannot reach web at all"; kubectl delete ns "$NS" --wait=false; exit 1; }
+probe_until open && ok "baseline: client -> web reachable" \
+                 || { bad "baseline: client cannot reach web at all"; kubectl delete ns "$NS" --wait=false; exit 1; }
 
 # 2 — default-deny ingress: the policy Flannel would silently ignore
 kubectl apply -n "$NS" -f - >/dev/null <<'EOF'
@@ -46,9 +62,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
 EOF
-sleep 3
-[ "$(probe)" = "200" ] && bad "default-deny: traffic STILL flows (CNI not enforcing!)" \
-                       || ok "default-deny: traffic blocked (enforcement is real)"
+probe_until blocked && ok "default-deny: traffic blocked (enforcement is real)" \
+                    || bad "default-deny: traffic STILL flows (CNI not enforcing!)"
 
 # 3 — scoped allow: only pods labeled app=client, only port 80
 kubectl apply -n "$NS" -f - >/dev/null <<'EOF'
@@ -70,9 +85,8 @@ spec:
         - protocol: TCP
           port: 80
 EOF
-sleep 3
-[ "$(probe)" = "200" ] && ok "scoped allow: client -> web restored through the hole" \
-                       || bad "scoped allow: traffic still blocked (policy not matching)"
+probe_until open && ok "scoped allow: client -> web restored through the hole" \
+                 || bad "scoped allow: traffic still blocked (policy not matching)"
 
 kubectl delete ns "$NS" --wait=false >/dev/null 2>&1
 echo "== summary: $PASS passed, $FAIL failed =="
