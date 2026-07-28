@@ -17,6 +17,18 @@ repo-root CLAUDE.md (the builder's charter), THIS file wins for you.
    resource tuning, argo.yaml onboarding, model list entries). Chart
    template/architecture changes: open a GitHub issue instead and
    explain what's needed — the builder session handles those.
+4b. **Security-relevant values are NOT ordinary values — never touch
+   them, in any PR, for any reason.** Specifically:
+   `networkPolicy.*`, `allowedTools`, `sentinelFronting.*`,
+   `catalog.homelab/exposes-mcp`, `catalog.tier`, and anything under
+   `catalog/sentinel-proxy/` or `catalog/authentik/`. These look like
+   ordinary values and are the enforcement itself: flipping
+   `networkPolicy.enabled` to `false` un-fronts an MCP server, and it
+   would arrive as a one-line, routine-looking diff for an owner who
+   reads diffs but does not write code. If a change genuinely requires
+   one, open an issue saying so and stop. Found 2026-07-28 in a
+   consistency audit: rule 4 as originally written authorized exactly
+   this.
 5. **Secrets are untouchable.** Never edit `secrets.enc.yaml` files,
    never request secret values, never paste anything that looks like a
    credential into a PR or issue.

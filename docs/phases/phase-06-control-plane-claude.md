@@ -11,7 +11,7 @@
 1. Build a custom Agent SDK container image (Python or Node) with: Claude SDK, Slack SDK, GitHub SDK, Sentinel client.
 2. Write the system prompt: agent's role, decision criteria, escalation rules, audit format.
 3. Deploy as a Deployment + ServiceAccount in `platform-control` namespace. RBAC: read-only on most namespaces, no write outside its own.
-4. Wire to Prometheus, Loki, Slack, GitHub, Sentinel proxy.
+4. Wire to Prometheus, Slack, GitHub, Sentinel proxy. (**Not Loki** — it is Phase 7; do not design around log queries this phase cannot make.)
 5. Implement the propose-PR-and-await-approval flow:
    - Detect signal (e.g. CPU high) → propose action → commit branch → open PR → post Slack message with ✅/❌ → on ✅, merge → ArgoCD applies.
 6. Start the **MCP server catalog** in namespace `mcp-servers`:
@@ -19,6 +19,64 @@
    - Each behind the Sentinel proxy.
    - Each ships with its own tool allowlist ConfigMap (defense in depth).
 7. NetworkPolicy: block direct pod-to-pod traffic to MCP servers; only the Sentinel proxy can reach them.
+
+## MUST be decided in ADR-005 — five blockers from the 2026-07-28 audit
+
+An independent consistency audit found these. Each one costs real rework
+if discovered while building rather than while designing.
+
+1. **No identity exists that can approve the agent's PRs.** `CLAUDE.md`
+   says "on ✅ the bot merges" and phase-04-5 planned to reuse the
+   operator App — but Phase 4.5's own negative test *proved* that
+   cannot work: GitHub returns **422 "Can not approve your own pull
+   request"** unconditionally, and `protect-main` requires one
+   approving review, so the merge returns **405**. The only thing that
+   currently gets past it is the repo-admin bypass, which Phase 6 plans
+   to *remove*. **A second identity — or replacing review-required with
+   status-checks-required — is a prerequisite of Phase 6 that no phase
+   schedules.** Decide before writing the Slack handler.
+2. **Cedar has no *resource*, so three of the four outcomes are
+   unexpressible today.** `app/scope.py` derives `<server>.<tool>` and
+   deliberately discards `params.arguments`; `check_capability`
+   compares tool and flow only. So "`DROP TABLE` forbidden on prod,
+   permitted on staging" — the flagship example in `CLAUDE.md` — is
+   **the same capability string** at the enforcement point. ADR-005
+   must decide how a resource identity is derived from a tool call
+   (per-server adapter? a declared `resourceKey` per chart? argument
+   extraction with an allowlist?), and that decision also adds a column
+   to `audit_events`.
+3. **There is no `confirm` primitive, and its natural home is currently
+   forbidden.** `confirm` means the *caller* elevates *themselves* from
+   their own client, authenticated as an Authentik user. Grant/deny
+   today live only on the loopback admin listener behind an operator
+   passkey, and ADR-004 settles "Sentinel behind Authentik SSO: **no**"
+   with three reasons. ADR-005 must carve the distinction explicitly —
+   **who may APPROVE stays local passkeys; who may SELF-ELEVATE comes
+   from the IdP** — and amend ADR-004, or the two documents disagree
+   from day one.
+4. **Authentik group membership is a second self-granting path.**
+   ADR-004 proved the agent can PR its own *approval* power via
+   Authentik blueprints. The identical argument applies to
+   *entitlements*: a routine SSO-housekeeping PR adds a principal to a
+   privileged group, and Cedar then permits by birthright with no
+   Sentinel surface touched. Deciding where Cedar policy lives does not
+   cover where group membership lives.
+5. **Tenant scoping is due now, not in 6.5.** ADR-004 says the owner
+   column is cheapest before Phase 6 puts real flows in the database.
+   `CLAUDE.md` currently schedules multi-user Sentinel for 6.5 — i.e.
+   after. Add the column at the start of Phase 6 or consciously accept
+   the backfill.
+
+Further gaps the same audit found, recorded so they are not rediscovered
+expensively: an elevation window does **not** tear down an already-open
+server-push channel (ext_authz runs per request; the kill switch cannot
+close an established SSE stream); per-user *tool visibility* requires
+rewriting the `tools/list` **response**, which an ext_authz filter
+structurally cannot do; the WebAuthn RP ID is `localhost`, so every
+enrolled passkey dies the day Sentinel serves a real domain; and MCP
+clients expect OAuth protected-resource metadata and probably Dynamic
+Client Registration, which nothing here implements and Authentik may not
+support — verify in the same spike as ID-JAG.
 
 ## Which flow is this phase? Both — and they are built in this order
 

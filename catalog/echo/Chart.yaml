@@ -19,4 +19,11 @@ annotations:
   catalog.homelab/needs-sso: "false"
   catalog.homelab/llm-traffic: "false"
   catalog.homelab/wants-vector: "false"
-  catalog.homelab/exposes-mcp: "false"
+  # "true" since 5.5.4: echo is fronted by the Sentinel proxy and
+  # reachable through the MCP path. The label is what a future admission
+  # policy keys off to make fronting mandatory (ADR-004 debt 5), so a
+  # workload that IS fronted must not claim otherwise — it would be
+  # skipped by the very check meant to protect it. echo's fronting is
+  # now redundant with catalog/mock-mcp and can be retired; until then,
+  # the label tells the truth.
+  catalog.homelab/exposes-mcp: "true"

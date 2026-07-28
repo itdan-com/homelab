@@ -83,8 +83,20 @@ whole system returns to a known state.
 
 **Why the gate is a PR:** everything Mission Control touches is
 declarative and revertible. The diff *is* the reviewable artifact; the
-revert *is* the undo. Sentinel has no role here — a second gate in
-front of a gate that already works is friction with no gain.
+revert *is* the undo. **Sentinel does not gate the PR path** — a second
+gate in front of a gate that already works is friction with no gain.
+
+Be precise about the scope of that sentence: Sentinel absolutely does
+gate the agent's **non-PR** actions, and always will (ADR-001's amended
+rule). Posting to Slack, commenting on an issue, calling any MCP tool —
+those are not revertible by `git revert`, so they take the capability
+path like anything else. The PR *is* the gate for cluster state; the
+capability *is* the gate for everything else the agent touches.
+
+**Caveat on revertibility itself:** `git revert` restores *declarations*,
+not data. It will not bring back a dropped database or un-send a
+message. The dividing line is sound for cluster state and needs a
+stated boundary for stateful charts — an open item, not a settled one.
 
 **Audience:** the platform team. Low volume, high blast radius, every
 change is a file. Built in Phase 4.5, completed in Phase 6.
@@ -145,10 +157,13 @@ a record and an expiry, not a request into someone else's queue. If
 so.
 
 **Sentinel's per-flow, scope-locked, expiring token (Phase 5.5) is the
-elevation primitive for both flows.** What changed at the end of Phase
-5.5 is that a grant covers a *set* of tools for a *window*, rather than
-one tool for one call — the same mechanism, at a granularity a human
-can actually use.
+elevation primitive both flows will build on** — but it is not yet the
+right shape. Today a grant covers **one tool for one call**, which is
+why Phase 5.5.8 measured six approvals for a single MCP session. Making
+a grant cover a *set* of tools for a *window* is a schema change plus a
+policy engine, and it is **Phase 6's first work item, not something
+already done**. Read any claim about profiles as a plan until
+`capability_grants` says otherwise.
 
 ## Current status
 
