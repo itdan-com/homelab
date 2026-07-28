@@ -85,12 +85,28 @@ Admin listener (`app/main.py`, binds 127.0.0.1 only — unreachable from pods by
 
 ### 5.5.8 End-to-end smoke test
 
-- [ ] Stand up a mock MCP server behind the Sentinel proxy.
-- [ ] Without a token: request denied.
-- [ ] With request → grant → token: request allowed.
-- [ ] After TTL expiry: subsequent request denied.
-- [ ] Global kill: pre-granted tokens immediately invalidated; new requests refused.
-- [ ] Audit log has 5+ event types recorded.
+- [x] **A real MCP server, not a stand-in** — `catalog/mock-mcp` (app #12) speaks Streamable HTTP: `initialize`, `tools/list`, `tools/call`, the bodiless GET that opens the server-push channel and the bodiless DELETE that ends a session. Python stdlib in a ConfigMap on stock `python:3.12-slim`, so there is no image to build and nothing installed at pod start. **The official MCP SDK client is the arbiter of realism** and completed a full session against it. *(2026-07-27)*
+- [x] **Layer 2 tested, not asserted.** The server carries its own tool allowlist with `delete_everything` implemented and deliberately excluded. `tools/list` hides it; calling it returns a JSON-RPC error even when Sentinel granted the capability — proving the layers refuse independently, which `CLAUDE.md` claims and nothing previously checked.
+- [x] NetworkPolicy on the MCP server restricts **both** directions — ingress from the sentinel-proxy fleet only (no Traefik door: an MCP server has no business having one), egress to DNS only. Closes ADR-004 debt 6 on the first chart Phase 6 will copy.
+- [x] **`scripts/sentinel-smoke.sh`** joins `sso-dance.sh` and `netpol-smoke.sh` as scripted battery: no token denied, request→grant→token allowed, wrong tool and wrong flow denied, TTL expiry denied, kill immediate + release-does-not-resurrect, audit ≥5 event types. Self-authenticating (throwaway software passkey, removed afterwards) — not a backdoor, since minting an enrolment code already requires host privilege.
+- [ ] **Owner action: run the gated half.** `sudo scripts/sentinel-smoke.sh` — the production database is root-only by design, so the battery needs one privileged invocation.
+
+#### The finding: **six approvals for one tool call**
+
+Measured, not estimated. Deriving the capability scope for every request the official client makes during one trivial session:
+
+| request | capability |
+|---|---|
+| POST | `mock.rpc.initialize` |
+| POST | `mock.rpc.notifications.initialized` |
+| GET | `mock.rpc.transport.get` |
+| POST | `mock.rpc.tools.list` |
+| POST | `mock.say` |
+| DELETE | `mock.rpc.transport.delete` |
+
+**One-grant-per-call does not survive contact with real MCP.** Six taps to say hello means a human either abandons the console or rubber-stamps, and a rubber-stamped gate is worse than no gate because it manufactures the appearance of oversight. This is not a bug in the enforcement — every layer worked exactly as designed — it is the *granularity* being wrong.
+
+The roadmap already named the answers (**capability profiles**, **trust gradients per namespace**) and deferred them as post-MVP polish. This measurement reclassifies them as **prerequisites for Phase 6**, and both are policy problems, which is why Cedar is the leading candidate (see the Phase 6 doc). The honest reading: 5.5.8 did its job precisely by making the model fail somewhere cheap.
 
 ---
 
