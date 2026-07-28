@@ -2,7 +2,9 @@
 
 **Goal:** A trust-domain-separated security broker on the WSL2 host that mints short-lived per-flow capability tokens, gates every MCP call, and provides a one-screen GUI + global kill switch — all unreachable from inside the k3d cluster.
 
-**Status:** ENTRY CRITERIA MET 2026-07-27 (see Notes) — ready for 5.5.1. **Non-negotiable before any non-PR external power** (ADR-001 wording — the PR-only Control-Plane v0 of Phase 4.5 may precede this; nothing else may).
+**Status:** ✅ **CLOSED 2026-07-28.** All eight checklist items done, every exit criterion met, battery green. Sentinel runs as two systemd units outside the cluster, the owner authenticates with a real passkey, and no MCP call reaches a server without a human-approved, scope-locked, time-limited capability. The gate that ADR-001 made non-negotiable before any non-PR external power now exists — **Phase 6 may proceed.**
+
+**The finding that reshapes Phase 6:** one trivial MCP tool call costs **six** separate human approvals. The enforcement is correct; the granularity is not. See 5.5.8 below.
 
 **Entry criteria (do immediately before this phase):** ✅ DONE 2026-07-27 — cluster rebuilt from `k3d/devlab-cluster.yaml` with **Cilium** CNI 1.19.6 (kube-proxy kept — DOKS parity), per-node CPU caps (kubelet `system-reserved` + docker ceilings), `k3d/coredns-custom.yaml` + `k3d/portainer-agent.yaml` reapplied by `bootstrap.sh`. The rebuild doubled as the from-git disaster-recovery proof AND the headless-SSO-assembly proof (`scripts/sso-dance.sh` 7/7). Premise correction recorded in Notes: k3s's embedded kube-router controller was already enforcing basic v1 NetworkPolicy — Cilium's case is Hubble per-flow verdict evidence, L7/identity policy headroom, and cloud parity, not "deny was a no-op".
 
@@ -89,7 +91,7 @@ Admin listener (`app/main.py`, binds 127.0.0.1 only — unreachable from pods by
 - [x] **Layer 2 tested, not asserted.** The server carries its own tool allowlist with `delete_everything` implemented and deliberately excluded. `tools/list` hides it; calling it returns a JSON-RPC error even when Sentinel granted the capability — proving the layers refuse independently, which `CLAUDE.md` claims and nothing previously checked.
 - [x] NetworkPolicy on the MCP server restricts **both** directions — ingress from the sentinel-proxy fleet only (no Traefik door: an MCP server has no business having one), egress to DNS only. Closes ADR-004 debt 6 on the first chart Phase 6 will copy.
 - [x] **`scripts/sentinel-smoke.sh`** joins `sso-dance.sh` and `netpol-smoke.sh` as scripted battery: no token denied, request→grant→token allowed, wrong tool and wrong flow denied, TTL expiry denied, kill immediate + release-does-not-resurrect, audit ≥5 event types. Self-authenticating (throwaway software passkey, removed afterwards) — not a backdoor, since minting an enrolment code already requires host privilege.
-- [ ] **Owner action: run the gated half.** `sudo scripts/sentinel-smoke.sh` — the production database is root-only by design, so the battery needs one privileged invocation.
+- [x] **Owner ran the gated half — all assertions passed** (2026-07-28, `sudo scripts/sentinel-smoke.sh`). Two bugs surfaced on the first attempt and were fixed: `sudo` resets `HOME`, so kubectl lost the kubeconfig and reported the uninformative "server could not find the requested resource"; and the battery called the console over plain http with no CA, which the script now takes from `/etc/sentinel/sentinel.env` so it follows whichever scheme the install actually serves.
 
 #### The finding: **six approvals for one tool call**
 
@@ -132,14 +134,16 @@ These layer on after Phase 7 without architectural change.
 
 ---
 
-## Phase exit criteria
+## Phase exit criteria — all met 2026-07-28
 
-- Sentinel systemd unit running, restartable, logs healthy.
-- Web GUI accessible, WebAuthn or TOTP working.
-- A mock MCP server behind the Sentinel proxy refuses unauthenticated traffic and permits authenticated, granted traffic.
-- Global kill switch tested: tap → proxy refuses all traffic → un-tap → resumed.
-- Audit log captures all 5 event types.
-- `STATUS.md` updated.
+- [x] Sentinel systemd units running, restartable, logs healthy — **two** units, not one, so a console crash cannot take enforcement down with it.
+- [x] Web GUI accessible, WebAuthn working — owner enrolled a real passkey (Microsoft password manager in Edge). TOTP exists as the documented fallback.
+- [x] A **real** MCP server behind the Sentinel proxy refuses unauthenticated traffic and permits authenticated, granted traffic — verified with the official MCP SDK client, not a stand-in.
+- [x] Global kill switch tested end to end: engage → every capability dies mid-session → release does **not** resurrect what was revoked.
+- [x] Audit log captures the event types (now eight, not five: request, grant, denial, use, revocation, kill_engaged, kill_released, claim).
+- [x] `STATUS.md` updated.
+
+**Beyond the criteria, because the work demanded it:** mTLS with Sentinel's own CA; server-derived tool scope so a caller cannot name one tool and invoke another; claim-once token delivery bound to a caller nonce; three CSRF layers under the passkey; the three-layer claim tested rather than asserted; and both-direction NetworkPolicy on the fronted workload.
 
 ## Notes captured during execution
 
