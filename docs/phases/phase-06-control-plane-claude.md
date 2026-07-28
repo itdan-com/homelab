@@ -43,6 +43,32 @@ into Phase 6 would have made it unshippable, and this repo already has
 the convention for inserting half-phases. What Phase 6 owes Phase 6.5
 is listed below, so the work done here does not have to be redone.
 
+### Two gaps in Phase 6 itself, found in the 2026-07-28 consistency pass
+
+**1. Slack approvals need a design decision before any code.** Nothing
+Slack-related exists in this repo yet, and the obvious implementation
+does not work here: Slack's interactive buttons normally call back to a
+**public HTTPS URL**, which a WSL2 lab behind a home router does not
+have. **Socket Mode** is the way out — the app opens an outbound
+WebSocket and receives interactions over it, needing no inbound
+ingress — and it happens to fit the trust model nicely, since it is
+another outbound-only path. Decide this in ADR-005 or its own note;
+discovering it while wiring buttons would waste a session.
+
+**2. The agent's own credentials are an exception that must be stated.**
+`CLAUDE.md` says Claude holds no long-lived credentials for external
+systems. A long-running in-cluster agent needs two anyway: an
+**Anthropic API key** to think at all, and the **GitHub App key** to
+open PRs. Neither is gate-able by Sentinel, because they are what makes
+the agent exist rather than what it does. Today this tension is hidden,
+because the Phase 4.5 operator runs on the HOST as a Claude Code
+instance under the owner's own login (`ops/operator/launch.sh`) — the
+cluster holds only a read-only ServiceAccount token. Moving the agent
+in-cluster changes that, and an Anthropic key sitting in a namespace is
+a real spend-and-exfiltration risk, not just a doctrinal wrinkle. State
+the exception explicitly, scope the key, and decide whether the agent
+keeps running on the host instead.
+
 ### What Phase 6.5 (Airlock) needs that does not exist yet
 
 Naming these now so nobody assumes they are free:
