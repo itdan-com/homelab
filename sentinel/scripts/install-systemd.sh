@@ -64,14 +64,24 @@ install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$CERT_DIR"
 # Certificates: reuse what already exists so the CA — and therefore the
 # cluster's trust in it — survives a reinstall. Only mint when there is
 # nothing to keep.
-if [[ ! -f "$CERT_DIR/ca.crt" && -f "$REPO_DIR/certs/ca.crt" ]]; then
-  echo "== adopting existing certs from the repo checkout (CA preserved)"
-  cp "$REPO_DIR"/certs/{ca.crt,ca.key,broker.crt,broker.key,proxy-client.crt,proxy-client.key} \
-     "$CERT_DIR/" 2>/dev/null || true
+# Copy any cert this install is missing. Per-file, not all-or-nothing:
+# the first version only copied when ca.crt was absent, so a re-install
+# after minting a NEW leaf (the console cert) silently kept the old set
+# and the service started against material that did not exist.
+copied=0
+for f in ca.crt ca.key broker.crt broker.key proxy-client.crt proxy-client.key \
+         console.crt console.key; do
+  if [[ ! -f "$CERT_DIR/$f" && -f "$REPO_DIR/certs/$f" ]]; then
+    cp "$REPO_DIR/certs/$f" "$CERT_DIR/$f"; copied=$((copied + 1))
+  fi
+done
+if (( copied )); then
+  echo "== adopted $copied cert file(s) from the repo checkout (existing CA preserved)"
   chown -R "$SVC_USER:$SVC_USER" "$CERT_DIR"; chmod 0600 "$CERT_DIR"/*
-elif [[ ! -f "$CERT_DIR/ca.crt" ]]; then
-  echo "!! no certificates found. Run scripts/mint-certs.sh (as the host user)" >&2
-  echo "   with SENTINEL_CERT_DIR=$CERT_DIR, then re-run this script." >&2
+fi
+if [[ ! -f "$CERT_DIR/ca.crt" || ! -f "$CERT_DIR/console.crt" ]]; then
+  echo "!! missing certificates (need ca.crt and console.crt)." >&2
+  echo "   Run ./scripts/mint-certs.sh as the host user, then re-run this." >&2
   exit 1
 fi
 
@@ -90,7 +100,7 @@ SENTINEL_ADMIN_PORT=$ADMIN_PORT
 SENTINEL_BROKER_BIND=$BROKER_BIND
 SENTINEL_BROKER_PORT=$BROKER_PORT
 SENTINEL_RP_ID=$RP_ID
-SENTINEL_CONSOLE_ORIGIN=http://$RP_ID:$ADMIN_PORT
+SENTINEL_CONSOLE_ORIGIN=https://$RP_ID:$ADMIN_PORT
 SENTINEL_CONSOLE_HOSTS=127.0.0.1,localhost
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
@@ -111,9 +121,16 @@ cat <<EOF
 
   Sentinel is installed and enabled.
 
-    console   http://$RP_ID:$ADMIN_PORT/     (passkey required)
+    console   https://$RP_ID:$ADMIN_PORT/    (passkey required)
     broker    https://$BROKER_BIND:$BROKER_PORT   (mTLS)
     logs      journalctl -u sentinel-admin -u sentinel-broker -f
+
+  FIRST TIME ONLY — trust Sentinel's CA so the console is a valid
+  https origin (browser passkey providers refuse plain http):
+
+    $CERT_DIR/ca.crt   <- import as a trusted root
+    Firefox keeps its OWN store: Settings > Privacy & Security >
+    Certificates > View Certificates > Authorities > Import.
 
   NEXT, and nobody can do it for you: enroll your real authenticator.
 

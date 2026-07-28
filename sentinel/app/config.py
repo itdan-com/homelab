@@ -50,14 +50,23 @@ CONSOLE_ALLOWED_HOSTS = [
 # --- human auth (5.5.6) ------------------------------------------------------
 #
 # WebAuthn's Relying Party ID must be a DOMAIN — the spec does not allow
-# a bare IP, so the console is reached at http://localhost:8400 and not
-# http://127.0.0.1:8400. (Browsers treat localhost as a secure context,
-# which WebAuthn also requires, so plain HTTP is fine here; in cloud this
-# becomes the real console hostname over real TLS — ADR-004.)
+# a bare IP, so the console is reached at localhost:8400 and never
+# 127.0.0.1:8400.
+#
+# And it is served over **https**, even on loopback. Not for
+# eavesdroppers — there are none here — but because browser passkey
+# providers (1Password, Dashlane, …) decline to engage on a plain-http
+# origin and silently fall through to the platform authenticator, which
+# then fails. "http://localhost is a secure context by spec" is true and
+# not sufficient: what matters is what the extension will touch. Found
+# 2026-07-27, by bisect — the same browser and extension enrolled
+# happily on an https site and offered nothing on ours. In cloud this
+# becomes the real console hostname over a real certificate (ADR-004),
+# so this is the production shape rather than a local workaround.
 CONSOLE_RP_ID = os.environ.get("SENTINEL_RP_ID", "localhost")
 CONSOLE_PORT = int(os.environ.get("SENTINEL_ADMIN_PORT", "8400"))
 CONSOLE_ORIGIN = os.environ.get(
-    "SENTINEL_CONSOLE_ORIGIN", f"http://{CONSOLE_RP_ID}:{CONSOLE_PORT}")
+    "SENTINEL_CONSOLE_ORIGIN", f"https://{CONSOLE_RP_ID}:{CONSOLE_PORT}")
 
 # How long a console session lives before the human must present the
 # authenticator again. Short on purpose: this session can revoke every

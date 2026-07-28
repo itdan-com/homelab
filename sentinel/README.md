@@ -54,11 +54,14 @@ ability to reach the port:
 
 ```bash
 sentinel/scripts/enroll-operator.sh          # prints a single-use code
-# then open http://localhost:8400/ and paste it
+# then open https://localhost:8400/ and paste it
 ```
 
 `localhost`, not `127.0.0.1` — WebAuthn's Relying Party ID must be a
-domain, and an IP is not one. Run the same command again to add a
+domain, and an IP is not one. And **https**, even on loopback: browser
+passkey providers refuse to engage on a plain-http origin, so enrolment
+falls through to the platform authenticator and fails. Trust
+`certs/ca.crt` once (Firefox keeps its own store). Run the same command again to add a
 second device: **that is the recovery story.** There is no account
 recovery backdoor, because a backdoor is a second front door to the
 kill switch. TOTP exists as the documented fallback and can only be

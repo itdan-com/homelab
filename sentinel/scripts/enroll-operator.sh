@@ -63,7 +63,7 @@ cat <<EOF
 
       $CODE
 
-  1. Open  http://${SENTINEL_RP_ID}:${SENTINEL_ADMIN_PORT}/  in a browser ON THIS HOST.
+  1. Open  https://${SENTINEL_RP_ID}:${SENTINEL_ADMIN_PORT}/  in a browser ON THIS HOST.
      (The hostname matters: WebAuthn's Relying Party ID must be a
       domain, so 'localhost' works and '127.0.0.1' does not.)
   2. Paste the code, then approve with Windows Hello / Touch ID / your

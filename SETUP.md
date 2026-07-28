@@ -211,14 +211,30 @@ python3.12-venv`.
 
 ```bash
 cd sentinel
-./scripts/mint-certs.sh                     # Sentinel's own CA + mTLS certs
+./scripts/mint-certs.sh                     # Sentinel's own CA, mTLS + console certs
 sudo ./scripts/install-systemd.sh           # deploy to /opt, enable both units
 sudo ./scripts/enroll-operator.sh           # prints a single-use enrollment code
 ```
 
-Then open **`http://localhost:8400/`** — `localhost`, not `127.0.0.1`,
-because WebAuthn's Relying Party ID must be a domain — paste the code,
-and register with Windows Hello, Touch ID, or a security key.
+**Trust Sentinel's CA once**, or the console is not a valid https origin
+and your password manager will refuse to create a passkey on it. Import
+`/etc/sentinel/certs/ca.crt` as a trusted root. Note that **Firefox keeps
+its own certificate store** and ignores the Windows one: Settings →
+Privacy & Security → Certificates → View Certificates → Authorities →
+Import.
+
+Then open **`https://localhost:8400/`** — https, and `localhost` rather
+than `127.0.0.1`, because WebAuthn's Relying Party ID must be a domain —
+paste the code, and register with your password manager, Windows Hello,
+Touch ID, or a security key.
+
+> **Why https on loopback?** Not for eavesdroppers; there are none.
+> Browser passkey providers (1Password, Dashlane, …) decline to engage on
+> a plain-http origin and silently fall back to the platform
+> authenticator, which then fails with an unhelpful "operation failed for
+> an unknown transient reason". `http://localhost` being a secure context
+> by spec is true and not sufficient — what matters is what the extension
+> will touch. Serving https is also what cloud needs anyway.
 
 **Do that twice, with two different devices.** A second passkey is the
 entire recovery plan: there is no account-recovery backdoor, because a

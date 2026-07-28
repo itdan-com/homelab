@@ -34,6 +34,8 @@ set -euo pipefail
 SENTINEL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CERT_DIR="${SENTINEL_CERT_DIR:-$SENTINEL_DIR/certs}"
 BROKER_NAME="${SENTINEL_BROKER_HOSTNAME:-sentinel-broker.internal}"
+CONSOLE_HOSTNAME="${SENTINEL_RP_ID:-localhost}"
+CONSOLE_ALT_HOSTNAME="${SENTINEL_CONSOLE_ALT_HOSTNAME:-sentinel.lab.local}"
 K3D_NETWORK="${K3D_NETWORK:-k3d-devlab}"
 NAMESPACE="${SENTINEL_PROXY_NAMESPACE:-mcp-servers}"
 CA_DAYS="${SENTINEL_CA_DAYS:-730}"
@@ -61,7 +63,8 @@ mkdir -p "$CERT_DIR"
 cd "$CERT_DIR"
 
 [[ "$ROTATE_CA" == 1 ]] && rm -f ca.crt ca.key
-[[ "$ROTATE" == 1 ]] && rm -f broker.crt broker.key proxy-client.crt proxy-client.key
+[[ "$ROTATE" == 1 ]] && rm -f broker.crt broker.key proxy-client.crt proxy-client.key \
+                                console.crt console.key
 
 # --- CA (ECDSA P-256, matching the lab CA's curve choice) --------------------
 if [[ -f ca.crt ]]; then
@@ -111,8 +114,29 @@ mint_leaf proxy-client sentinel-proxy "basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=clientAuth"
 
-echo "== SANs on broker.crt:"
-openssl x509 -in broker.crt -noout -ext subjectAltName | sed 's/^/   /'
+# The CONSOLE's own server certificate. The admin console is served over
+# TLS even on loopback, and not for eavesdroppers — there are none on
+# loopback. It is because browser passkey providers (1Password, Dashlane,
+# …) decline to engage on a plain-http origin and silently fall through
+# to the platform authenticator, which is how "http://localhost works,
+# it is a secure context by spec" turns into an unusable enrolment
+# screen. Proven 2026-07-27: the same browser + extension enrolled
+# happily on an https site and offered nothing on our http one.
+# Serving https is also the posture cloud needs anyway (ADR-004), so
+# this is the production shape rather than a workaround.
+#
+# Two names on purpose: `localhost` is the default Relying Party ID, and
+# a hosts-file name is the fallback if a provider special-cases
+# localhost — switching is then one env var, not a re-mint.
+mint_leaf console "$CONSOLE_HOSTNAME" "basicConstraints=CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:localhost,DNS:$CONSOLE_ALT_HOSTNAME,IP:127.0.0.1"
+
+for leaf in broker console; do
+  echo "== SANs on $leaf.crt:"
+  openssl x509 -in "$leaf.crt" -noout -ext subjectAltName | sed 's/^/   /'
+done
 
 # --- cluster-side artifacts (out-of-git, idempotent) -------------------------
 if [[ "$CLUSTER" == 1 ]]; then
