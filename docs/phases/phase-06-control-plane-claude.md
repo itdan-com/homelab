@@ -20,6 +20,69 @@
    - Each ships with its own tool allowlist ConfigMap (defense in depth).
 7. NetworkPolicy: block direct pod-to-pod traffic to MCP servers; only the Sentinel proxy can reach them.
 
+## Candidate: implement all three layers for real (owner ideas, 2026-07-27)
+
+`CLAUDE.md` promises **three independent layers** that must all align
+before an action succeeds — upstream OAuth scope, the MCP server's own
+tool allowlist, and the Sentinel grant. Today only the middle one is
+concrete. Two owner proposals would make the outer two real, and they
+are complementary rather than competing:
+
+**Layer 1 — XAA / Cross App Access** (`https://xaa.dev`). An OAuth
+extension built on **ID-JAG** (Identity Assertion JWT Authorization
+Grant, IETF draft), added to the MCP spec on 2025-11-25 as an
+Authorization Extension (SEP-990). The IdP issues a short-lived, scoped
+delegation token so an agent can act for a user against a downstream
+app without static API keys or service accounts. That is exactly what
+"upstream OAuth scope" should be, and it replaces the long-lived
+credential the current design would otherwise park in a secret.
+
+- **Does not conflict with Sentinel**, despite marketing that says it
+  "replaces the consent screen": XAA answers *may this app, for this
+  user, reach that resource at all* — enterprise policy, decided ahead
+  of time. Sentinel answers *may this task invoke this tool right now* —
+  ephemeral, per-flow, human. Different questions, different moments.
+- **Constraint:** XAA makes the IdP the control plane, and ours
+  (Authentik) runs *inside the cluster* with its groups declared in this
+  repo, which the operator opens PRs against — the ADR-004 escalation
+  shape exactly. So XAA needs an IdP the agent cannot reach: the
+  xaa.dev playground for an MVP, or an external tenant. Also unverified:
+  whether Authentik implements ID-JAG at all (doubtful).
+
+**Layer 3 — Cedar for the capability decision.** Cedar has become the
+dominant policy language for MCP authorization (ToolHive, IBM
+ContextForge, AWS Cedar for Agents, Bedrock AgentCore Policy), and the
+standard architecture is precisely ours: every tool call crosses a
+gateway, so the gateway evaluates policy. **We already have that
+gateway** — a per-MCP Cedar sidecar would be a second hop doing what
+Envoy + ext_authz already does. The valuable move is replacing
+`check_capability`'s hardcoded conditionals with a Cedar evaluation
+inside the broker: same decision point, far more expressive.
+
+- **This is probably the answer to what 5.5.8 measures.** If one honest
+  MCP session needs four or five separate approvals, the one-grant-per-
+  call model is unusable and humans will rubber-stamp — worse than no
+  gate. The roadmap's answers, *capability profiles* and *trust
+  gradients per namespace*, are both policy problems.
+  `permit(...) when { resource.tier == "sandbox" }` IS a trust gradient.
+- **Constraint, same shape as above:** policy that governs the agent
+  must live where the agent cannot edit it. Cedar policies in
+  `catalog/` would let the operator PR its own authorization wider as
+  routine-looking config. Either keep them host-side beside the
+  Sentinel database, or in a **second repo the operator's GitHub App is
+  not installed on** — which keeps a review trail without handing over
+  the pen. Recommend the latter.
+- To verify at build time: a usable Cedar binding for Python (the
+  engine is Rust), and whether ToolHive overlaps enough with our proxy
+  to adopt rather than reinvent — doubtful, since none of these do
+  human-in-the-loop per-flow grants, which is the part that is ours.
+
+**Sequencing (agreed 2026-07-27):** run 5.5.8 first and get the real
+approval count, *then* write one ADR covering both — designing the
+policy model before measuring the problem is guessing. Together they
+make the three-layer claim a working reference implementation rather
+than three separate good ideas.
+
 ## Open questions to resolve at the start
 
 - Agent loop pattern: cron-like ticks (`every 5 min`), or event-driven (Prometheus webhook fires alert → agent wakes up)? Probably **both** — heartbeat tick + alert handler.
