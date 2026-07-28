@@ -211,34 +211,18 @@ python3.12-venv`.
 
 ```bash
 cd sentinel
-./scripts/mint-certs.sh                     # Sentinel's own CA, mTLS + console certs
-sudo ./scripts/install-systemd.sh           # deploy to /opt, enable both units
-sudo ./scripts/enroll-operator.sh           # prints a single-use enrollment code
+./scripts/mint-certs.sh                     # Sentinel's own CA + mTLS certs
+sudo ./scripts/install-systemd.sh           # everything else
 ```
 
-**Trust Sentinel's CA once**, or the console is not a valid https origin
-and your password manager will refuse to create a passkey on it. Import
-`/etc/sentinel/certs/ca.crt` as a trusted root. Note that **Firefox keeps
-its own certificate store** and ignores the Windows one: Settings →
-Privacy & Security → Certificates → View Certificates → Authorities →
-Import.
+The second command deploys both services, starts them, and prints **one
+link** with an enrollment code in it. Open the link, register the
+authenticator you want to approve with — a password manager, Windows
+Hello, Touch ID, a security key — and the setup is finished.
 
-Then open **`https://localhost:8400/`** — https, and `localhost` rather
-than `127.0.0.1`, because WebAuthn's Relying Party ID must be a domain —
-paste the code, and register with your password manager, Windows Hello,
-Touch ID, or a security key.
-
-> **Why https on loopback?** Not for eavesdroppers; there are none.
-> Browser passkey providers (1Password, Dashlane, …) decline to engage on
-> a plain-http origin and silently fall back to the platform
-> authenticator, which then fails with an unhelpful "operation failed for
-> an unknown transient reason". `http://localhost` being a secure context
-> by spec is true and not sufficient — what matters is what the extension
-> will touch. Serving https is also what cloud needs anyway.
-
-**Do that twice, with two different devices.** A second passkey is the
-entire recovery plan: there is no account-recovery backdoor, because a
-backdoor is a second front door to the kill switch.
+Then run `sudo ./scripts/enroll-operator.sh` once more for a **second
+device**. That is the entire recovery plan: there is no account-recovery
+backdoor, because a backdoor is a second front door to the kill switch.
 
 Re-run `sudo ./scripts/install-systemd.sh` after a `git pull` — that is
 the deploy step, and it is deliberate rather than a git checkout being

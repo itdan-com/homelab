@@ -40,13 +40,14 @@
 
       <div id="gate-enroll" class="hidden">
         <p class="gate-copy">
-          No authenticator is enrolled yet. On this host, run:
+          Register the authenticator you want to approve with — a
+          password manager, Windows Hello, Touch ID, or a security key.
         </p>
-        <pre class="cmd">sentinel/scripts/enroll-operator.sh</pre>
         <p class="gate-copy">
-          then paste the code it prints. It is required so that reaching
-          this page is not by itself enough to become the person who
-          approves.
+          The enrollment code below comes from the link the installer
+          printed. It exists so that reaching this page is not by itself
+          enough to become the person who approves; getting one requires
+          shell access to this host.
         </p>
         <input id="enroll-code" placeholder="enrollment code" autocomplete="off">
         <button id="enroll-btn" class="grant">Register this device</button>

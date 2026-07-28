@@ -24,15 +24,13 @@ User=sentinel
 Group=sentinel
 EnvironmentFile=/etc/sentinel/sentinel.env
 WorkingDirectory=/opt/sentinel
-# TLS on loopback is not about eavesdroppers — there are none here. It
-# is because browser passkey providers decline to engage on a plain-http
-# origin, so enrolment silently falls through to the platform
-# authenticator and fails (found 2026-07-27). It is also the posture
-# cloud needs regardless.
+# Plain http on loopback, which IS a secure context by spec and needs no
+# certificate the human has to import. A console cert is still minted
+# (certs/console.crt) so switching to TLS is one env change when cloud
+# needs it — but nothing local should cost the operator a trust-store
+# import.
 ExecStart=/opt/sentinel/.venv/bin/uvicorn app.main:app \
-  --host ${SENTINEL_ADMIN_BIND} --port ${SENTINEL_ADMIN_PORT} \
-  --ssl-certfile ${SENTINEL_CERT_DIR}/console.crt \
-  --ssl-keyfile ${SENTINEL_CERT_DIR}/console.key
+  --host ${SENTINEL_ADMIN_BIND} --port ${SENTINEL_ADMIN_PORT}
 Restart=always
 RestartSec=2
 

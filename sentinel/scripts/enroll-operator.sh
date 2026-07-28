@@ -63,11 +63,14 @@ cat <<EOF
 
       $CODE
 
-  1. Open  https://${SENTINEL_RP_ID}:${SENTINEL_ADMIN_PORT}/  in a browser ON THIS HOST.
-     (The hostname matters: WebAuthn's Relying Party ID must be a
-      domain, so 'localhost' works and '127.0.0.1' does not.)
-  2. Paste the code, then approve with Windows Hello / Touch ID / your
-     security key.
+  Open this once, then approve with your password manager, Windows
+  Hello, Touch ID, or a security key:
+
+      http://${SENTINEL_RP_ID}:${SENTINEL_ADMIN_PORT}/#enroll=$CODE
+
+  (localhost, not 127.0.0.1 — WebAuthn's Relying Party ID must be a
+   domain. The code rides in the URL fragment, which browsers never
+   send to the server, so it stays out of access logs.)
 
   Single-use, expires in ${SENTINEL_ENROLLMENT_TTL_MINUTES:-10} minutes.
   Run this again with a SECOND device — that is the whole recovery plan.

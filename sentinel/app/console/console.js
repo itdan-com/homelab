@@ -251,14 +251,31 @@ const bufToB64u = (buf) =>
   btoa(String.fromCharCode(...new Uint8Array(buf)))
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-const gateError = (msg) => {
-  document.getElementById('gate-error').textContent = msg || '';
+const gateError = (e) => {
+  // Show the DOMException NAME, not just its prose. "UnknownError" and
+  // "NotAllowedError" mean completely different things, and the messages
+  // browsers attach are famously unhelpful ("the operation failed for an
+  // unknown transient reason"), so the name is the only actionable part.
+  const el = document.getElementById('gate-error');
+  if (!e) { el.textContent = ''; return; }
+  el.textContent = typeof e === 'string' ? e
+    : `${e.name || 'Error'}: ${e.message || e}`;
 };
+
+// The installer hands over one clickable URL with the enrollment code in
+// the fragment. Fragments never reach the server, so the code stays out
+// of access logs — and the operator never copies anything between
+// windows.
+function codeFromUrl() {
+  const m = /[#&]enroll=([A-Za-z0-9_-]+)/.exec(location.hash || '');
+  return m ? m[1] : null;
+}
 
 async function doRegister() {
   gateError('');
-  const code = document.getElementById('enroll-code').value.trim();
-  if (!code) return gateError('Paste the code printed by enroll-operator.sh.');
+  const code = (document.getElementById('enroll-code').value.trim()
+                || codeFromUrl() || '');
+  if (!code) return gateError('Open the link the installer printed, or paste a code.');
   try {
     const started = await api('/auth/register/begin', {
       method: 'POST', body: JSON.stringify({ code }),
@@ -363,10 +380,15 @@ async function boot() {
   if (!signedIn) {
     // No authenticator on the host yet → show how to make one, not a
     // sign-in prompt nobody can satisfy.
-    document.getElementById('gate-enroll').classList.toggle('hidden', st.enrolled);
-    document.getElementById('gate-signin').classList.toggle('hidden', !st.enrolled);
+    // A link carrying a code means "enroll", even when someone is
+    // already registered — that is how a second device gets added.
+    const urlCode = codeFromUrl();
+    const enrolling = !st.enrolled || !!urlCode;
+    document.getElementById('gate-enroll').classList.toggle('hidden', !enrolling);
+    document.getElementById('gate-signin').classList.toggle('hidden', enrolling);
     document.getElementById('gate-title').textContent =
-      st.enrolled ? 'Sign in' : 'Enroll this device';
+      enrolling ? 'Register this device' : 'Sign in';
+    if (urlCode) document.getElementById('enroll-code').value = urlCode;
     document.getElementById('link').className = 'link';
     document.getElementById('link').textContent = 'not signed in';
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }

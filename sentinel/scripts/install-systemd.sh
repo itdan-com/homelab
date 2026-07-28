@@ -100,7 +100,7 @@ SENTINEL_ADMIN_PORT=$ADMIN_PORT
 SENTINEL_BROKER_BIND=$BROKER_BIND
 SENTINEL_BROKER_PORT=$BROKER_PORT
 SENTINEL_RP_ID=$RP_ID
-SENTINEL_CONSOLE_ORIGIN=https://$RP_ID:$ADMIN_PORT
+SENTINEL_CONSOLE_ORIGIN=http://$RP_ID:$ADMIN_PORT
 SENTINEL_CONSOLE_HOSTS=127.0.0.1,localhost
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
@@ -117,26 +117,32 @@ systemctl daemon-reload
 systemctl enable --now sentinel-broker.service sentinel-admin.service
 systemctl --no-pager --lines=0 status sentinel-broker.service sentinel-admin.service || true
 
+# One command in, one URL out. The enrollment code is minted here and
+# carried in the URL fragment — fragments are never sent to the server
+# and never appear in access logs, so this is a link the operator can
+# click rather than a code to copy between windows.
+ENROLL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo operator)}"
+CODE=$(runuser -u "$SVC_USER" -- env "SENTINEL_DB=$STATE_DIR/sentinel.db" \
+  "$APP_DIR/.venv/bin/python" -c "
+import sys; sys.path.insert(0, '$APP_DIR')
+from app.auth import mint_enrollment_code
+from app.db import SessionLocal
+s = SessionLocal()
+print(mint_enrollment_code(s, '$ENROLL_USER', 'first device'))")
+
 cat <<EOF
 
-  Sentinel is installed and enabled.
+  ============================================================
+   Sentinel is running. Open this once and register a passkey:
 
-    console   https://$RP_ID:$ADMIN_PORT/    (passkey required)
-    broker    https://$BROKER_BIND:$BROKER_PORT   (mTLS)
-    logs      journalctl -u sentinel-admin -u sentinel-broker -f
+     http://$RP_ID:$ADMIN_PORT/#enroll=$CODE
 
-  FIRST TIME ONLY — trust Sentinel's CA so the console is a valid
-  https origin (browser passkey providers refuse plain http):
+   That is the whole setup. The link expires in 10 minutes.
+  ============================================================
 
-    $CERT_DIR/ca.crt   <- import as a trusted root
-    Firefox keeps its OWN store: Settings > Privacy & Security >
-    Certificates > View Certificates > Authorities > Import.
-
-  NEXT, and nobody can do it for you: enroll your real authenticator.
-
+  Add a second device later (do it — there is no recovery backdoor):
     sudo $REPO_DIR/scripts/enroll-operator.sh
 
-  Then open the console and register. Do it TWICE, with two different
-  devices — there is no recovery backdoor, by design.
+  logs:  journalctl -u sentinel-admin -u sentinel-broker -f
 
 EOF

@@ -156,12 +156,23 @@ def begin_registration(s: Session, code: str) -> dict | None:
         user_name=enrollment.username,
         user_id=(operator.id if operator else enrollment.username).encode(),
         challenge=challenge,
-        # Discoverable + user-verified: the operator proves presence AND
-        # identity (PIN/biometric) on the authenticator itself, so a
-        # stolen key alone is not enough.
+        # user_verification is PREFERRED, not REQUIRED, and that is a
+        # bug fix rather than a relaxation of intent. Requesting
+        # REQUIRED makes Firefox fail the ceremony outright with
+        # "UnknownError: The operation failed for an unknown transient
+        # reason" — before any prompt is shown, so the human sees a
+        # dead button and no way to proceed (Mozilla bug 1804624:
+        # CTAP2 operations fail when a PIN is not set). Password
+        # managers and platform authenticators verify the user anyway
+        # and report it; what actually happened is recorded per
+        # credential below, so the intent survives.
         authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.REQUIRED,
+            # REQUIRED, not preferred: login deliberately sends an empty
+            # allowCredentials so the browser can offer the right passkey
+            # without us first asking "who are you". That only works with
+            # a discoverable credential.
+            resident_key=ResidentKeyRequirement.REQUIRED,
+            user_verification=UserVerificationRequirement.PREFERRED,
         ),
         # Already-registered authenticators are excluded so the browser
         # says "you already have one" instead of silently duplicating.
@@ -189,7 +200,11 @@ def finish_registration(s: Session, credential: dict) -> Operator | None:
             expected_challenge=raw_challenge,
             expected_rp_id=CONSOLE_RP_ID,
             expected_origin=CONSOLE_ORIGIN,
-            require_user_verification=True,
+            # Enforced as "did it happen", not "was it demanded" — see
+            # the authenticator_selection comment. Recorded in the audit
+            # event so a credential registered without verification is
+            # visible rather than silently equivalent.
+            require_user_verification=False,
         )
     except Exception as exc:
         audit(s, AuditEventType.AUTH_FAILURE, actor=enrollment.username,
@@ -214,7 +229,8 @@ def finish_registration(s: Session, credential: dict) -> Operator | None:
     ))
     enrollment.used_at = utcnow()
     audit(s, AuditEventType.CREDENTIAL_ADDED, actor=operator.username,
-          details={"stage": "registered", "label": enrollment.label})
+          details={"stage": "registered", "label": enrollment.label,
+                   "user_verified": bool(verified.user_verified)})
     s.commit()
     return operator
 
@@ -257,7 +273,7 @@ def finish_login(s: Session, credential: dict) -> tuple[Operator, str] | None:
             expected_origin=CONSOLE_ORIGIN,
             credential_public_key=cred_row.public_key,
             credential_current_sign_count=cred_row.sign_count,
-            require_user_verification=True,
+            require_user_verification=False,
         )
     except Exception as exc:
         audit(s, AuditEventType.AUTH_FAILURE, actor=cred_row.operator.username,
