@@ -20,6 +20,50 @@
    - Each ships with its own tool allowlist ConfigMap (defense in depth).
 7. NetworkPolicy: block direct pod-to-pod traffic to MCP servers; only the Sentinel proxy can reach them.
 
+## Which flow is this phase? Both — and they are built in this order
+
+`CLAUDE.md` now names the two flows: **Mission Control** (the platform
+operating itself under PR review) and **Airlock** (the workforce
+reaching MCP servers under policy). Phase 6 finishes Mission Control
+and lays Airlock's foundations. Order matters:
+
+1. **ADR-005** — the policy and delegation model (Cedar + XAA).
+2. **Elevation for the agent** — a capability *profile* covers a set of
+   tools for a window, so one task costs one approval instead of six.
+   This is Mission Control's last missing piece and it unblocks
+   everything after it.
+3. **First real MCP server** — GitHub, since the operator already uses
+   it. Still in-cluster only; no public door yet.
+4. **Control-plane Claude** in `platform-control`, with Slack
+   approvals. **Mission Control is then complete.**
+5. **Airlock's door** — public MCP endpoint, OAuth against Authentik,
+   Cedar entitlements by group, `confirm`-shaped self-elevation. This
+   is the bigger product and it starts here rather than finishing here.
+
+### What Airlock needs that does not exist yet
+
+Naming these now so nobody assumes they are free:
+
+- **A public MCP door.** MCP servers today are ClusterIP behind the
+  proxy, reachable only in-cluster — correct for an in-cluster agent
+  and useless for a human with Claude Desktop. Airlock needs
+  `mcp.<domain>` on Envoy with real TLS.
+- **Client authentication at the gateway.** Corrects an earlier claim
+  in this repo that MCP servers need no client authorization because
+  the proxy handles it: true for an in-cluster agent, incomplete for
+  human clients. The *gateway* must authenticate real users (OAuth
+  against Authentik) before Cedar can decide anything about them.
+- **A principal that is a person, not a flow.** Sentinel's model today
+  is `(flow_id, tool)`. Airlock needs `(user, group, server, tool,
+  tier)` — which is exactly what Cedar is for, and the reason the
+  policy engine cannot be deferred.
+- **Recording rich enough to reconstruct.** The promise of an elevation
+  window is that everything done inside it is recoverable after the
+  fact. Sentinel's audit log records *that* a tool was called; Airlock
+  wants enough context to reconstruct what changed and, where the
+  upstream supports it, reverse it. Scope this honestly — full undo of
+  arbitrary actions is not a thing; per-tool reversal sometimes is.
+
 ## Candidate: implement all three layers for real (owner ideas, 2026-07-27)
 
 `CLAUDE.md` promises **three independent layers** that must all align

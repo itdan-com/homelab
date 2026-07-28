@@ -63,6 +63,93 @@ The end-state platform has these load-bearing properties:
   touched, kill-switch flips) page `#claude-alerts`. Sentinel's audit
   log on the WSL2 host is the canonical source of truth.
 
+## Two flows: Mission Control and Airlock
+
+The platform does two different jobs for two different audiences, and
+conflating them produces designs that are wrong for both. They share
+infrastructure — Envoy, Authentik, Cedar, Sentinel, the catalog — but
+they gate differently, because **the dividing line is revertibility.**
+
+### Mission Control — operating the platform itself
+
+*The platform runs itself, under human review.*
+
+Claude watches Prometheus, Loki and the Kubernetes API, notices
+something worth doing — a queue backing up, a pod flapping, a service
+that needs onboarding — and proposes it as a **pull request** with a
+plain-English summary. A human reads the diff in Slack or GitHub and
+merges or doesn't. ArgoCD applies it. Undo is `git revert`, and the
+whole system returns to a known state.
+
+**Why the gate is a PR:** everything Mission Control touches is
+declarative and revertible. The diff *is* the reviewable artifact; the
+revert *is* the undo. Sentinel has no role here — a second gate in
+front of a gate that already works is friction with no gain.
+
+**Audience:** the platform team. Low volume, high blast radius, every
+change is a file. Built in Phase 4.5, completed in Phase 6.
+
+### Airlock — the workforce using MCP servers
+
+*Everyone gets the tools their role should have, instantly; dangerous
+power is borrowed, never held.*
+
+Anyone in the company points an MCP client (Claude Desktop, an IDE) at
+one address, signs in with the company identity, and immediately has
+the tools their role should have. HR sees HR tools; engineering sees
+engineering tools; nobody sees what they have no business seeing.
+That is a **birthright entitlement** — granted by policy, not by a
+ticket, costing **zero approvals**.
+
+When someone needs something consequential — purge a leaked secret,
+delete a repo, drop a table in staging — they simply ask their client
+to do it. The tool exists, but it is behind the airlock. Sentinel
+confirms they are entitled to *request* it, then puts the question to
+them: **elevate for 15, 30 or 60 minutes?** They confirm, the tools
+unlock for that window, everything they do is recorded, and it closes
+by itself.
+
+Some things never unlock. `DROP TABLE` on production is not a timed
+elevation, it is forbidden through this path, permanently, with no
+button — while the same tool on staging is simply allowed, because the
+tier is different.
+
+**Why the gate is elevation, not approval:** you cannot diff an action
+that already happened. What a human can meaningfully decide is *who
+gets dangerous power, over what, for how long* — not whether to permit
+each individual call. Approving calls one at a time across a large
+workforce produces a queue nobody reads, and a queue nobody reads is
+worse than no gate, because it manufactures the appearance of
+oversight. Elevation also **replaces the IT ticket** people use today,
+which is slower, unlogged, and usually ends in someone keeping standing
+admin.
+
+**Audience:** everyone. High volume, near-frictionless, with the
+exceptional path faster than what it replaces.
+
+### The four outcomes
+
+Cedar returns one of four answers, and which one is a property of the
+tool, the resource tier, and the caller's group:
+
+| outcome | what happens | example |
+|---|---|---|
+| **permit** | it just works, and it is logged | engineer opens a PR |
+| **confirm** | the caller confirms they meant it; time-boxed, recorded — `sudo`-shaped, no second person | engineer elevates destructive git tools for 30 min |
+| **approve** | a *different* human decides | destructive access to production |
+| **forbid** | never available through this path, no button | `DROP TABLE` on production |
+
+`confirm` is the one that makes this scale: it is a deliberate act with
+a record and an expiry, not a request into someone else's queue. If
+`approve` is not rare, the policy is wrong, and the audit log will say
+so.
+
+**Sentinel's per-flow, scope-locked, expiring token (Phase 5.5) is the
+elevation primitive for both flows.** What changed at the end of Phase
+5.5 is that a grant covers a *set* of tools for a *window*, rather than
+one tool for one call — the same mechanism, at a granularity a human
+can actually use.
+
 ## Current status
 
 The canonical live state lives in **`STATUS.md`** at the repo root —
