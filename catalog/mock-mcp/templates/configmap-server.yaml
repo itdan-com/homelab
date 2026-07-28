@@ -1,0 +1,14 @@
+# The server itself, shipped as config rather than an image. A test
+# fixture that needs a registry to exist — or the network to `pip
+# install` at pod start — fails for reasons unrelated to what it is
+# testing. `.Files.Get` keeps server.py a real, lintable, readable file
+# instead of a heredoc buried in a template.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "catalog.fullname" . }}-server
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+data:
+  server.py: |
+{{ .Files.Get "server.py" | indent 4 }}

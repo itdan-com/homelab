@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "catalog.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "catalog.labels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the server code changes; a ConfigMap edit is
+        # otherwise invisible to a running process.
+        checksum/server: {{ .Files.Get "server.py" | sha256sum }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ include "catalog.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["python3", "/app/server.py"]
+          env:
+            - name: MCP_PORT
+              value: {{ .Values.service.targetPort | quote }}
+            - name: MCP_SERVER_NAME
+              value: {{ include "catalog.fullname" . }}
+            - name: MCP_ALLOWED_TOOLS
+              value: {{ join "," .Values.allowedTools | quote }}
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          ports:
+            - name: {{ .Values.service.portName }}
+              containerPort: {{ .Values.service.targetPort }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: server
+              mountPath: /app
+      volumes:
+        - name: server
+          configMap:
+            name: {{ include "catalog.fullname" . }}-server
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

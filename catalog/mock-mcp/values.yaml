@@ -1,0 +1,81 @@
+# values.yaml — the MCP server that proves the chain (Phase 5.5.8).
+#
+# It is NOT a stand-in that only answers POSTs. It speaks real Streamable
+# HTTP, including the bodiless GET that opens the server-push channel and
+# the bodiless DELETE that ends a session — the two verbs that had never
+# met a real client, and which a review found would otherwise have made
+# MCP structurally impossible through the proxy.
+
+catalog:
+  tier: sandbox
+  # It holds nothing and reaches nothing: no volume, no secret, no
+  # upstream. Its egress policy below says so in enforcement, not prose.
+  dataClass: none
+
+image:
+  repository: python
+  tag: "3.12-slim"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# LAYER 2 of CLAUDE.md's three. `delete_everything` is implemented in the
+# server and deliberately absent here, so the defence-in-depth claim can
+# be tested: grant it at Sentinel, present a valid token, watch it fail
+# anyway — at the server, not at the proxy.
+allowedTools:
+  - say
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+service:
+  type: ClusterIP
+  port: 80
+  portName: http
+  targetPort: 8080
+
+# NO ingress block, deliberately: an MCP server has no business having a
+# door of its own. The sentinel-proxy is the only way in, and the
+# NetworkPolicy below is what makes that true rather than customary.
+networkPolicy:
+  enabled: true
+  # Ingress: only the sentinel-proxy's Envoy fleet. Envoy Gateway
+  # provisions those pods into the controller namespace, so this needs a
+  # namespaceSelector as well as the owning-gateway label pair.
+  proxyNamespace: envoy-gateway-system
+  gatewayName: sentinel-proxy
+  gatewayNamespace: mcp-servers
+  # Egress: DNS only. An ingress allowlist proves who can REACH a hostile
+  # MCP server; it says nothing about where that server can reach. Closing
+  # this here means Phase 6's real servers copy a pattern that already
+  # restricts both directions (ADR-004 debt 6).
+  egress:
+    enabled: true
+    dnsNamespace: kube-system
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+nameOverride: ""
+fullnameOverride: ""

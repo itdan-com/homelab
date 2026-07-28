@@ -1,0 +1,56 @@
+{{- if .Values.networkPolicy.enabled }}
+# BOTH directions, and that is the point.
+#
+# Ingress: the sentinel-proxy's Envoy fleet and nothing else — no Traefik
+# door, because an MCP server has no business having one. Envoy Gateway
+# provisions the fleet into the controller namespace, so this needs a
+# namespaceSelector alongside the owning-gateway label pair.
+#
+# Egress: DNS only. An ingress allowlist proves who can REACH a hostile
+# MCP server and says nothing about where that server can reach — which
+# matters precisely because "a compromised MCP server" is the explicit
+# threat model. Plain networking.k8s.io/v1, so it is portable to any
+# conformant CNI including managed clusters (ADR-003).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "catalog.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.proxyNamespace }}
+          podSelector:
+            matchLabels:
+              gateway.envoyproxy.io/owning-gateway-name: {{ .Values.networkPolicy.gatewayName }}
+              gateway.envoyproxy.io/owning-gateway-namespace: {{ .Values.networkPolicy.gatewayNamespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.targetPort }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.egress.dnsNamespace }}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+  {{- end }}
+{{- end }}

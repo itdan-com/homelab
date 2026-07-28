@@ -1,0 +1,6 @@
+# GitOps self-declaration (see catalog/argocd ApplicationSet).
+# Same namespace as the sentinel-proxy's HTTPRoute on purpose: a
+# same-namespace backend needs no ReferenceGrant.
+name: mock-mcp
+namespace: mcp-servers
+secrets: "false"

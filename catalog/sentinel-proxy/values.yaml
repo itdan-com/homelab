@@ -81,6 +81,14 @@ broker:
 # Cross-namespace targets need a ReferenceGrant in THEIR namespace — the
 # workload's chart consents to being fronted (see catalog/echo).
 upstreams:
+  # The real MCP server (5.5.8). Same namespace as this route, so no
+  # ReferenceGrant is needed. `mock` is also the SERVER half of every
+  # capability scope the broker enforces here — mock.say,
+  # mock.rpc.tools.list, mock.rpc.transport.get, and so on.
+  - name: mock
+    namespace: mcp-servers
+    service: mock-mcp
+    port: 80
   - name: echo
     namespace: sandbox
     service: echo

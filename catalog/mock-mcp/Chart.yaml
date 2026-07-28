@@ -1,0 +1,21 @@
+apiVersion: v2
+name: mock-mcp
+description: >-
+  A real Model Context Protocol server (Streamable HTTP) used to prove the
+  Sentinel enforcement chain end-to-end: no token denied, human-granted token
+  allowed, TTL expiry denied, kill switch immediate. It also carries its own
+  tool allowlist, so the "three independent layers" claim can be tested —
+  a tool Sentinel granted is still refused here if the server does not
+  allowlist it. Python standard library only, shipped as a ConfigMap: no
+  image to build and nothing installed at pod start.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  # The label that says "front me with the Sentinel proxy". Phase 6's real
+  # MCP servers carry it too, and it is what a future admission policy
+  # should key off to make the fronting NetworkPolicy mandatory.
+  catalog.homelab/exposes-mcp: "true"
