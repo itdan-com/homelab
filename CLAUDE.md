@@ -352,11 +352,15 @@ long-lived external credentials. They all request, get gated, and
 release. This is the property that makes the platform safe to put
 real powers behind.
 
-**Phase 6 — the control-plane Claude (full powers).** Control-Plane
+**Phase 6 — Mission Control complete (the control-plane Claude, full
+powers).** This phase finishes the FIRST of the two flows. Control-Plane
 v0 (Phase 4.5) already proposes PRs; Phase 6 graduates it to the
 end-state. Create namespace `platform-control`. Deploy a long-running
 Claude Agent SDK workload that:
-- Reads from Prometheus, Loki, and the Kubernetes API to observe state.
+- Reads from Prometheus and the Kubernetes API to observe state.
+  (**Loki is Phase 7** — do not design Phase 6 around log queries it
+  cannot make yet. Metrics and cluster state are enough for the first
+  proposals; log-driven ones wait.)
 - Proposes actions by auto-committing PRs to the GitOps repo.
 - Posts each PR to `#claude-approvals` in Slack with ✅/❌ buttons; on
   ✅ the bot merges and ArgoCD applies. The owner never types git.
@@ -365,21 +369,58 @@ Claude Agent SDK workload that:
   external action, Claude calls Sentinel's `/capability-request`,
   waits for a human grant, and uses the short-lived token via the
   Sentinel proxy. If Sentinel denies or the global kill switch is
-  on, every external action fails closed.
+  on, every external action fails closed. **One grant covers a
+  PROFILE — a set of tools for a window — not a single call:** Phase
+  5.5.8 measured that one honest MCP session costs six separate
+  approvals at per-call granularity, which guarantees rubber-stamping.
+  Fixing that (Cedar policy, ADR-005) is this phase's first work item,
+  before the agent gets real powers.
 
 Alongside, start the **MCP server catalog** in a sibling namespace
 `mcp-servers`: each external system (GitHub, Slack, kubectl-wrapper,
 later Supabase / Railway / Sendgrid / Google Workspace / etc.) is a
-Deployment exposing a Model Context Protocol server. The control-plane
-Claude auto-discovers MCP servers via a label selector but reaches
-them only **through the Sentinel proxy** — direct pod-to-pod traffic
-to MCP servers is blocked by NetworkPolicy. **Each MCP server still
+Deployment exposing a Model Context Protocol server. These servers are
+built once and serve **both** flows — the control-plane Claude in
+Phase 6, and the workforce in Phase 6.5 — so a chart added here is
+not agent-only infrastructure. The control-plane Claude auto-discovers
+MCP servers via a label selector but reaches them only **through the
+Sentinel proxy** — direct pod-to-pod traffic to MCP servers is blocked
+by NetworkPolicy. **Each MCP server still
 ships with its own scoped tool allowlist** in its ConfigMap as a
 defense-in-depth layer behind Sentinel: even if a Sentinel grant
 accidentally matched a more powerful tool, the MCP server itself
 would refuse. Three independent layers (Sentinel grant → MCP
 allowlist → upstream OAuth scope) must all align for an action to
 succeed.
+
+**Phase 6.5 — Airlock (the workforce reaches the MCP servers).** The
+SECOND flow, and the bigger product. Phase 6 leaves a catalog of MCP
+servers that only one agent can reach; this phase opens them to
+people. Deliverables:
+
+- **A public MCP door.** `mcp.<domain>` on Envoy with real TLS. Today
+  MCP servers are ClusterIP behind the Sentinel proxy — correct for an
+  in-cluster agent, useless for a human running Claude Desktop or an
+  IDE.
+- **Client authentication at the gateway.** OAuth/OIDC against
+  Authentik, so the gateway knows *which person* is calling. (An
+  earlier note in this repo said MCP servers need no client
+  authorization because the proxy handles it — true for an in-cluster
+  agent, incomplete for human clients.)
+- **Cedar as the policy engine**, deciding permit / confirm / approve /
+  forbid from (user, group, server, tool, tier). Birthright
+  entitlements cost zero approvals; the policies live where the agent
+  cannot PR them (ADR-005).
+- **Multi-user Sentinel.** The data model is `(flow_id, tool)` today —
+  Airlock needs a principal who is a *person*. This is the tenant-
+  scoping debt in ADR-004, which Airlock promotes from optional to
+  required.
+- **Elevation, not per-call approval.** `confirm` is the common case:
+  a `sudo`-shaped act the caller performs themselves, time-boxed and
+  recorded, which replaces the IT ticket rather than adding friction.
+- **Recording rich enough to reconstruct** what happened inside an
+  elevation window — and, where the upstream tool supports it, reverse
+  it. Scope this honestly: universal undo is not a thing.
 
 **Phase 7 — observability completion.** kube-prometheus-stack already
 landed in Phase 3; this phase completes the stack: **Loki** for logs
@@ -472,9 +513,12 @@ gateway swap (Phase 2.5) → autoscaling + Prometheus (Phase 3) →
 GitOps app-of-apps (Phase 4) → **Control-Plane v0, PR-only (Phase
 4.5** — the demoable product) → team enablement (Phase 5) →
 **Sentinel security broker (Phase 5.5, non-negotiable before any
-non-PR external power)** → control-plane Claude full powers + MCP
-catalog (Phase 6) → observability completion (Phase 7) → cloud
-(Phase 8). Phases 1–4.5 are the demoable open-source core and a
+non-PR external power)** → **Mission Control complete** (Phase 6) →
+**Airlock** (Phase 6.5) → observability completion (Phase 7) → cloud
+(Phase 8). Phase 6 finishes the first flow and Phase 6.5 opens the
+second; if only one can be done, Phase 6 is the one that makes the
+platform self-operating, and Phase 6.5 is the one that makes it useful
+to a whole company. Phases 1–4.5 are the demoable open-source core and a
 respectable platform-engineering portfolio result on their own;
 Phases 5–7 are what make this *cutting-edge* and where the novel work
 lives. **Sentinel is the load-bearing security piece — if scope ever
