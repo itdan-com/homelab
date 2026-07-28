@@ -36,11 +36,14 @@ and lays Airlock's foundations. Order matters:
    it. Still in-cluster only; no public door yet.
 4. **Control-plane Claude** in `platform-control`, with Slack
    approvals. **Mission Control is then complete.**
-5. **Airlock's door** — public MCP endpoint, OAuth against Authentik,
-   Cedar entitlements by group, `confirm`-shaped self-elevation. This
-   is the bigger product and it starts here rather than finishing here.
+**Airlock is NOT in this phase.** It became **Phase 6.5** in its own
+right (2026-07-28) — see `CLAUDE.md`'s build plan. Cramming a public
+MCP door, gateway OAuth, Cedar entitlements and a multi-user Sentinel
+into Phase 6 would have made it unshippable, and this repo already has
+the convention for inserting half-phases. What Phase 6 owes Phase 6.5
+is listed below, so the work done here does not have to be redone.
 
-### What Airlock needs that does not exist yet
+### What Phase 6.5 (Airlock) needs that does not exist yet
 
 Naming these now so nobody assumes they are free:
 
