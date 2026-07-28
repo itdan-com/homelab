@@ -66,7 +66,7 @@ cat <<EOF
   Open this once, then approve with your password manager, Windows
   Hello, Touch ID, or a security key:
 
-      http://${SENTINEL_RP_ID}:${SENTINEL_ADMIN_PORT}/#enroll=$CODE
+      https://${SENTINEL_RP_ID}:${SENTINEL_ADMIN_PORT}/#enroll=$CODE
 
   (localhost, not 127.0.0.1 — WebAuthn's Relying Party ID must be a
    domain. The code rides in the URL fragment, which browsers never

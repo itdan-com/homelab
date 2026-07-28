@@ -66,7 +66,7 @@ CONSOLE_ALLOWED_HOSTS = [
 CONSOLE_RP_ID = os.environ.get("SENTINEL_RP_ID", "localhost")
 CONSOLE_PORT = int(os.environ.get("SENTINEL_ADMIN_PORT", "8400"))
 CONSOLE_ORIGIN = os.environ.get(
-    "SENTINEL_CONSOLE_ORIGIN", f"http://{CONSOLE_RP_ID}:{CONSOLE_PORT}")
+    "SENTINEL_CONSOLE_ORIGIN", f"https://{CONSOLE_RP_ID}:{CONSOLE_PORT}")
 
 # How long a console session lives before the human must present the
 # authenticator again. Short on purpose: this session can revoke every

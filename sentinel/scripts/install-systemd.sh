@@ -100,10 +100,28 @@ SENTINEL_ADMIN_PORT=$ADMIN_PORT
 SENTINEL_BROKER_BIND=$BROKER_BIND
 SENTINEL_BROKER_PORT=$BROKER_PORT
 SENTINEL_RP_ID=$RP_ID
-SENTINEL_CONSOLE_ORIGIN=http://$RP_ID:$ADMIN_PORT
+SENTINEL_CONSOLE_ORIGIN=https://$RP_ID:$ADMIN_PORT
 SENTINEL_CONSOLE_HOSTS=127.0.0.1,localhost
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
+
+# Trust Sentinel's CA for the Windows user, so the console is a valid
+# https origin in Edge/Chrome with no manual import. Deliberately
+# `-user`, not the machine store: no elevation, and the blast radius is
+# one account. Firefox keeps its OWN store and is not covered here.
+# Undo:  certutil.exe -user -delstore Root "Sentinel CA"
+if [[ -z "${SENTINEL_SKIP_CA_TRUST:-}" ]] && command -v certutil.exe >/dev/null 2>&1; then
+  WINTMP="/mnt/c/Users/Public/sentinel-ca.crt"
+  if cp "$CERT_DIR/ca.crt" "$WINTMP" 2>/dev/null; then
+    if certutil.exe -user -addstore Root 'C:\Users\Public\sentinel-ca.crt' >/dev/null 2>&1; then
+      echo "== Sentinel CA trusted for the Windows user (Edge/Chrome)."
+      echo "   undo: certutil.exe -user -delstore Root \"Sentinel CA\""
+    else
+      echo "!! could not trust the CA automatically — import $CERT_DIR/ca.crt by hand"
+    fi
+    rm -f "$WINTMP"
+  fi
+fi
 
 echo "== schema"
 SENTINEL_DB="$STATE_DIR/sentinel.db" \
@@ -135,7 +153,7 @@ cat <<EOF
   ============================================================
    Sentinel is running. Open this once and register a passkey:
 
-     http://$RP_ID:$ADMIN_PORT/#enroll=$CODE
+     https://$RP_ID:$ADMIN_PORT/#enroll=$CODE
 
    That is the whole setup. The link expires in 10 minutes.
   ============================================================

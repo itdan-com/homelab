@@ -215,10 +215,22 @@ cd sentinel
 sudo ./scripts/install-systemd.sh           # everything else
 ```
 
-The second command deploys both services, starts them, and prints **one
-link** with an enrollment code in it. Open the link, register the
-authenticator you want to approve with — a password manager, Windows
-Hello, Touch ID, a security key — and the setup is finished.
+The second command deploys both services, trusts Sentinel's CA for your
+Windows user (so the console is a valid https origin in Edge and Chrome
+with nothing to import), and prints **one link** with an enrollment code
+in it. Open the link, register the authenticator you want to approve
+with, and the setup is finished.
+
+> **Which browser.** Edge and Chrome use the Windows certificate store,
+> so they work immediately. **Firefox keeps its own store** and will not
+> trust the console until you import `/etc/sentinel/certs/ca.crt` at
+> Settings → Privacy & Security → Certificates → View Certificates →
+> Authorities → Import. Firefox has also been observed failing WebAuthn
+> in a Remote Desktop session with an unhelpful `UnknownError`; if that
+> happens, the console now prints the exception *name*, which is the part
+> worth reporting.
+>
+> To undo the CA trust: `certutil.exe -user -delstore Root "Sentinel CA"`.
 
 Then run `sudo ./scripts/enroll-operator.sh` once more for a **second
 device**. That is the entire recovery plan: there is no account-recovery
@@ -258,6 +270,20 @@ platform cannot keep.
 ---
 
 ## Part 2 — every web interface, and where its password lives
+
+> **Sentinel is the exception, and deliberately so.** Its console at
+> `https://localhost:8400/` has no password and no SSO — it is opened
+> with a **passkey**, and the passkey lives in whatever authenticator you
+> registered. On this lab that is **Microsoft's password manager in
+> Edge** (registered 2026-07-27), unlocked the way Windows unlocks it.
+> There is no recovery backdoor and no reset link: if every registered
+> authenticator is lost, the only way back in is shell access to the host
+> to mint a fresh enrollment code. That is why the advice to **register a
+> second device** is not boilerplate.
+>
+> Sentinel is not an Authentik app and never will be — see
+> `docs/adr/ADR-004`, "Rejected: Sentinel behind Authentik SSO".
+
 
 | Interface | What it does | How to reach it | Login |
 |---|---|---|---|

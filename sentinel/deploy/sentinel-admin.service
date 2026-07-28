@@ -24,13 +24,17 @@ User=sentinel
 Group=sentinel
 EnvironmentFile=/etc/sentinel/sentinel.env
 WorkingDirectory=/opt/sentinel
-# Plain http on loopback, which IS a secure context by spec and needs no
-# certificate the human has to import. A console cert is still minted
-# (certs/console.crt) so switching to TLS is one env change when cloud
-# needs it — but nothing local should cost the operator a trust-store
-# import.
+# https, always. The console is an authenticated admin surface, and in
+# cloud it is reachable over a network — "it is only loopback today" is
+# not a reason to ship a different transport locally than the one
+# production uses (CLAUDE.md: build the cloud artifact first). Locally
+# the certificate comes from Sentinel's own CA, which the installer
+# trusts for the Windows user so it costs no manual step; in cloud the
+# same unit takes an ACME certificate and nothing else changes.
 ExecStart=/opt/sentinel/.venv/bin/uvicorn app.main:app \
-  --host ${SENTINEL_ADMIN_BIND} --port ${SENTINEL_ADMIN_PORT}
+  --host ${SENTINEL_ADMIN_BIND} --port ${SENTINEL_ADMIN_PORT} \
+  --ssl-certfile ${SENTINEL_CERT_DIR}/console.crt \
+  --ssl-keyfile ${SENTINEL_CERT_DIR}/console.key
 Restart=always
 RestartSec=2
 
