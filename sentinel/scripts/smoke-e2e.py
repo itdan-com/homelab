@@ -39,7 +39,7 @@ from mcp.client.streamable_http import streamablehttp_client  # noqa: E402
 
 from app.scope import derive_scope  # noqa: E402
 
-ADMIN = os.environ.get("SENTINEL_ADMIN_URL", "http://127.0.0.1:8400")
+ADMIN = os.environ.get("SENTINEL_ADMIN_URL", "https://localhost:8400")
 BROKER = os.environ.get("SENTINEL_BROKER_URL")           # https://<gw-ip>:8401
 CA = os.environ.get("SENTINEL_CERT_DIR", str(ROOT / "certs")) + "/ca.crt"
 CLIENT_CRT = os.environ.get("SENTINEL_CERT_DIR", str(ROOT / "certs")) + "/proxy-client.crt"
@@ -65,6 +65,17 @@ class Console:
     def __init__(self):
         self.cookies: dict[str, str] = {}
 
+    @staticmethod
+    def _ctx():
+        """The console serves TLS from Sentinel's OWN CA, which nothing
+        on this host trusts by default — so trust it explicitly rather
+        than disabling verification, which would make the battery pass
+        against an impostor."""
+        if not ADMIN.startswith("https://"):
+            return None
+        import ssl
+        return ssl.create_default_context(cafile=CA)
+
     def call(self, path, body=None, method=None):
         req = urllib.request.Request(
             ADMIN + path,
@@ -75,7 +86,7 @@ class Console:
                         if self.cookies else {})},
             method=method or ("POST" if body is not None else "GET"))
         try:
-            r = urllib.request.urlopen(req, timeout=15)
+            r = urllib.request.urlopen(req, timeout=15, context=self._ctx())
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
         for header in r.headers.get_all("set-cookie") or []:
