@@ -2,7 +2,10 @@
 
 **Active phase:** **PHASE 5.5 CLOSED 2026-07-28** — Sentinel is live, gating every MCP call. Next: **Phase 6 (control-plane Claude + MCP catalog)**, reshaped by 5.5.8's finding (`docs/phases/phase-06-control-plane-claude.md`) (`docs/phases/phase-05-5-sentinel.md`). Phase 5 CLOSED 2026-07-27; Phase 4.5 CLOSED 2026-07-26.
 **Status:** **THE ENFORCEMENT POINT IS LIVE — AND IT CANNOT BE LIED TO.** 5.5.4 (2026-07-27): `catalog/sentinel-proxy` (app #11) fronts MCP traffic with its OWN Envoy fleet; a Gateway-wide ext_authz policy ships each request's headers + BODY to the broker over **mTLS with Sentinel's own CA**, and the broker derives the exercised tool from the body itself (`app/scope.py`: `<server>.<tool>` composite — lying about the tool or reusing a token cross-server/cross-flow = 403 `scope-mismatch`, proven live at the wire). Dead broker = closed door (`failOpen: false`). Fronted pods (echo, the stand-in) allow only their Traefik door + the sentinel fleet; the bypass attempt is a NAMED `Policy denied DROPPED` in Hubble (UI now on). Full battery green: no-token 403 → request/grant(bob,5m)/claim-once poll → 200 through to echo → lying-body 403 → wrong-flow 403 → bypass DROPPED → audit trail request/grant/use/denial. Also **found+fixed a latent platform bug**: upstream ai-gateway-helm regenerates webhook certs every render — each catalog commit stranded the controller-patched caBundle and the Fail-policy webhook then blocked ALL EG fleet pod creation incl. KEDA scale-ups; fixed with `ignoreDifferences` + `RespectIgnoreDifferences=true` in the ApplicationSet + one controller restart (bundle fingerprints verified; the sentinel pod then passed that same webhook).
-**Next action:** **Phase 6, but not in the order the plan assumed.** 5.5.8 measured that one trivial MCP tool call costs **six** separate human approvals — the enforcement is right, the granularity is wrong, and shipping an agent with real MCP powers on top of that guarantees rubber-stamping. So the first Phase 6 work is the **ADR for Cedar (layer 3 policy: capability profiles + trust gradients) and XAA (layer 1 delegation)**, both already written up in the Phase 6 doc — *then* MCP servers with real powers, *then* the control-plane Claude with Slack approvals. Also open and cheap to settle: **accept or amend ADR-004** (still Proposed, and it has grown a construction rule, a provider-neutral cloud shape and three portability gaps since); the **WAL-commit history decision**; which **cloud Phase 8 targets**; and the **demo assets** (console with a live pending request + Hubble drop view), backlogged three times now and the one thing the README is missing. **Last updated:** 2026-07-28.
+**Next action — ONE thing: write `docs/adr/ADR-005-policy-and-delegation.md`, the first item of Phase 6.** Not a choice between "Phase 6 or an ADR": the ADR *is* Phase 6's first work item. It decides two things and nothing else — **Cedar** as the policy engine inside the broker's `check_capability` (which is what fixes the six-approval problem 5.5.8 measured, via capability profiles and trust gradients), and **XAA/ID-JAG** as layer-1 upstream delegation. Both are researched and written up in `docs/phases/phase-06-control-plane-claude.md`, including the constraint that decides both: *policy governing the agent must live where the agent cannot PR it*. After the ADR, Phase 6 continues in this order and no other: **(2)** implement capability profiles so one MCP session costs one approval, not six; **(3)** first real MCP server (GitHub — the operator already uses it); **(4)** control-plane Claude in `platform-control` with Slack approvals.
+
+**Before starting, run `scripts/sentinel-demo.sh`** if the console has never been seen doing anything — it raises a real capability request so a card appears, waits for the human to Grant, then completes the call through the proxy. That is also the demo GIF.
+**Last updated:** 2026-07-28.
 **Last updated:** 2026-07-28
 
 **GitHub remote:** https://github.com/itdan-com/homelab (**public** since 2026-07-26). Note: chat was verified from the **Windows-box browser**; Mac-direct access to `*.lab.local` still needs WSL2/Windows networking (backlog).
@@ -71,6 +74,26 @@ _Append-only. Newest at top. One line per significant event. Date in ISO format.
 - 2026-05-16 — Switched from Docker Desktop to docker-ce; Portainer added as the Docker GUI layer. Previous k3d state lost; needs re-creation.
 
 ---
+
+## Owner decisions waiting (raised once — they live here, not in every session)
+
+_Nothing is blocked on these. A future session should NOT re-raise them
+unprompted; the owner picks them up when they want to._
+
+1. **ADR-004 status** — still `Proposed`. It has since grown the
+   cloud-artifact construction rule, a provider-neutral cloud shape with
+   an AWS/GCP/Azure/DO table, the "don't expose the console, tunnel to
+   it" recommendation, and three portability gaps. Say Accepted (or
+   amend) and it becomes binding rather than suggested.
+2. **The WAL commit** (`3c261b1`) — two expired, scope-locked capability
+   tokens sit in public git history. Leave it (they are dead and useless
+   without a private client cert), or rewrite history and force-push.
+3. **Which cloud Phase 8 targets** — that is the one Terraform module
+   written per provider; everything above it is identical.
+4. **Demo assets** — `scripts/sentinel-demo.sh` now makes the console
+   show a real pending request; Hubble UI is `kubectl port-forward -n
+   kube-system svc/hubble-ui 12000:80` then `http://localhost:12000`,
+   with `scripts/netpol-smoke.sh` generating the denied flows to look at.
 
 ## Backlog (captured mid-work, not yet scheduled)
 

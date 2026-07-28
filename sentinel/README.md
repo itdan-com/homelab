@@ -98,6 +98,22 @@ via the gateway IP, so the grant/kill surface is unreachable from k3d
 by construction — *before* the passkey is even asked for. Layer 3 and
 layer 7 answer independently.
 
+## Seeing it work (before an agent exists)
+
+Nothing asks Sentinel for anything until the control-plane Claude lands
+in Phase 6, so a fresh console is an empty room with a kill switch in
+it. To make it show something real:
+
+```bash
+scripts/sentinel-demo.sh        # no sudo needed
+```
+
+A capability request appears in the console — agent, tool, and a
+plain-English reason — waiting for **Grant 5m / Grant 1h / Deny**.
+Approve it and the script completes the call through the proxy and
+prints what the MCP server answered. That is the whole loop, and it is
+the screenshot worth taking.
+
 ## The capability loop
 
 ```
