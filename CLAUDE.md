@@ -74,29 +74,56 @@ they gate differently, because **the dividing line is revertibility.**
 
 *The platform runs itself, under human review.*
 
-Claude watches Prometheus, Loki and the Kubernetes API, notices
-something worth doing — a queue backing up, a pod flapping, a service
-that needs onboarding — and proposes it as a **pull request** with a
-plain-English summary. A human reads the diff in Slack or GitHub and
-merges or doesn't. ArgoCD applies it. Undo is `git revert`, and the
-whole system returns to a known state.
+Claude watches Prometheus and the Kubernetes API, notices something
+worth doing — a queue backing up, a pod flapping, a service that needs
+onboarding — and proposes it as a **pull request** with a plain-English
+summary. **You review and approve it in GitHub, as yourself.** ArgoCD
+applies it. Undo is `git revert`, and the whole system returns to a
+known state.
+
+**No Slack, and no ✅ button — deliberately** (owner, 2026-07-28):
+*"the reality of changes for the entire infra are too big to approve
+via a slack button, even a misclick."* A one-tap approval is the wrong
+weight for a change to cluster state. It also removes a problem rather
+than solving one: GitHub refuses to let any identity approve its own
+pull request, so "the bot merges on ✅" was never implementable by the
+identity that authors the PR, and every workaround either invents a
+second bot (making author-≠-approver fiction) or removes the branch
+protection. **The approver is a human with their own GitHub account,
+and that is the feature.** Slack belongs to Airlock.
 
 **Why the gate is a PR:** everything Mission Control touches is
 declarative and revertible. The diff *is* the reviewable artifact; the
 revert *is* the undo. **Sentinel does not gate the PR path** — a second
 gate in front of a gate that already works is friction with no gain.
 
-Be precise about the scope of that sentence: Sentinel absolutely does
-gate the agent's **non-PR** actions, and always will (ADR-001's amended
-rule). Posting to Slack, commenting on an issue, calling any MCP tool —
-those are not revertible by `git revert`, so they take the capability
-path like anything else. The PR *is* the gate for cluster state; the
-capability *is* the gate for everything else the agent touches.
+And it is true because **Mission Control is PR-only by construction**.
+Its every external action is "open a pull request"; it calls no MCP
+tool and touches no SaaS. The moment an agent action is *not* a PR —
+posting to Slack, calling any MCP tool — it is an Airlock-shaped action
+and takes the capability path (ADR-001's amended rule). Keeping Mission
+Control PR-only is what keeps this sentence honest; if a future feature
+wants the agent to do something non-revertible, that feature belongs to
+Airlock, not here.
 
 **Caveat on revertibility itself:** `git revert` restores *declarations*,
 not data. It will not bring back a dropped database or un-send a
 message. The dividing line is sound for cluster state and needs a
 stated boundary for stateful charts — an open item, not a settled one.
+
+**Where the agent runs — outside the cluster, and not on Sentinel's
+host.** Same reasoning as Sentinel, applied to a different failure:
+*"the only thing i see going wrong there is changing its OWN infra…
+that one should be robust so i can always have connectivity to it even
+if the entire stack is offline"* (owner, 2026-07-28). An agent living
+inside the cluster it repairs dies with it, taking the repair mechanism
+along — and the whole promise of `git revert` depends on something
+still being alive to propose the revert. It also must **not** share a
+host with Sentinel: Sentinel's admin API is protected by binding
+loopback, and a process on that host can reach loopback, which would
+hand the agent its own approval surface. So: its own place. Today that
+is the owner's workstation (`ops/operator/launch.sh`); in cloud it is a
+second small VM, distinct from Sentinel's.
 
 **Audience:** the platform team. Low volume, high blast radius, every
 change is a file. Built in Phase 4.5, completed in Phase 6.
@@ -367,49 +394,43 @@ long-lived external credentials. They all request, get gated, and
 release. This is the property that makes the platform safe to put
 real powers behind.
 
-**Phase 6 — Mission Control complete (the control-plane Claude, full
-powers).** This phase finishes the FIRST of the two flows. Control-Plane
-v0 (Phase 4.5) already proposes PRs; Phase 6 graduates it to the
-end-state. Create namespace `platform-control`. Deploy a long-running
-Claude Agent SDK workload that:
-- Reads from Prometheus and the Kubernetes API to observe state.
-  (**Loki is Phase 7** — do not design Phase 6 around log queries it
-  cannot make yet. Metrics and cluster state are enough for the first
-  proposals; log-driven ones wait.)
-- Proposes actions by auto-committing PRs to the GitOps repo.
-- Posts each PR to `#claude-approvals` in Slack with ✅/❌ buttons; on
-  ✅ the bot merges and ArgoCD applies. The owner never types git.
-- Logs every action to `#claude-audit` with reasoning.
-- **Holds no long-lived credentials for external systems.** For any
-  external action, Claude calls Sentinel's `/capability-request`,
-  waits for a human grant, and uses the short-lived token via the
-  Sentinel proxy. If Sentinel denies or the global kill switch is
-  on, every external action fails closed. **One grant covers a
-  PROFILE — a set of tools for a window — not a single call:** Phase
-  5.5.8 measured that one honest MCP session costs six separate
-  approvals at per-call granularity, which guarantees rubber-stamping.
-  Fixing that (Cedar policy, ADR-005) is this phase's first work item,
-  before the agent gets real powers.
+**Phase 6 — Mission Control complete.** Smaller than it looks, because
+Slack and the MCP catalog moved to Airlock. Phase 4.5 already proposes
+PRs when a human launches `ops/operator/launch.sh`; Phase 6 makes that
+continuous. The agent:
 
-Alongside, start the **MCP server catalog** in a sibling namespace
-`mcp-servers`: each external system (GitHub, Slack, kubectl-wrapper,
-later Supabase / Railway / Sendgrid / Google Workspace / etc.) is a
-Deployment exposing a Model Context Protocol server. These servers are
-built once and serve **both** flows — the control-plane Claude in
-Phase 6, and the workforce in Phase 6.5 — so a chart added here is
-not agent-only infrastructure. The control-plane Claude auto-discovers
-MCP servers via a label selector but reaches them only **through the
-Sentinel proxy** — direct pod-to-pod traffic to MCP servers is blocked
-by NetworkPolicy. **Each MCP server still
-ships with its own scoped tool allowlist** in its ConfigMap as a
-defense-in-depth layer behind Sentinel: even if a Sentinel grant
-accidentally matched a more powerful tool, the MCP server itself
-would refuse. Three independent layers (Sentinel grant → MCP
-allowlist → upstream OAuth scope) must all align for an action to
-succeed.
+- Runs **outside the cluster** and not on Sentinel's host (see the
+  Mission Control section for why) — today the owner's workstation, in
+  cloud its own small VM.
+- Watches **Prometheus and the Kubernetes API** to observe state. (Not
+  Loki — that is Phase 8. Metrics and cluster state are enough for the
+  first proposals; log-driven ones wait.) It needs a real read path to
+  Prometheus: today's operator reaches metrics by `kubectl exec` into
+  an unrelated pod, which is a hack that must not survive.
+- Proposes actions as **pull requests**, and nothing else. No MCP
+  tools, no SaaS, therefore **no Sentinel involvement at all** — the
+  PR review is the whole gate, and ADR-001's amended rule permits
+  PR-only work without capability gating.
+- **You approve in GitHub, as yourself.** No bot merge, no ✅ button.
+- Cannot break its own lifeline: a proposal that takes the cluster down
+  must still leave something alive to propose the revert.
 
-**Phase 6.5 — Airlock (the workforce reaches the MCP servers).** The
-SECOND flow, and the bigger product. Phase 6 leaves a catalog of MCP
+Open before starting: the operator's own credentials are an unstated
+exception to "Claude holds no long-lived credentials" — it needs an
+Anthropic key to think and the GitHub App key to open PRs, neither
+gate-able by Sentinel. Running outside the cluster keeps both on a host
+rather than in a namespace, which is the cheaper answer.
+
+**Phase 7 — Airlock (the workforce reaches the MCP servers).** The
+SECOND flow, and the biggest piece of product in the plan — promoted
+off a half-number for that reason. Sized as five sessions, not one:
+**7.1** ADR-005 (Cedar policy model, XAA delegation, how a *resource*
+is derived from a tool call, and the approve-vs-self-elevate carve
+against ADR-004) · **7.2** capability profiles + multi-user Sentinel —
+where the six-approval finding is retired · **7.3** the public MCP door
++ gateway OAuth · **7.4** the GitHub MCP server with XAA, its own
+session, upstream and toolset decided in 7.1 so it does not spin ·
+**7.5** the Slack MCP server. Phase 6 leaves a catalog of MCP
 servers that only one agent can reach; this phase opens them to
 people. Deliverables:
 
@@ -437,7 +458,7 @@ people. Deliverables:
   elevation window — and, where the upstream tool supports it, reverse
   it. Scope this honestly: universal undo is not a thing.
 
-**Phase 7 — observability completion.** kube-prometheus-stack already
+**Phase 8 — observability completion.** kube-prometheus-stack already
 landed in Phase 3; this phase completes the stack: **Loki** for logs
 (+ **Tempo** for traces if budget allows). Grafana dashboards for:
 cluster health, app metrics, LLM cost and usage (from the AI gateway's
@@ -447,7 +468,7 @@ Wire Alertmanager → `#claude-alerts` for anomalies: secret reuse,
 abnormal action rate, unexpected namespaces touched, kill-switch
 flips.
 
-**Phase 8 — cloud.** Provision a DigitalOcean Kubernetes (DOKS) cluster
+**Phase 9 — cloud.** Provision a DigitalOcean Kubernetes (DOKS) cluster
 using Terraform — not the web console; the IaC is the point. Apply the
 same root ArgoCD Application; the entire `catalog/` deploys
 unchanged. Enable the cluster autoscaler. Then `terraform destroy` it.
@@ -529,8 +550,8 @@ GitOps app-of-apps (Phase 4) → **Control-Plane v0, PR-only (Phase
 4.5** — the demoable product) → team enablement (Phase 5) →
 **Sentinel security broker (Phase 5.5, non-negotiable before any
 non-PR external power)** → **Mission Control complete** (Phase 6) →
-**Airlock** (Phase 6.5) → observability completion (Phase 7) → cloud
-(Phase 8). Phase 6 finishes the first flow and Phase 6.5 opens the
+**Airlock** (Phase 7, five sessions) → observability completion (Phase
+8) → cloud (Phase 9). Phase 6 finishes the first flow and Phase 6.5 opens the
 second; if only one can be done, Phase 6 is the one that makes the
 platform self-operating, and Phase 6.5 is the one that makes it useful
 to a whole company. Phases 1–4.5 are the demoable open-source core and a
