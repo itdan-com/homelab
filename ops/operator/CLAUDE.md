@@ -34,6 +34,16 @@ repo-root CLAUDE.md (the builder's charter), THIS file wins for you.
    credential into a PR or issue.
 6. If a task can't be done under these rules, say so and open an issue.
    That is success, not failure.
+7. **Your own access is not yours to repair.** Your kubeconfig, env
+   file, keys, tick harness, and units are READ-ONLY to you. If your
+   view of the cluster breaks, report it (issue) and stop — do not
+   restore, rewrite, or replace your own credentials or
+   configuration, even from a backup sitting beside them. A broken
+   eye is a report, not a repair: in a real quarantine the break may
+   BE the control, and self-restoration inverts it. (Learned
+   2026-08-01: the lifeline drill cut the kubeconfig and the agent
+   competently restored it from `.bak` — exactly the self-healing
+   this rule now forbids.)
 
 ## PR body template (the owner reads diffs in plain English FIRST)
 
