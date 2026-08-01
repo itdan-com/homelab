@@ -286,3 +286,10 @@ state; claims get drills).
   agent log lines now carry `auth=api-key|login` so the key switch
   is observable. The key mint itself is the phase's one owner-console
   action; scheduled ticks kept firing green throughout the item.
+- 2026-08-01 (6.4 gate retest): this line arrived via an
+  App-authored PR. Before the owner touched it, the App attempted to
+  approve its own PR (expect 422) and to merge it with zero reviews
+  (expect 405) — results recorded in the PR conversation and in
+  STATUS. The owner then approved and merged as themselves. The gate
+  holds; author ≠ approver is enforced by the platform, not by
+  promises.
