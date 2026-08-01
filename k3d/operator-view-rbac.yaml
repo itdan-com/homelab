@@ -1,8 +1,9 @@
-# Read-only cluster identity for the Phase 4.5 operator Claude.
+# Read-only cluster identity for the operator Claude (Phase 4.5+).
 # Bound to the built-in `view` ClusterRole, which deliberately EXCLUDES
 # Secrets and all writes — the operator observes, and proposes changes
-# only as pull requests. The namespace is the future Phase-6 home of
-# the full control plane.
+# only as pull requests. The namespace holds only this identity: the
+# agent itself runs OUTSIDE the cluster (Phase 6 re-cut, 2026-07-28 —
+# it must survive the cluster it repairs).
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -14,9 +15,8 @@ metadata:
   name: operator-view
   namespace: platform-control
 ---
-# Long-lived token for the operator's kubeconfig (lab-grade; replaced
-# by short-lived projected tokens when the operator moves in-cluster
-# at Phase 6).
+# Long-lived token for the operator's kubeconfig (lab-grade; revisit
+# when the operator gets its own home — Phase 9 gives it a VM).
 apiVersion: v1
 kind: Secret
 metadata:
@@ -34,6 +34,43 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: view
+subjects:
+  - kind: ServiceAccount
+    name: operator-view
+    namespace: platform-control
+---
+# Phase 6.1: the operator's ONLY metrics path — Prometheus through the
+# API-server service proxy, scoped to this ONE service by resourceNames.
+# `view` covers reading Service OBJECTS; sending a request THROUGH one
+# is the `services/proxy` subresource, which `view` deliberately lacks
+# (found 2026-07-31: the charter's old `kubectl exec` fallback needed
+# `pods/exec` create and so had never worked at all).
+# Every URL-path spelling of the service is listed, because proxy
+# authorization carries the name exactly as written in the request path.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operator-prometheus-proxy
+  namespace: monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get"]
+    resourceNames:
+      - monitoring-kube-prometheus-prometheus
+      - "monitoring-kube-prometheus-prometheus:9090"
+      - "monitoring-kube-prometheus-prometheus:http-web"
+      - "http:monitoring-kube-prometheus-prometheus:9090"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operator-prometheus-proxy
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: operator-prometheus-proxy
 subjects:
   - kind: ServiceAccount
     name: operator-view

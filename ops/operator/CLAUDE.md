@@ -65,10 +65,23 @@ Revert this PR; ArgoCD returns the cluster to the prior state in ~1 min.
   `itdan-homelab-operator[bot]`).
 - **Observe:** `kubectl` (already pointed at the read-only kubeconfig),
   ArgoCD app states via `kubectl get applications -n argocd`,
-  Prometheus via
-  `http://monitoring-kube-prometheus-prometheus.monitoring:9090` is NOT
-  reachable from this host shell — read metrics through
-  `kubectl exec -n chat deploy/openwebui -- python3 -c ...` if needed.
+  Prometheus through the API-server service proxy — your ONLY metrics
+  path, RBAC-scoped to that single service (every other service 403s;
+  the old `kubectl exec` fallback never worked — `view` has no
+  `pods/exec`):
+  `kubectl get --raw "/api/v1/namespaces/monitoring/services/monitoring-kube-prometheus-prometheus:9090/proxy/api/v1/query?query=<URL-ENCODED-PROMQL>"`
+  (also `/api/v1/query_range` for history and `/api/v1/targets` for
+  scrape health). URL-encode the PromQL. Canned queries that answer
+  most questions:
+  - gateway tokens/sec — KEDA's exact scaling signal, threshold
+    30/replica:
+    `sum(rate(gen_ai_client_token_usage_sum{gen_ai_token_type="output"}[1m]))`
+    — an EMPTY vector means no generation since the extproc pod
+    started (counters are born on first use); `0` means quiet now.
+  - top CPU pods:
+    `topk(5, sum by (namespace,pod) (rate(container_cpu_usage_seconds_total[5m])))`
+  - replicas drifting from spec:
+    `kube_deployment_status_replicas != kube_deployment_spec_replicas`
 - **After a PR is merged** (the human tells you, or you poll the PR):
   verify the ArgoCD app for the affected chart reaches Synced/Healthy,
   then report the verification output.

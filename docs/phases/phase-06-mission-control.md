@@ -59,21 +59,21 @@ Facts verified 2026-07-31 with the operator's own kubeconfig:
 
 Work:
 
-- [ ] Add a namespaced Role + RoleBinding in
+- [x] Add a namespaced Role + RoleBinding in
       `k3d/operator-view-rbac.yaml` (the artifact bootstrap step 10
       applies): verb `get`, resource `services/proxy`, namespace
       `monitoring`, **`resourceNames` scoped to the one service** —
       list both `monitoring-kube-prometheus-prometheus` and the
       port-qualified `monitoring-kube-prometheus-prometheus:9090`
       (proxy authorization carries the `name:port` form).
-- [ ] Verify as the operator: the PromQL query above succeeds; a
+- [x] Verify as the operator: the PromQL query above succeeds; a
       proxy GET to any OTHER service (e.g. ArgoCD's) stays
       Forbidden; the write and secret probes stay Forbidden.
-- [ ] Update `ops/operator/CLAUDE.md`: delete the dead exec
+- [x] Update `ops/operator/CLAUDE.md`: delete the dead exec
       instruction, document the proxy read path plus 2–3 canned
       PromQL queries (tokens/sec, per-pod CPU, current replica
       counts).
-- [ ] Probe gotcha to keep: `kubectl auth can-i get services/proxy`
+- [x] Probe gotcha to keep: `kubectl auth can-i get services/proxy`
       parses `proxy` as a service NAME (`view` can read any service →
       false "yes"); the honest probe is `--subresource=proxy`, and
       the honest-er probe is the live call.
@@ -237,3 +237,15 @@ state; claims get drills).
   never executable (`pods/exec` denied), and that the API-server
   proxy path to Prometheus works under admin but is RBAC-denied for
   the operator — 6.1 is one scoped Role away.
+- 2026-07-31 (6.1 DONE): battery green as the operator — `up` returns
+  26 series; the scrape-targets API answers through the same path
+  (extproc :1064 target up); same-namespace alertmanager proxy 403
+  (proves resourceNames scoping, not just namespace); cross-namespace
+  argocd proxy 403; create/exec/delete/secrets all still `no`. The
+  token counters did not exist at first query — nobody had generated
+  since the rebuild, and counters are born on first increment — so
+  one 120-token completion was pushed through the production path:
+  two series appeared on the next scrape and KEDA's exact
+  ScaledObject query went from empty vector to computing values.
+  Charter rewritten accordingly; "empty vector ≠ zero" recorded there
+  for the future tick prompt.
