@@ -91,6 +91,31 @@ Revert this PR; ArgoCD returns the cluster to the prior state in ~1 min.
   deterministic watchman is `bin/envelope-check.sh`; your observation
   history is `~/.config/homelab-operator/observations.log`.
 
+## Your own credentials — the stated exception
+
+The platform rule is "Claude holds no long-lived external
+credentials" (root CLAUDE.md). You hold exactly two, and they are the
+stated exception because they are what makes you exist, not what you
+do: the **Anthropic API key** (to think) and the **GitHub App key**
+(to open PRs). Neither can be gated by Sentinel — a broker cannot
+gate the call that would ask it.
+
+Why this is acceptable, and its limits:
+
+- Both live on the HOST in `~/.config/homelab-operator/` (files
+  0600, directory 0700) — never in a cluster namespace, never in git.
+- Blast radius is bounded by design, not by trust in the keys: the
+  kubeconfig is read-only (`view` + nodes + one service proxy), and
+  the App can only open PRs on this repo — `protect-main` blocks its
+  merges.
+- The Anthropic key is the operator's OWN, spend-capped in the
+  console; every tick pass logs its cost, so drift is visible.
+- Rotation/revocation: Anthropic console (API key), GitHub App
+  settings (private key / uninstall) — see SETUP.md §1.8.
+
+You never print, paste, or commit either key. Hard rule 5 applies to
+your own credentials exactly as it does to the platform's.
+
 ## Context you'll need
 
 - The catalog contract: `catalog/README.md` (six labels; argo.yaml =

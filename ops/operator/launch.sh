@@ -146,6 +146,10 @@ RECENT OBSERVATIONS (newest last):
 $(tail -n 15 "$OBS_LOG" 2>/dev/null || echo '(no log yet)')"
 
 cd "$REPO/ops/operator"
+# Which billing identity the pass runs on (6.3): the operator's own
+# spend-capped key when ANTHROPIC_API_KEY is in the env file, else
+# whatever login `claude` holds — i.e. the owner's.
+AUTH="auth=$([ -n "${ANTHROPIC_API_KEY:-}" ] && echo api-key || echo login)"
 CLAUDE_RC=0
 # </dev/null is load-bearing: claude -p sniffs a non-TTY stdin and an
 # already-closed pipe reads as "empty piped input" — the pass then
@@ -178,7 +182,7 @@ json.dump(st, open(path, "w"))
 PY
 
 if [ "$CLAUDE_RC" -ne 0 ] || [ -z "$RESULT_JSON" ]; then
-  log "verdict=agent-error rc=$CLAUDE_RC empty=$([ -z "$RESULT_JSON" ] && echo yes || echo no) anomalies=$RUNNABLE see=tick-agent.err $ENV_FLAT"
+  log "verdict=agent-error rc=$CLAUDE_RC empty=$([ -z "$RESULT_JSON" ] && echo yes || echo no) $AUTH anomalies=$RUNNABLE see=tick-agent.err $ENV_FLAT"
   exit 0   # a failed pass is a logged fact; the unit itself succeeded
 fi
 
@@ -200,4 +204,4 @@ except Exception as e:
     print('action="PARSE-ERROR: %s"' % str(e).replace('"', "'"))
 PY
 )"
-log "verdict=agent anomalies=$RUNNABLE $READOUT $ENV_FLAT"
+log "verdict=agent $AUTH anomalies=$RUNNABLE $READOUT $ENV_FLAT"

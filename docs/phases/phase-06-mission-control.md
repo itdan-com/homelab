@@ -132,13 +132,18 @@ PRs) are what make the agent exist, not what it does; neither is
 Sentinel-gateable. Living on a host rather than in a namespace is
 the mitigation.
 
-- [ ] Write the exception into `ops/operator/CLAUDE.md`.
-- [ ] Dedicated Anthropic key for the operator (not the owner's
-      personal key), spend-capped in the Anthropic console.
-- [ ] Verify `~/.config/homelab-operator/env` and the App private
-      key are 0600 and owned by the operator's user.
-- [ ] One-line rotation/revocation note in SETUP.md (Anthropic
-      console / GitHub App settings).
+- [x] Write the exception into `ops/operator/CLAUDE.md` ("Your own
+      credentials — the stated exception": what the two keys are, why
+      Sentinel cannot gate them, what bounds the blast radius).
+- [ ] Dedicated Anthropic key for the operator — **OWNER ACTION
+      pending** (plumbing done): SETUP.md §1.8 has the three-step
+      recipe (console workspace + spend limit + one env line); the
+      next agent pass logs `auth=api-key` when it has taken effect.
+      Until then agent passes log `auth=login` (the owner's).
+- [x] Verify permissions: env/pem/kubeconfig were already 0600;
+      directory tightened 755 → **700** (2026-08-01).
+- [x] Rotation/revocation note in SETUP.md §1.8 (Anthropic console /
+      GitHub App settings).
 
 ### 6.4 — The admin-bypass decision (gate hardening)
 
@@ -276,3 +281,8 @@ state; claims get drills).
   recurrence threshold; pass 2 saw the recurrence in its observation
   history and filed issue #6 — correct escalation, closed same hour
   citing the fix commit (9545edf).
+- 2026-08-01 (6.3): buildable parts done same day — charter
+  exception section, dir 700, SETUP §1.8 key recipe + rotation, and
+  agent log lines now carry `auth=api-key|login` so the key switch
+  is observable. The key mint itself is the phase's one owner-console
+  action; scheduled ticks kept firing green throughout the item.

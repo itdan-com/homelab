@@ -292,6 +292,25 @@ terminal, but Windows still has to start WSL). Pause and resume with
 `systemctl --user stop|start operator-tick.timer`; watch it with
 `tail -f ~/.config/homelab-operator/observations.log`.
 
+**Give the operator its own Anthropic key (once).** Until you do,
+agent passes bill whatever login `claude` holds — yours. In the
+Anthropic console create a workspace (e.g. `homelab-operator`), set a
+monthly spend limit on it, create an API key inside that workspace,
+and add one line to `~/.config/homelab-operator/env`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Make the edit in an editor (`nano ~/.config/homelab-operator/env`) —
+not by echoing the key into a command line, where it lands in shell
+history. The next *agent* pass logs `auth=api-key` when the key has
+taken effect (green heartbeats don't run the model and don't show
+it). **Rotation/revocation:** the Anthropic key dies in the console
+(delete the key, or the workspace limit caps the damage); the GitHub
+App's key rotates in the App's settings — generate a new private key
+and replace `github-app.pem`.
+
 ---
 
 ## Part 2 — every web interface, and where its password lives
