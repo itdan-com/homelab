@@ -147,10 +147,16 @@ $(tail -n 15 "$OBS_LOG" 2>/dev/null || echo '(no log yet)')"
 
 cd "$REPO/ops/operator"
 CLAUDE_RC=0
+# </dev/null is load-bearing: claude -p sniffs a non-TTY stdin and an
+# already-closed pipe reads as "empty piped input" — the pass then
+# exits 0 having produced NOTHING (bug found at the first forced tick;
+# the explicit redirect is what claude's own warning recommends).
 RESULT_JSON="$(claude -p "$PROMPT" --model "$TICK_MODEL" \
   --strict-mcp-config --mcp-config "$EMPTY_MCP" \
   --allowedTools "Bash,Read,Edit,Write,Grep,Glob" \
-  --output-format json 2>>"$STATE_DIR/tick-agent.err")" || CLAUDE_RC=$?
+  --output-format json </dev/null 2>>"$STATE_DIR/tick-agent.err")" || CLAUDE_RC=$?
+# Raw result of the last pass, kept for forensics (overwritten each pass).
+printf '%s' "$RESULT_JSON" > "$STATE_DIR/last-result.json"
 
 # Record spend + cooldowns even when the pass failed — a broken agent
 # retrying every 5 minutes is exactly what the guards exist to stop.
@@ -171,21 +177,27 @@ for a in anoms:
 json.dump(st, open(path, "w"))
 PY
 
-if [ "$CLAUDE_RC" -ne 0 ]; then
-  log "verdict=agent-error rc=$CLAUDE_RC anomalies=$RUNNABLE see=tick-agent.err $ENV_FLAT"
+if [ "$CLAUDE_RC" -ne 0 ] || [ -z "$RESULT_JSON" ]; then
+  log "verdict=agent-error rc=$CLAUDE_RC empty=$([ -z "$RESULT_JSON" ] && echo yes || echo no) anomalies=$RUNNABLE see=tick-agent.err $ENV_FLAT"
   exit 0   # a failed pass is a logged fact; the unit itself succeeded
 fi
 
-READOUT="$(printf '%s' "$RESULT_JSON" | python3 - <<'PY'
+# Parse from the forensics FILE, not a pipe: `python3 - <<heredoc`
+# takes the heredoc as stdin, so piped data silently vanishes — the
+# bug behind this session's three PARSE-ERROR ticks.
+READOUT="$(python3 - "$STATE_DIR/last-result.json" <<'PY'
 import json, sys
-d = json.load(sys.stdin)
-u = d.get("usage") or {}
-res = d.get("result") or ""
-acts = [l.strip() for l in res.splitlines() if l.strip().startswith("ACTION:")]
-line = (acts[-1] if acts else "ACTION: line missing").replace('"', "'")
-print('action="%s" cost=$%.2f in=%s out=%s turns=%s' % (
-    line, d.get("total_cost_usd") or 0,
-    u.get("input_tokens", 0), u.get("output_tokens", 0), d.get("num_turns", "?")))
+try:
+    d = json.load(open(sys.argv[1]))
+    u = d.get("usage") or {}
+    res = d.get("result") or ""
+    acts = [l.strip() for l in res.splitlines() if l.strip().startswith("ACTION:")]
+    line = (acts[-1] if acts else "ACTION: line missing").replace('"', "'")
+    print('action="%s" cost=$%.2f in=%s out=%s turns=%s' % (
+        line, d.get("total_cost_usd") or 0,
+        u.get("input_tokens", 0), u.get("output_tokens", 0), d.get("num_turns", "?")))
+except Exception as e:
+    print('action="PARSE-ERROR: %s"' % str(e).replace('"', "'"))
 PY
 )"
 log "verdict=agent anomalies=$RUNNABLE $READOUT $ENV_FLAT"
