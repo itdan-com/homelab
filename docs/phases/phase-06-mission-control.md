@@ -100,24 +100,28 @@ log or open **exactly one PR per concern**.
 
 Guards that must exist before the timer goes live:
 
-- [ ] **Idempotence:** query open `operator/*` PRs first; an
-      already-proposed concern is a heartbeat, not a duplicate PR.
-- [ ] **Caps:** max open operator PRs (propose 3); cooldown per
-      concern after a PR is opened or closed-unmerged (a rejected
-      proposal is an answer, not an invitation to retry).
-- [ ] **Spend:** its own Anthropic key (6.3); a cheaper model for
-      quiet ticks; tokens-per-tick logged. Per-day ceiling decided
-      at open question 2.
-- [ ] **Fail-safe:** a tick that errors leaves nothing half-done
-      (PR-or-nothing), and the next tick reports the failure in its
-      heartbeat.
-- [ ] Timer + service files live in `ops/operator/` and follow the
-      cloud-artifact rule: the same files a cloud VM would run; an
-      install step detects host-specific values; no lab-isms inside
-      the units.
-- [ ] Reboot posture documented with Sentinel's honesty (SETUP
-      §1.7): Windows does not start WSL2, so "continuous" means
-      "while the lab host is up" — say so plainly.
+- [x] **Idempotence:** open `operator/*` PRs counted from GitHub
+      truth before any tokens are spent; the agent's context lists
+      them and tick rule 2 forbids duplicating; a 60-min per-finding
+      cooldown stops re-diagnosis of the same signal.
+- [x] **Caps:** max 3 open operator PRs (script-enforced, before the
+      model runs); per-finding cooldown after every agent pass,
+      successful or not.
+- [x] **Spend:** quiet ticks spend ZERO (deterministic watchman, no
+      model at all — better than "a cheaper model"); anomaly passes
+      on sonnet with cost + tokens logged per pass to
+      observations.log; 20 agent passes/day ceiling; 15-min hard
+      timeout. Dedicated key is 6.3.
+- [x] **Fail-safe:** every tick starts with hard reset + clean of
+      the operator clone; agent errors are logged verdicts (unit
+      still succeeds); state records the pass even on failure so a
+      broken agent cannot retry every 5 minutes.
+- [x] Units in `ops/operator/deploy/`, installed by
+      `install-tick.sh` — detect-at-install (checkout path, tool
+      PATH); the committed units are host-agnostic (ADR-004).
+- [x] Reboot posture: SETUP.md §1.8 — the timer runs while WSL is
+      up (linger keeps it alive without a terminal); Windows still
+      has to start WSL, and the doc says so plainly.
 
 ### 6.3 — State and scope the credentials exception
 
@@ -200,11 +204,18 @@ state; claims get drills).
    device/VM now. Recording (a) also means correcting CLAUDE.md's
    "today that is the owner's workstation" line at the next
    architecture edit.
-2. **Tick cadence + spend ceiling.** 5 min? Which model for quiet
-   ticks? Per-tick and per-day token budgets?
-3. **Agent memory across ticks.** Stateless each tick vs a rolling
-   observation log the tick reads and appends (recommended: the log —
-   continuity without conversation state).
+2. **Tick cadence + spend ceiling.** ~~5 min? Which model for quiet
+   ticks? Per-tick and per-day token budgets?~~ **Decided at 6.2:**
+   5-min timer; quiet ticks spend zero (no model); anomaly passes on
+   sonnet; 3 open PRs / 60-min per-finding cooldown / 20 passes per
+   day / 15-min timeout; measured pass cost $0.48–0.78. All knobs
+   overridable in the operator env file.
+3. **Agent memory across ticks.** ~~Stateless each tick vs a rolling
+   observation log?~~ **Decided at 6.2:** the log — each pass sees
+   the envelope findings, the open-PR list, and `tail -n 15` of
+   `observations.log`. Proven working: pass 2 applied the recurrence
+   threshold pass 1 had stated, because it could read pass 1's
+   outcome.
 4. **Event-driven wake.** An Alertmanager webhook → host would add
    an inbound cluster→host surface. v1 is polling-only; revisit at
    Phase 8 with the alert rules.
@@ -249,3 +260,19 @@ state; claims get drills).
   ScaledObject query went from empty vector to computing values.
   Charter rewritten accordingly; "empty vector ≠ zero" recorded there
   for the future tick prompt.
+- 2026-08-01 (6.2): two real bugs found by running, both fixed.
+  (1) `view` RBAC cannot list nodes — the first envelope run printed
+  `0/4 Ready` as *ok* with the Forbidden swallowed by /dev/null;
+  fixed twice over: fewer-nodes-than-expected is now an anomaly
+  (`nodes_missing`), and `operator-node-reader` ClusterRole grants
+  get/list/watch. (2) The tick's readout piped JSON into
+  `python3 - <<heredoc` — the heredoc replaces the pipe as stdin, so
+  every pass logged PARSE-ERROR while the pass itself had succeeded;
+  now parses the per-pass forensics file `last-result.json`. Also:
+  `</dev/null` on the claude call (avoids a 3s stdin-sniff stall).
+  **The agent's first two live passes behaved per charter:** pass 1
+  concluded `ACTION: none` on a green forced wake and *declined* to
+  act on the harness bug it noticed (out of tick scope), stating a
+  recurrence threshold; pass 2 saw the recurrence in its observation
+  history and filed issue #6 — correct escalation, closed same hour
+  citing the fix commit (9545edf).
