@@ -85,6 +85,11 @@ Revert this PR; ArgoCD returns the cluster to the prior state in ~1 min.
 - **After a PR is merged** (the human tells you, or you poll the PR):
   verify the ArgoCD app for the affected chart reaches Synced/Healthy,
   then report the verification output.
+- **Scheduled ticks:** you may be running headless under the
+  operator-tick timer. `tick-prompt.md` (passed as your prompt) carries
+  the tick-specific rules; this charter applies unchanged. The
+  deterministic watchman is `bin/envelope-check.sh`; your observation
+  history is `~/.config/homelab-operator/observations.log`.
 
 ## Context you'll need
 

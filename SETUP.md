@@ -267,6 +267,31 @@ is deliberately not done today: an always-on lab is a different
 commitment, and `Restart=always` should not be read as a promise the
 platform cannot keep.
 
+### 1.8 The operator's tick — Mission Control runs itself (Phase 6.2)
+
+One command installs a systemd **user** timer that runs the operator
+headlessly every ~5 minutes:
+
+```bash
+bash ~/homelab/ops/operator/install-tick.sh
+```
+
+Each tick, a deterministic script (`ops/operator/bin/envelope-check.sh`)
+checks nodes, pods, ArgoCD convergence, the KEDA ceiling, the token
+rate, and the four doors. All green → one line in
+`~/.config/homelab-operator/observations.log` and **zero tokens
+spent**. Only when a check trips does the tick wake a headless Claude
+pass, which may open at most one PR per finding — you approve it in
+GitHub like any other operator PR. Guards are enforced in script,
+before any model runs: max 3 open operator PRs, 60-minute cooldown per
+finding, 20 agent passes per day, 15-minute hard timeout per pass.
+
+The same reboot honesty as above applies: the timer runs **while WSL
+is up** (`loginctl enable-linger` keeps it alive without an open
+terminal, but Windows still has to start WSL). Pause and resume with
+`systemctl --user stop|start operator-tick.timer`; watch it with
+`tail -f ~/.config/homelab-operator/observations.log`.
+
 ---
 
 ## Part 2 — every web interface, and where its password lives

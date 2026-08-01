@@ -1,0 +1,13 @@
+# Fires the Mission Control operator tick every ~5 minutes while the
+# host is up. Windows does not start WSL2, so "continuous" honestly
+# means "while the lab host is up" (SETUP.md §1.7 posture).
+[Unit]
+Description=Run the Mission Control operator tick every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20
+
+[Install]
+WantedBy=timers.target

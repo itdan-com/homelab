@@ -1,0 +1,14 @@
+# Mission Control operator tick — systemd USER unit (Phase 6.2).
+# __OPS_DIR__ and __PATH__ are written by install-tick.sh at install
+# time (detect-at-install: the committed unit stays host-agnostic —
+# ADR-004 construction rule; a cloud VM runs this identical file).
+[Unit]
+Description=Mission Control operator tick (headless, PR-only)
+
+[Service]
+Type=oneshot
+Environment="PATH=__PATH__"
+ExecStart=__OPS_DIR__/launch.sh --tick
+# An agent pass that runs away is killed, not waited on forever.
+TimeoutStartSec=900
+Nice=10

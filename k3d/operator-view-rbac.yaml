@@ -39,6 +39,32 @@ subjects:
     name: operator-view
     namespace: platform-control
 ---
+# Phase 6.2: nodes are cluster-scoped and NOT in the `view` role, so
+# the operator could not see them at all (caught by the tick's first
+# envelope run: 0 nodes read as healthy). A cluster operator gets to
+# LOOK at nodes; get/list/watch is the whole grant.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operator-node-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: operator-node-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: operator-node-reader
+subjects:
+  - kind: ServiceAccount
+    name: operator-view
+    namespace: platform-control
+---
 # Phase 6.1: the operator's ONLY metrics path — Prometheus through the
 # API-server service proxy, scoped to this ONE service by resourceNames.
 # `view` covers reading Service OBJECTS; sending a request THROUGH one
