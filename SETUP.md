@@ -82,7 +82,15 @@ Create the ruleset — direct URL:
 3. **Bypass list → Add bypass → Repository admin** — so YOUR direct
    pushes still work during build sessions (each bypass is logged by
    GitHub). Remove this bypass when you stop hand-building — that's
-   the one-click hardening.
+   the one-click hardening. *(Decision recorded 2026-08-01, Phase
+   6.4: the bypass STAYS while a human is hand-building — the builder
+   commits as the repo owner, GitHub refuses self-approval, so
+   removal without a second approving identity deadlocks all direct
+   work. It is end-state hardening for when no human pushes anymore.
+   The gate protecting the operator path is unaffected either way:
+   App-authored PRs always need a human approval — re-proven same
+   day on PR #7: App self-approve 422, App unreviewed merge 405,
+   owner-approved merge OK.)*
 4. Target branches → Add target → **Include default branch**.
 5. Rules: tick **Require a pull request before merging** → Required
    approvals: **1**. Leave *Restrict deletions* and *Block force

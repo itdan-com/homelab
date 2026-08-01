@@ -156,16 +156,21 @@ PRs, and there is no second human. Swapping review-required for
 status-checks-required is worse: the OPERATOR's PRs could then merge
 with no human, destroying the gate this phase exists to keep.
 
-- [ ] Decide with the owner. Honest options: **(a)** keep the
-      bypass, loudly — it stays the builder's write path, every use
-      is visible in the push log, and the ruleset-change alert lands
-      with Phase 8's Alertmanager rules; revisit when a second human
-      or a PR-shaped builder exists (recommended). **(b)** remove it
-      — dead until a second approving identity exists. **(c)** a
-      second human account as reviewer — not real today.
-- [ ] Record the decision (mini-ADR or charter note) and implement.
-- [ ] Re-run the Phase 4.5 negative tests: App self-approve → 422;
-      review-less merge → 405; owner-approves-App-PR path merges.
+- [x] Decide with the owner. **Decided 2026-08-01: (a) keep the
+      bypass, loudly** — owner: "keep the bypass, that's for at the
+      end, then we remove ourselves." Removal is end-state hardening
+      for when no human pushes anymore; the ruleset-change alert
+      lands with Phase 8's Alertmanager rules.
+- [x] Record the decision and implement: recorded in SETUP.md §1.2
+      step 3 (adopter-facing, with the deadlock reasoning);
+      implementation is deliberately no ruleset change — that IS the
+      decision.
+- [x] Re-run the Phase 4.5 negative tests — done live on PR #7
+      (App-authored, one doc line): App self-approve → **422** "Can
+      not approve your own pull request"; App unreviewed merge →
+      **405** "At least 1 approving review is required"; owner
+      approved and squash-merged as themselves → OK. The gate holds
+      by platform enforcement, not promises.
 
 ### 6.5 — Lifeline drill
 
