@@ -188,7 +188,7 @@ elevation primitive both flows will build on** — but it is not yet the
 right shape. Today a grant covers **one tool for one call**, which is
 why Phase 5.5.8 measured six approvals for a single MCP session. Making
 a grant cover a *set* of tools for a *window* is a schema change plus a
-policy engine, and it is **Phase 6's first work item, not something
+policy engine, and it is **Phase 7.2's work (Airlock), not something
 already done**. Read any claim about profiles as a plan until
 `capability_grants` says otherwise.
 
@@ -430,9 +430,10 @@ against ADR-004) · **7.2** capability profiles + multi-user Sentinel —
 where the six-approval finding is retired · **7.3** the public MCP door
 + gateway OAuth · **7.4** the GitHub MCP server with XAA, its own
 session, upstream and toolset decided in 7.1 so it does not spin ·
-**7.5** the Slack MCP server. Phase 6 leaves a catalog of MCP
-servers that only one agent can reach; this phase opens them to
-people. Deliverables:
+**7.5** the Slack MCP server. Phase 5.5 left the Sentinel proxy
+fronting stand-in MCP servers only in-cluster callers can reach;
+this phase builds the real ones and opens them to people.
+Deliverables:
 
 - **A public MCP door.** `mcp.<domain>` on Envoy with real TLS. Today
   MCP servers are ClusterIP behind the Sentinel proxy — correct for an
@@ -511,9 +512,9 @@ documented choice. See `docs/adr/ADR-002-cloud-parity-contract.md`.)*
   artifact for a cloud VM**, and the lab is simply one Linux host that
   runs it. Host-specific values (a k3d gateway IP, a home directory, a
   developer's username) are *detected by an install step and written to
-  config*; they never appear inside the artifact. The test: if Phase 8
-  would have to re-create a process rather than point Terraform at it,
-  the artifact was built wrong. This is the anti-drift rule behind
+  config*; they never appear inside the artifact. The test: if Phase 9
+  (cloud) would have to re-create a process rather than point Terraform
+  at it, the artifact was built wrong. This is the anti-drift rule behind
   ADR-002's cloud-parity contract — ADR-004 applies it to Sentinel and
   lists what a compliant artifact looks like.
 - **No agent action without a paper trail.** Every control-plane Claude
@@ -551,14 +552,14 @@ GitOps app-of-apps (Phase 4) → **Control-Plane v0, PR-only (Phase
 **Sentinel security broker (Phase 5.5, non-negotiable before any
 non-PR external power)** → **Mission Control complete** (Phase 6) →
 **Airlock** (Phase 7, five sessions) → observability completion (Phase
-8) → cloud (Phase 9). Phase 6 finishes the first flow and Phase 6.5 opens the
+8) → cloud (Phase 9). Phase 6 finishes the first flow and Phase 7 opens the
 second; if only one can be done, Phase 6 is the one that makes the
-platform self-operating, and Phase 6.5 is the one that makes it useful
+platform self-operating, and Phase 7 is the one that makes it useful
 to a whole company. Phases 1–4.5 are the demoable open-source core and a
 respectable platform-engineering portfolio result on their own;
 Phases 5–7 are what make this *cutting-edge* and where the novel work
 lives. **Sentinel is the load-bearing security piece — if scope ever
 gets cut, never grant any non-PR external power without Phase 5.5 in
-place.** Phase 8 is the cloud-portability proof (and where replica
+place.** Phase 9 is the cloud-portability proof (and where replica
 scaling becomes physically real) — run it only after a successful
-local Phase 7.
+local Phase 8.

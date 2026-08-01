@@ -1,8 +1,8 @@
-# Phase 7 — Observability for the platform AND the agent
+# Phase 8 — Observability for the platform AND the agent
 
 **Goal (completion-only per ADR-001):** kube-prometheus-stack already landed in Phase 3 — this phase completes the stack: Loki for logs (+ Tempo for traces if budget allows), the four dashboards (cluster, app, LLM cost from the ai-gateway's token metrics, Claude actions), and Alertmanager wired to `#claude-alerts` for anomalies.
 
-**Status:** Not started. Blocked on Phase 6.
+**Status:** Not started. Blocked on Phase 7. (Renumbered 7→8 on 2026-07-31 when Airlock became Phase 7.)
 
 ---
 

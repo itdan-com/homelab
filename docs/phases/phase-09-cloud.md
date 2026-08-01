@@ -1,8 +1,8 @@
-# Phase 8 — Cloud (DOKS via Terraform)
+# Phase 9 — Cloud (DOKS via Terraform)
 
-**Goal:** Provision a DigitalOcean Kubernetes cluster with Terraform, apply the same root ArgoCD Application so the entire `catalog/` deploys unchanged, demonstrate the cluster autoscaler, then `terraform destroy`.
+**Goal:** Provision a DigitalOcean Kubernetes cluster with Terraform, apply the same root ArgoCD Application so the entire `catalog/` deploys unchanged, demonstrate the cluster autoscaler, then `terraform destroy`. (ADR-002 reframe, 2026-07-26: this is a supported product path — "domain in, platform out" — not a drill; the destroy is cost hygiene after proof, and keeping it up is a documented choice.)
 
-**Status:** Not started. Blocked on Phase 7. **Cost-incurring — confirm cost ceiling before applying.**
+**Status:** Not started. Blocked on Phase 8. (Renumbered 8→9 on 2026-07-31 when Airlock became Phase 7.) **Cost-incurring — confirm cost ceiling before applying.**
 
 ---
 
@@ -17,11 +17,19 @@
 7. Capture metrics: how much did the cluster cost during the run? Where was the autoscaling bottleneck?
 8. **`terraform destroy`** — non-negotiable. Verify in the DO console that zero billable resources remain.
 
+## Known blockers (2026-07-27 audit — provider-independent, k3s's fault not the cloud's)
+
+Recorded in STATUS backlog + ADR-004; resolve before or during this phase:
+
+1. **Every door is a Traefik `IngressRoute` CRD in eleven charts, and Traefik is not in `catalog/`** — it comes free with k3s, so on any managed Kubernetes those resources fail with "no matches for kind IngressRoute". Fix: a Traefik catalog chart, or (better) migrate doors to Gateway API `HTTPRoute` on the Envoy Gateway that already runs.
+2. **`storageClassName: local-path`** is k3s-only; must become the platform value ADR-002 names.
+3. **ServiceLB/host-port reasoning inverts in cloud** — `EnvoyProxy` is ClusterIP locally *because* k3s ServiceLB fights Traefik for 80/443; that local workaround is baked in as a constant.
+
 ## Open questions to resolve at the start
 
 - DOKS node sizes: smallest pool (1 GB / 1 vCPU) to keep costs low, or a realistic 4 GB / 2 vCPU profile to actually exercise scheduling?
 - DNS: a real public domain (Cloudflare-fronted), or stay on `*.cluster.local` and access via `kubectl port-forward`?
-- Secrets: how does Sentinel run in the cloud variant? **It doesn't, for this phase** — Phase 8 is the cloud-portability proof of the *catalog*, not the full security stack. Sentinel running in cloud is a separate later question.
+- Secrets: how does Sentinel run in the cloud variant? **It doesn't, for this phase** — Phase 9 is the cloud-portability proof of the *catalog*, not the full security stack. Sentinel's cloud shape is answered by ADR-004 (its own VPC droplet outside the cluster); implementing it is separate, later work.
 
 ## Cost guardrails (must verify BEFORE `terraform apply`)
 
