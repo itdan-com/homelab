@@ -39,3 +39,9 @@ cedarpy==4.8.7
 # not depend on what happened to be lying around.
 PyJWT==2.13.0
 httpx==0.28.1
+# FastAPI needs this to parse the HTML form the elevation doors post
+# (Form(...)). Missing it is not an import error — the app builds its
+# routes fine and then dies at STARTUP with "Form data requires
+# python-multipart", which is why the installer now import-checks the
+# deployed venv instead of finding out from a crashlooping unit.
+python-multipart==0.0.32

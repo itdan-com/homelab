@@ -83,6 +83,21 @@ echo "== virtualenv"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
 "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 
+# Prove the DEPLOYED venv can actually build every app before systemd
+# tries. A developer's venv accumulates packages that requirements.txt
+# never pinned, so "it runs here" says nothing about a clean install —
+# python-multipart went missing exactly this way (2026-08-02), and the
+# only symptom was a unit crash-looping with the real error buried in
+# journalctl. Importing each app here surfaces it in the install output,
+# next to the line that caused it.
+echo "== import check (clean-venv proof)"
+( cd "$APP_DIR" && SENTINEL_DB="$STATE_DIR/sentinel.db" \
+  "$APP_DIR/.venv/bin/python" -c \
+  'import app.broker, app.main, app.door' ) || {
+  echo "!! the deployed venv cannot build the app — a dependency is missing" >&2
+  echo "   from requirements.txt (the error above names it)." >&2
+  exit 1; }
+
 echo "== state + config directories"
 install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$STATE_DIR"
 install -d -o root -g root -m 0755 "$ETC_DIR"
