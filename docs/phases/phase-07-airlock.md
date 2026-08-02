@@ -273,17 +273,35 @@ RFC 8693 at the gateway.
   elevation cannot close an open stream) has no surface here; when
   server-initiated notifications need SSE, the cap ships in the same
   change (`GET /mcp` → 405 saying so).
-- [ ] **7.3.5 The confirm + approve doors.** A borrowable denial
-  already carries the offer (7.2.3); the doors mint the profile
-  grants: `confirm` = the caller self-elevates from their own
-  client, time-boxed, `granted_via=confirm`; `approve` = the
-  request lands as a console card and a passkey holder grants
-  (`granted_via=approve`, `granted_by` = the approver; lab collapse
-  stays named — one enrolled human is requester≈approver until a
-  second passkey enrolls). THE MEASUREMENT: one honest MCP session
-  end-to-end costs at most ONE approval — the 5.5.8
-  six/seven-approvals headline retired on the wire, not just at
-  unit level.
+- [x] **7.3.5 The confirm + approve doors** (DONE 2026-08-02, code +
+  tests; suite 96/96, 12 new). A refusal now carries a **one-time
+  elevation link** alongside the offer, and the link is a **browser
+  page behind the company IdP**, not an MCP tool — because an
+  `airlock.elevate` tool is callable by the MODEL, and a model that
+  can elevate itself is the self-granting hole this architecture
+  exists to close (ADR-005: anything may draft, only a human
+  activates). The MCP-native alternative is the spec's `elicitation`
+  capability (Claude Code advertises it), which needs a
+  server→client stream — named as the upgrade that ships WITH SSE,
+  not pretended. `confirm` = the caller clicks a window from the
+  matrix and self-issues (`granted_via=confirm`, `granted_by` =
+  themselves); `approve` = the same click files a card on the
+  passkey console, and `grant_request` now mints a PROFILE grant
+  when the request carries a profile + principal
+  (`granted_via=approve`, `granted_by` = the approver) — one
+  primitive, two doors, exactly as ADR-005 predicted. Proven: link
+  is single-use and person-bound (another signed-in person gets
+  403); CSRF forgery mints nothing; only an offered window is
+  accepted; **a self-issued grant never opens the approve rung**; an
+  approved window still cannot write the forbidden prod tier; and
+  the audit log reconstructs the window (grant row with via +
+  minutes, every call under it stamped with `policy_version`).
+  **THE MEASUREMENT, on the wire: handshake + list + three
+  birthright calls = ZERO approvals; one write window = ONE
+  deliberate human act covering every write in it** — against
+  5.5.8's seven. Lab collapse stays named: one enrolled human means
+  requester ≈ approver until a second passkey enrolls; the mechanism
+  (console grant + window + `granted_by`) is enforced regardless.
 - [ ] **7.3.6 Install line + battery + demo + close.** Install
   (restarts + wire probes; carries the two console fixes from
   `96f9d19`); battery extended to assert the door (discovery

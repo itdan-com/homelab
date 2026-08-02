@@ -212,6 +212,29 @@ def grant_request(
     # ran (and we abort) or has not started (and it will see this row).
     if kill_state(s).engaged:
         raise ValueError("kill switch engaged — no new grants")
+    # Airlock's APPROVE door (7.3.5): a request a PERSON raised for a
+    # PROFILE is granted as a profile grant hung on that person, not as
+    # a flow-scoped single-tool token. Same console card, same button,
+    # same human — `granted_via` records which door it came through,
+    # and `approve` is the only value a ladder `approve` rung accepts.
+    if req.profile and req.principal_id:
+        from . import policy
+        server, _, level = req.profile.partition(":")
+        ap = policy.get_active()
+        tools = policy.profile_tools(ap.servers, server, level) if ap else []
+        if not tools:
+            raise ValueError(f"profile {req.profile!r} covers no tools in the "
+                             "active policy — refusing to grant nothing")
+        grant, _plain = mint_profile_grant(
+            s, profile=req.profile, tools=tools, window_minutes=ttl_minutes,
+            granted_by=granted_by, granted_via="approve",
+            principal=s.get(Principal, req.principal_id), flow_id=req.flow_id)
+        req.status = RequestStatus.GRANTED
+        req.decided_at, req.decided_by, req.grant_id = now, granted_by, grant.id
+        # No token_plaintext: nobody polls for this one. The person's
+        # authority is the grant itself, checked per call at the door.
+        s.commit()
+        return grant
     grant = CapabilityGrant(
         flow_id=req.flow_id, tool=req.tool, token_hash=_hash(token),
         expires_at=now + timedelta(minutes=ttl_minutes), granted_by=granted_by,

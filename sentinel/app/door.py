@@ -66,7 +66,12 @@ from .config import (
 )
 from .db import SessionLocal
 from .models import AuditEventType, Principal
-from .service import audit, get_or_create_principal
+from .service import (
+    audit,
+    create_request,
+    get_or_create_principal,
+    mint_profile_grant,
+)
 
 log = logging.getLogger("sentinel")
 
@@ -325,21 +330,28 @@ def authorize(request: Request):
         return _err("A statically registered client may only return to loopback.")
 
     sid = secrets.token_urlsafe(24)
-    verifier = secrets.token_urlsafe(48)
     _pending[sid] = {
-        "t": time.time(), "client_id": client_id, "redirect_uri": redirect_uri,
+        "t": time.time(), "kind": "oauth",
+        "client_id": client_id, "redirect_uri": redirect_uri,
         "client_state": q.get("state"), "challenge": q.get("code_challenge"),
-        "resource": q.get("resource") or RESOURCE, "verifier": verifier,
+        "resource": q.get("resource") or RESOURCE,
+        "verifier": secrets.token_urlsafe(48),
         "client_name": client.get("client_name") or client_id,
     }
-    challenge = _b64u(hashlib.sha256(verifier.encode()).digest())
-    upstream = oidc_config()["authorization_endpoint"] + "?" + urlencode({
+    return RedirectResponse(_upstream_login(sid), status_code=302)
+
+
+def _upstream_login(sid: str) -> str:
+    """Hand the human to the IdP, with the door's OWN PKCE verifier —
+    never the client's. The door proves possession to Authentik; the
+    client proves possession to the door. Two independent legs."""
+    challenge = _b64u(hashlib.sha256(_pending[sid]["verifier"].encode()).digest())
+    return oidc_config()["authorization_endpoint"] + "?" + urlencode({
         "response_type": "code", "client_id": OIDC_CLIENT_ID,
         "redirect_uri": f"{DOOR_ORIGIN}/callback",
         "scope": "openid email profile", "state": sid,
         "code_challenge": challenge, "code_challenge_method": "S256",
     })
-    return RedirectResponse(upstream, status_code=302)
 
 
 @app.get("/callback", tags=["oauth"])
@@ -394,11 +406,22 @@ def callback(request: Request):
                 display_name=claims.get("name"))
             principal_id, principal_email = p.id, p.email
             audit(s, AuditEventType.AUTH_SUCCESS, principal=p.email,
-                  details={"surface": "door", "client": sess["client_name"]})
+                  details={"surface": "door",
+                           "client": sess.get("client_name", "browser")})
             s.commit()
     except ValueError as e:  # principal-disabled, idp-sub-mismatch (audited)
         return _err("Your account cannot sign in here. "
                     f"({e}) Contact your platform administrator.")
+
+    if sess.get("kind") == "browser":
+        # The door's own pages (the elevation doors, 7.3.5). No
+        # authorization code is minted: a browser session is not an
+        # API credential and cannot be exchanged for one.
+        r = RedirectResponse(sess["return_to"], status_code=302)
+        r.set_cookie("door_session", _session_cookie(principal_id, principal_email),
+                     max_age=SESSION_TTL_SECONDS, httponly=True, secure=True,
+                     samesite="lax", path="/elevate")
+        return r
 
     ac = secrets.token_urlsafe(32)
     _codes[ac] = {"t": time.time(), "client_id": sess["client_id"],
@@ -615,17 +638,25 @@ def _handle_rpc(msg: dict, claims: dict, flow_id: str) -> dict | None:
                                    arguments=arguments)
         if not result.allowed:
             # The refusal is the product: it says what borrowing would
-            # take, so a client can offer the elevation rather than
-            # leaving the person at a dead end.
+            # take AND hands over the one-time link that does it, so a
+            # client can offer "unlock this?" instead of a dead end.
+            data = {"outcome": result.outcome, "reason": result.reason,
+                    "resource": result.resource, "policy_version": ap.version}
+            if result.hint:
+                ticket = _elevation_ticket(
+                    principal_id=claims["sub"], email=claims["email"],
+                    outcome=result.outcome, profile=result.hint["profile"],
+                    windows=result.hint["windows"], tool=name)
+                data["elevation"] = {**result.hint,
+                                     "url": f"{DOOR_ORIGIN}/elevate/{ticket}"}
             return _rpc_error(rid, -32003, {
-                "elevation-available": "This tool needs a timed elevation "
-                                       "you can start yourself.",
+                "elevation-available": "This tool needs a timed elevation you "
+                                       "can start yourself — open the link in "
+                                       "`elevation.url` and confirm.",
                 "approval-required": "This tool needs another person's "
-                                     "approval.",
-            }.get(result.reason, "Not permitted."), {
-                "outcome": result.outcome, "reason": result.reason,
-                "resource": result.resource, "policy_version": ap.version,
-                **({"elevation": result.hint} if result.hint else {})})
+                                     "approval — open the link in "
+                                     "`elevation.url` to ask.",
+            }.get(result.reason, "Not permitted."), data)
         return {"jsonrpc": "2.0", "id": rid,
                 "result": _call_upstream(server, leaf, arguments,
                                          principal=claims["email"],
@@ -658,6 +689,178 @@ async def mcp(request: Request):
         return JSONResponse(_rpc_error(None, -32600, "Invalid Request"), 400)
     resp = _handle_rpc(msg, claims, flow_id)
     return Response(status_code=202) if resp is None else JSONResponse(resp)
+
+
+# --- the elevation doors (7.3.5) ---------------------------------------------
+#
+# A refusal that says "you could borrow this" is only half a product;
+# these are the doors that let someone act on it.
+#
+#   confirm  — the caller elevates THEMSELVES: sudo-shaped, time-boxed,
+#              recorded, no second person.
+#   approve  — a DIFFERENT human decides, on the passkey console. Same
+#              card and same button as 5.5's flow; `granted_via` is
+#              what distinguishes the two, and only `approve` (or an
+#              operator's `admin`) satisfies the ladder's approve rung.
+#
+# **Why a browser page and not an MCP tool.** An `airlock.elevate`
+# tool would be callable by the MODEL, and a model that can elevate
+# itself is precisely the self-granting hole this architecture exists
+# to close (ADR-005: anything may draft, only a human activates). The
+# elevation therefore happens where the model cannot reach: a page
+# behind the company IdP, requiring a click by the signed-in person.
+# The MCP-native alternative — the spec's `elicitation` capability,
+# which Claude Code advertises — routes the prompt to the human
+# through the client and is the better UX, but it needs a
+# server→client stream, and 7.3.4 deliberately has no SSE. Named as
+# the upgrade, not pretended.
+
+SESSION_TTL_SECONDS = 900
+TICKET_TTL_SECONDS = 900
+_tickets: dict[str, dict] = {}
+
+
+def _session_cookie(principal_id: str, email: str) -> str:
+    now = int(time.time())
+    return jwt.encode({"iss": DOOR_ORIGIN, "aud": "door-session",
+                       "sub": principal_id, "email": email, "iat": now,
+                       "exp": now + SESSION_TTL_SECONDS},
+                      signing_key(), algorithm="RS256")
+
+
+def _session(request: Request) -> dict | None:
+    raw = request.cookies.get("door_session")
+    if not raw:
+        return None
+    try:
+        return jwt.decode(raw, signing_key().public_key(), algorithms=["RS256"],
+                          audience="door-session", issuer=DOOR_ORIGIN)
+    except jwt.PyJWTError:
+        return None
+
+
+def _elevation_ticket(*, principal_id: str, email: str, outcome: str,
+                      profile: str, windows: list[int], tool: str) -> str:
+    _sweep(_tickets, TICKET_TTL_SECONDS)
+    tid = secrets.token_urlsafe(24)
+    _tickets[tid] = {"t": time.time(), "principal_id": principal_id,
+                     "email": email, "outcome": outcome, "profile": profile,
+                     "windows": windows, "tool": tool}
+    return tid
+
+
+def _page(title: str, body: str, status: int = 200) -> HTMLResponse:
+    return HTMLResponse(
+        f"<!doctype html><meta charset=utf-8><title>{title}</title>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<body style='font-family:system-ui;max-width:34em;margin:4em auto;"
+        "line-height:1.5'>" + body, status_code=status)
+
+
+@app.get("/elevate/{ticket}", tags=["elevation"])
+def elevate_page(ticket: str, request: Request):
+    _sweep(_tickets, TICKET_TTL_SECONDS)
+    t = _tickets.get(ticket)
+    if t is None:
+        return _page("Expired", "<h1>This elevation link has expired</h1>"
+                     "<p>Ask again from your client and use the new link.</p>", 404)
+    sess = _session(request)
+    if sess is None:
+        # Sign in first, then come back here. Same federation as the
+        # API path; the session cookie it sets is scoped to /elevate
+        # and cannot be exchanged for a token.
+        sid = secrets.token_urlsafe(24)
+        _pending[sid] = {"t": time.time(), "kind": "browser",
+                         "verifier": secrets.token_urlsafe(48),
+                         "return_to": f"{DOOR_ORIGIN}/elevate/{ticket}"}
+        return RedirectResponse(_upstream_login(sid), status_code=302)
+    if sess["sub"] != t["principal_id"]:
+        # The link names a person; only that person may act on it.
+        return _page("Not yours", "<h1>This request belongs to someone else</h1>"
+                     "<p>You are signed in as "
+                     f"{sess['email']}.</p>", 403)
+
+    csrf = _b64u(hashlib.sha256(
+        (ticket + str(signing_key().private_numbers().d)).encode()).digest())[:32]
+    if t["outcome"] == "confirm":
+        buttons = "".join(
+            f"<button name=minutes value={m} style='font-size:1.1em;"
+            f"padding:.6em 1.2em;margin-right:.5em'>{m} minutes</button>"
+            for m in t["windows"])
+        body = (f"<h1>Unlock <code>{t['profile']}</code>?</h1>"
+                f"<p>You asked to run <code>{t['tool']}</code>. That needs "
+                "elevated access, which you can grant yourself for a limited "
+                "time. Everything you do in the window is recorded, and it "
+                "closes by itself.</p>"
+                f"<form method=post><input type=hidden name=csrf value={csrf}>"
+                f"{buttons}</form>")
+    else:
+        body = (f"<h1>Ask for approval on <code>{t['profile']}</code>?</h1>"
+                f"<p><code>{t['tool']}</code> is high-risk here: a different "
+                "person has to approve it. This puts a request on the "
+                "Sentinel console for whoever holds a passkey.</p>"
+                f"<form method=post><input type=hidden name=csrf value={csrf}>"
+                f"<input type=hidden name=minutes value={t['windows'][0]}>"
+                "<button style='font-size:1.1em;padding:.6em 1.2em'>"
+                "Request approval</button></form>")
+    return _page("Airlock", body)
+
+
+@app.post("/elevate/{ticket}", tags=["elevation"])
+def elevate_submit(ticket: str, request: Request, csrf: str = Form(...),
+                   minutes: int = Form(...)):
+    t = _tickets.get(ticket)
+    sess = _session(request)
+    if t is None or sess is None:
+        return _page("Expired", "<h1>This elevation link has expired</h1>", 404)
+    if sess["sub"] != t["principal_id"]:
+        return _page("Not yours", "<h1>This request belongs to someone else</h1>",
+                     403)
+    expected = _b64u(hashlib.sha256(
+        (ticket + str(signing_key().private_numbers().d)).encode()).digest())[:32]
+    if not secrets.compare_digest(csrf, expected):
+        return _page("Refused", "<h1>That form did not come from here</h1>", 400)
+    if minutes not in t["windows"]:
+        return _page("Refused", "<h1>That is not one of the offered windows</h1>",
+                     400)
+
+    _tickets.pop(ticket, None)  # single use, whichever door it opened
+    server, _, level = t["profile"].partition(":")
+    ap = policy.get_active()
+    tools = policy.profile_tools(ap.servers, server, level) if ap else []
+    if not tools:
+        return _page("Unavailable", "<h1>That profile covers no tools</h1>"
+                     "<p>The policy may have changed. Try your call again.</p>",
+                     409)
+
+    with SessionLocal() as s:
+        p = s.get(Principal, t["principal_id"])
+        if t["outcome"] == "confirm":
+            try:
+                mint_profile_grant(
+                    s, principal=p, profile=t["profile"], tools=tools,
+                    window_minutes=minutes, granted_via="confirm",
+                    granted_by=p.email,
+                    flow_id=None)
+            except ValueError as e:  # kill switch engaged
+                return _page("Unavailable", f"<h1>Not right now</h1><p>{e}</p>", 409)
+            return _page("Unlocked",
+                         f"<h1>Unlocked for {minutes} minutes</h1>"
+                         f"<p><code>{t['profile']}</code> is available until the "
+                         "window closes. Go back to your client and try the "
+                         "call again — you do not need to sign in again.</p>")
+        flow_id = f"elev-{secrets.token_urlsafe(9)}"
+        req, _created = create_request(
+            s, flow_id=flow_id, tool=f"profile:{t['profile']}",
+            reason=f"{p.email} asked to run {t['tool']}",
+            agent=f"airlock-door:{p.email}",
+            claim_nonce=secrets.token_urlsafe(16))
+        req.principal_id, req.profile, req.window_minutes = p.id, t["profile"], minutes
+        s.commit()
+    return _page("Waiting", "<h1>Sent for approval</h1>"
+                 "<p>Someone with a Sentinel passkey has to approve this. "
+                 "You will be able to make the call once they do — no need "
+                 "to sign in again.</p>")
 
 
 @app.get(MCP_PATH, tags=["mcp"])
