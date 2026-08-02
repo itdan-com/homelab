@@ -1,0 +1,18 @@
+# The entity store (ADR-005 Decision 2): WHO exists, and the group
+# lattice. This is the AUTHORIZATION source — the in-cluster IdP only
+# ever proves who is calling; membership here is what Cedar trusts.
+# Every person is implicitly a member of `all-employees` (the
+# birthright base). All names land inside Cedar string literals, so
+# the loader accepts [A-Za-z0-9@._:-] only and refuses anything else.
+groups:
+  engineering: {}
+  hr: {}
+  hr-head:
+    parent: hr        # sub-groups inherit the role's birthright
+people:
+  alice@example.com:
+    display_name: Alice
+    groups: [engineering]
+  harriet@example.com:
+    display_name: Harriet
+    groups: [hr-head]

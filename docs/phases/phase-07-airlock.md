@@ -72,11 +72,24 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   audit `principal`/`resource`/`policy_version`, per-grant +
   per-flow revoke (ADR-004 debt 4: service + `/v1/grants` list +
   revoke endpoints, 409 on double-revoke). Suite 21/21 (8 new).
-- [ ] **7.2.2 Policy store + generator.** `/var/lib/sentinel/policy/`
-  (entity store, access matrix `none/read/write/write-on-request/
-  write-on-approval`, resource maps); matrix→Cedar generation
-  (`cedarpy` 4.8.7 pinned); validate→activate atomically,
-  last-good-stays-live; auto-commit each version to local git history.
+- [x] **7.2.2 Policy store + generator** (DONE 2026-08-02).
+  `app/policy.py`: three documents (entity store with lattice +
+  implicit `all-employees`; five-level access matrix + windows +
+  forbids; per-server tool classification with `rpc.*` prefix
+  classes + resource maps) → semantic validation (ALL errors at once;
+  Cedar-literal **injection guard** — emails/groups/servers restricted
+  to a safe charset, rejected not escaped) → generated Cedar
+  (deterministic; write* levels imply read; forbids emit engine-level
+  `forbid`) → `cedarpy.validate_policies` against a schema where
+  `Resource.tier` is REQUIRED (the skip-on-error defense) → atomic
+  activate, **last-good-stays-live** → content-hash version →
+  auto-commit to the store's own local git (author = the console
+  actor). `policy-example/` committed as living documentation AND the
+  test fixture (they cannot drift). Admin `GET /v1/policy/status` +
+  best-effort startup activation. Dev store gitignored (it grows its
+  own `.git`). Suite 33/33 (12 new), crown assert: the ADR's
+  four-outcome ladder proven against GENERATED policy — hr-head
+  `approve` on staging, `forbid` on prod through every context.
 - [ ] **7.2.3 The ladder into `check_capability`.** Baseline /
   elevated / approved context evaluations; forbid rules trump;
   `policy_version` stamped on decision rows.
@@ -302,6 +315,14 @@ birthright plus Decision 6's profile grants.
   construction) — client-chosen ids only ever existed in the
   single-tenant mTLS domain. Attribution columns are what had to
   land before rows accumulate, and did.
+- **2026-08-02 (7.2.2):** two patterns worth keeping: (1) the
+  committed `policy-example/` store IS the test fixture (`_mk_store`
+  seeds from it) — documentation that drifts from behavior fails CI;
+  (2) names that land inside Cedar string literals are REJECTED on a
+  safe charset, never escaped — escaping is where injection bugs
+  live. Also: `profile_tools` may return `rpc.*` prefix entries in a
+  grant snapshot, so `_grant_covers` needs prefix awareness when
+  7.2.3 wires profiles to the checker (recorded so it isn't missed).
 - **2026-08-02 (7.2.1):** deliberately deferred: an elevation-CLOSE
   audit event at window expiry (open is the GRANT row; expiry is
   lazy, nothing sweeps). Decide at 7.2.4 whether the console's

@@ -85,3 +85,12 @@ ENROLLMENT_TTL_MINUTES = int(os.environ.get("SENTINEL_ENROLLMENT_TTL_MINUTES", "
 # caller explicitly closes a flow, which nothing does yet — so it can
 # never be the sole activity signal.)
 FLOW_ACTIVE_MINUTES = int(os.environ.get("SENTINEL_FLOW_ACTIVE_MINUTES", "15"))
+
+# --- the policy store (7.2.2, ADR-005 D5) ------------------------------------
+#
+# Where the console-authored authorization documents live (entity
+# store, access matrix, servers, overlay) plus their generated Cedar
+# and the local git history. Dev default is repo-local and GITIGNORED
+# (it grows its own .git); production is /var/lib/sentinel/policy via
+# the systemd unit — same construction rule as SENTINEL_DB.
+POLICY_DIR = os.environ.get("SENTINEL_POLICY_DIR", "./policy-dev")

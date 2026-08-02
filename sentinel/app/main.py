@@ -47,6 +47,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import __version__
 from . import auth_routes
+from . import policy
 from .actor import console_guard, current_operator, require_operator
 from .config import CONSOLE_ALLOWED_HOSTS, CONSOLE_ORIGIN, FLOW_ACTIVE_MINUTES
 from .db import SessionLocal, engine
@@ -70,6 +71,7 @@ from .schemas import (
     KillIn,
     KillStatus,
     PendingRequest,
+    PolicyStatusOut,
     RevokeIn,
 )
 from .service import (
@@ -125,6 +127,14 @@ async def lifespan(_app: FastAPI):
     stops running when a framework drops a hook is a security control
     with an expiry date nobody notices."""
     _refuse_unsafe_exposure()
+    # Best-effort policy activation (7.2.2). Failure must NOT stop the
+    # console — the console is where a broken store gets fixed — and
+    # an inactive store fails the person-path closed, never open.
+    try:
+        policy.activate(actor="startup")
+    except Exception as e:  # PolicyError, missing store, no git, …
+        import logging
+        logging.getLogger("sentinel").warning("policy store not active: %s", e)
     yield
 
 
@@ -377,6 +387,29 @@ def flows(active: bool = Query(
                 continue
             out.append(row)
         return out
+
+
+@app.get(
+    "/v1/policy/status",
+    response_model=PolicyStatusOut,
+    response_model_exclude_none=True,
+    tags=["record"],
+    summary="Which policy version is deciding right now",
+    dependencies=[Depends(require_operator)],
+)
+def policy_status():
+    """`active: false` means no store has activated (missing, or the
+    last edit failed validation and last-good was NONE) — the person
+    path denies closed in that state, and the Access screen (7.2.4)
+    is where it gets fixed."""
+    ap = policy.get_active()
+    if ap is None:
+        return PolicyStatusOut(active=False)
+    return PolicyStatusOut(
+        active=True, version=ap.version, loaded_at=ap.loaded_at,
+        servers=sorted(ap.servers),
+        matrix_groups=sorted(ap.matrix.get("grants") or {}),
+    )
 
 
 # --- grants & revocation (7.2.1, ADR-004 debt 4) ------------------------------

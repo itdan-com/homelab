@@ -1,0 +1,26 @@
+# Per-server tool classification + resource derivation (ADR-005 D3).
+# Leaves are scope.py leaf names (`<server>.<leaf>` on the wire);
+# an entry ending `.*` is a prefix class — `rpc.*` covers the MCP
+# handshake (initialize, tools.list, transport.get/delete), which is
+# what makes an assigned server REACHABLE at zero approvals while an
+# unassigned one cannot even complete initialize.
+github:
+  tools:
+    read: [get_file, list_pull_requests, "rpc.*"]
+    write: [create_pull_request, merge_pull_request]
+  resource:
+    from: params.arguments.repo
+    tiers:
+      prod: [itdan-com/homelab]
+echo:
+  tools:
+    read: [say, "rpc.*"]
+hr-platform:
+  tools:
+    read: [lookup_employee, "rpc.*"]
+    write: [update_record]
+  resource:
+    from: params.arguments.database
+    tiers:
+      prod: [hr_prod]
+      staging: [hr_staging]

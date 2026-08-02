@@ -32,3 +32,4 @@ uvloop==0.22.1
 watchfiles==1.2.0
 webauthn==3.0.0
 websockets==16.1.1
+cedarpy==4.8.7

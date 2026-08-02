@@ -179,6 +179,17 @@ class AuditEventOut(SentinelModel):
     details: dict | None
 
 
+class PolicyStatusOut(SentinelModel):
+    active: bool = Field(description="False = no policy store activated; "
+                                     "the person-path denies closed.")
+    version: str | None = Field(
+        default=None, description="Content hash of the active store.")
+    loaded_at: datetime | None = None
+    servers: list[str] = Field(default_factory=list)
+    matrix_groups: list[str] = Field(
+        default_factory=list, description="Groups with matrix entries.")
+
+
 # --- grants & revocation (7.2.1, ADR-004 debt 4) ------------------------------
 
 class RevokeIn(AdminAction):

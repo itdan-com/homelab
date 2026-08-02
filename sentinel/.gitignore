@@ -15,3 +15,5 @@ __pycache__/
 # scripts/mint-certs.sh) — never in git, encrypted or not: the CA
 # key IS the authority to impersonate the broker.
 certs/
+# Dev policy store — grows its own .git via activation history
+policy-dev/

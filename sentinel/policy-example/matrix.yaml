@@ -1,0 +1,32 @@
+# The access matrix (ADR-005 Decision 5) — the owner's sentence as a
+# schema: per (group, server) one of
+#   none | read | write | write-on-request | write-on-approval
+# Every write* level implies read birthright. `write-on-request` is
+# the auto-approved timed elevation (confirm); `write-on-approval` is
+# the high-risk rung where a DIFFERENT human grants on the Sentinel
+# console. `forbids` trump every level at every rung — no context
+# flag can un-forbid (Cedar's forbid-overrides-permit is an engine
+# property, not a convention).
+defaults:
+  windows: [30, 60, 120]   # minutes an elevation window may run
+grants:
+  all-employees:
+    echo:
+      level: read
+  engineering:
+    github:
+      level: write-on-request
+    echo:
+      level: write
+  hr:
+    hr-platform:
+      level: read
+  hr-head:
+    hr-platform:
+      level: write-on-approval
+forbids:
+  # Sources of truth: no write path on the prod tier, ever — not via
+  # elevation, not via approval (owner stance, 2026-08-02).
+  - server: hr-platform
+    tier: prod
+    actions: [write]
