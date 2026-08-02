@@ -1,0 +1,6 @@
+Starting authentication for "probe3"…
+Visit this URL to authorize:
+  http://127.0.0.1:9802/as/authorize?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&code_challenge=YGTcIAxpvVX7VE2-zxTmyVYZ02mZoJUCqpGdPPxzYSU&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A54491%2Fcallback&state=ZQ1vq3P7VLImbLq9Ne4jyk4bE0cwrgs7Of7erD6xiPc&resource=http%3A%2F%2F127.0.0.1%3A9802%2Fmcp
+
+Waiting for authorization… (^C to cancel)
+Couldn't complete authentication for "probe3": stdin isn't a terminal, so authentication can't be completed here. Re-run in an interactive terminal — e.g. `ssh -t` — and paste the redirect URL when prompted.

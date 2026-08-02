@@ -302,17 +302,30 @@ RFC 8693 at the gateway.
   5.5.8's seven. Lab collapse stays named: one enrolled human means
   requester ≈ approver until a second passkey enrolls; the mechanism
   (console grant + window + `granted_by`) is enforced regardless.
-- [ ] **7.3.6 Install line + battery + demo + close.** Install
-  (restarts + wire probes; carries the two console fixes from
-  `96f9d19`); battery extended to assert the door (discovery
-  documents served, an unauthenticated call refused, a birthright
-  call passing, the one-approval measurement); SETUP.md gains the
-  door section (+ the pending certutil wording fix from backlog).
-  The demo: owner's real Authentik identity enrolled as a principal
-  via the Access GUI, Claude Code pointed at `mcp.lab.local`,
-  sign-in, birthright tool call at zero approvals, one confirm
-  elevation — captured as the demo asset. STATUS + phase-doc
-  close-out.
+- [~] **7.3.6 Install line + battery + demo + close** (builder half
+  DONE 2026-08-02; owner half = one pasted line + the demo).
+  Delivered: a **door leaf** in `mint-certs.sh` (SAN `mcp.lab.local`
+  + loopback; cloud swaps in a publicly-trusted cert); the installer
+  installs/enables/**restarts** the third unit, writes the door +
+  OIDC env, and **adopts the cluster CA by detection** so the door
+  verifies the IdP's TLS strictly; **wire probes extended** — door
+  https 200, its advertised resource must equal the origin people
+  type, an unauthenticated MCP call must 401 *with* the discovery
+  pointer, and the two POLICY CONSUMERS (broker + door) must agree
+  on the active version or the install fails; battery section 8
+  drives the person path and prints BEFORE/AFTER; SETUP §1.6 rewritten
+  for three units + new **§1.6b** (client setup, the
+  zero-tools-until-you-are-in-the-store warning, `NODE_EXTRA_CA_CERTS`,
+  why elevation is a link not a tool) and the backlog's certutil
+  wording closed. **Authentik client re-homed** to the door
+  (`08ebd5e`→`c3a15c8`): the provider now carries ONE strict redirect
+  (the door's callback) instead of wildcarded ephemeral ports —
+  verified live (door callback 302, old 18789 redirect 400).
+  **Rehearsed against a live dev door before handing over the sudo
+  line** — see notes: the real CIMD chain works end to end.
+  Remaining (owner): `sudo ./scripts/install-systemd.sh`, add
+  `bob@itdan.com` to the store via Access → People, then
+  `docs/demos/airlock-the-door.md`.
 
 ## ADR-005 must resolve — blockers from the 2026-07-28 audit
 
@@ -653,6 +666,27 @@ birthright plus Decision 6's profile grants.
   CONFIG, never in the policy store, so a console policy edit can
   never retarget traffic to another host; a server with no upstream
   is decidable but not callable, which is the honest state until 7.4.
+- **2026-08-02 (7.3.6) — the CIMD chain PROVEN on the real wire
+  before the owner touched anything.** A dev door was run with the
+  exact env the installer writes, against live Authentik and the
+  real internet: `/authorize` with Claude Code's genuine client_id
+  (`https://claude.ai/oauth/claude-code-client-metadata`) → the door
+  fetched that document through the SSRF guard → **matched its
+  PORTLESS `http://localhost/callback` against a real ephemeral port
+  via RFC 8252 §7.3** (claude-code #37747 neutralized by
+  spec-correctness, as designed) → 302 to Authentik carrying the
+  door's own PKCE. Then the actual client: `claude mcp login` chose
+  the CIMD branch (our metadata flag), sent `scope=mcp` (from our
+  `scopes_supported`), and accepted our TLS via
+  `NODE_EXTRA_CA_CERTS` — stopping only at the interactive
+  paste-back, which is the owner's part. **The rehearsal caught a
+  real failure first:** with `SENTINEL_OIDC_HTTP_BASE` unset the door
+  fetched the issuer at :443 and died `ConnectError` — the installer
+  sets it, but the lesson is that the issuer/transport split has a
+  hard dependency, so the env write is load-bearing, not cosmetic.
+  Also confirmed: `authentik.lab.local` resolves from WSL through
+  Windows DNS, so the door uses the REAL hostname and verifies TLS
+  strictly (no Host-header/SNI mismatch fudge).
 - **2026-08-02 (owner, mid-7.3 — the product frame that re-cut
   7.3.3):** *"we would be using authentik in an end state would we
   not? easy enough for a small company"*; *"im not sure why we
