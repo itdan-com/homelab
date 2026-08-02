@@ -31,6 +31,16 @@ first and report PASS/FAIL on each line before reading further:
    redirect middleware working, not a failure). If authentik is down,
    note: every app keeps a local break-glass login (see SETUP.md
    Part 2).
+6. Sentinel — the trust anchor's units AND its transport (added
+   2026-08-02: `Active: running` told the truth for five days while
+   the console served plain http; check the wire, not the unit):
+   `systemctl is-active sentinel-broker sentinel-admin` → both
+   `active`; then
+   `curl -sk -o /dev/null -w '%{http_code}\n' --max-time 5 https://localhost:8400/healthz`
+   → `200` over httpS specifically. An http-only answer on 8400
+   means the units are running stale code or a stale unit file —
+   the fix is the install line in SETUP §1.7 (it restarts and
+   wire-probes), not a manual restart.
 
 Any FAIL: diagnose and fix (or log to STATUS.md Backlog) before phase
 work. A green gate is the entry criterion for every session.
