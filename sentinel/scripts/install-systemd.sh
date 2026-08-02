@@ -163,7 +163,35 @@ echo "== units"
 install -m 0644 "$REPO_DIR/deploy/sentinel-admin.service" \
                 "$REPO_DIR/deploy/sentinel-broker.service" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now sentinel-broker.service sentinel-admin.service
+systemctl enable sentinel-broker.service sentinel-admin.service
+# RESTART, never `enable --now`: --now starts a stopped unit and
+# silently leaves a running one on the OLD code — which is exactly how
+# the 2026-07-27 https fix to the admin unit sat unapplied for five
+# days while `status` reported active. A deploy that does not restart
+# is not a deploy.
+systemctl restart sentinel-broker.service sentinel-admin.service
+
+# Probe the WIRE, not the unit state: "active" told the truth all five
+# of those days while the transport was wrong. The install now proves
+# each listener answers on the scheme production expects — strict
+# verification against Sentinel's own CA (the SANs cover localhost and
+# the broker address) — or it fails right here, loudly.
+sleep 2
+ADMIN_OK=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+  --cacert "$CERT_DIR/ca.crt" "https://$RP_ID:$ADMIN_PORT/healthz" || true)
+[[ "$ADMIN_OK" == "200" ]] || {
+  echo "!! admin console did not answer https on :$ADMIN_PORT (got '${ADMIN_OK}')" >&2
+  echo "   journalctl -u sentinel-admin -n 50" >&2
+  exit 1; }
+BROKER_OK=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+  --cacert "$CERT_DIR/ca.crt" \
+  --cert "$CERT_DIR/proxy-client.crt" --key "$CERT_DIR/proxy-client.key" \
+  "https://$BROKER_BIND:$BROKER_PORT/healthz" || true)
+[[ "$BROKER_OK" == "200" ]] || {
+  echo "!! broker did not answer mTLS https on $BROKER_BIND:$BROKER_PORT (got '${BROKER_OK}')" >&2
+  echo "   journalctl -u sentinel-broker -n 50" >&2
+  exit 1; }
+echo "== wire probes: admin https 200, broker mTLS 200"
 systemctl --no-pager --lines=0 status sentinel-broker.service sentinel-admin.service || true
 
 # First install: mint an enrollment code and hand over one clickable
