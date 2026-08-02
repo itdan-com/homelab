@@ -178,7 +178,15 @@ if [ -f k3d/operator-view-rbac.yaml ]; then
   if [ -n "$TOKEN" ]; then
     OP_DIR="$HOME/.config/homelab-operator"
     mkdir -p "$OP_DIR"
-    SERVER="$(kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.server}')"
+    # Derive the API server from the NAMED k3d cluster, never from the
+    # ambient current-context (--minify reads whatever context happens
+    # to be active — a bootstrap run pointed elsewhere would silently
+    # write wrong credentials; found by the operator itself, issue #8).
+    SERVER="$(kubectl config view --raw -o jsonpath="{.clusters[?(@.name=='k3d-${CLUSTER_NAME}')].cluster.server}")"
+    if [ -z "$SERVER" ]; then
+      echo "FATAL: cluster 'k3d-${CLUSTER_NAME}' not found in kubeconfig — refusing to mint an operator kubeconfig from an unknown server." >&2
+      exit 1
+    fi
     CA_DATA="$(kubectl get secret operator-view-token -n platform-control -o jsonpath='{.data.ca\.crt}')"
     cat > "$OP_DIR/kubeconfig" <<KCFG
 apiVersion: v1
