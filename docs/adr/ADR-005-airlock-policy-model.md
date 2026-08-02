@@ -1,7 +1,10 @@
 # ADR-005: Airlock's policy model — Cedar, identity, resources, and the elevation gate
 
-**Status:** **Proposed** 2026-08-02 (Phase 7.1). Needs owner acceptance
-before 7.2 (schema + policy engine) begins.
+**Status:** **Proposed** 2026-08-02 (Phase 7.1); **amended same day
+after owner review** — policy authoring moved from human PRs to the
+Sentinel console (Decision 5); git demoted from authoring surface to
+automatic memory. Needs owner acceptance before 7.2 (schema + policy
+engine) begins.
 **Owner input (2026-08-02):** the elevation model in their words —
 person → group → birthright; elevation is a *request that is
 auto-approved because the group already entitles it*, time-boxed
@@ -10,6 +13,11 @@ auto-approved because the group already entitles it*, time-boxed
 recruiter, HR admin); on sources of truth, prefer no write path at all
 over a rarely-used approval; an "ask for access you don't have"
 workflow is explicitly out of scope for the build.
+**Second owner input, same day:** no new manual PR flow for policy —
+an admin configures groups, permissions, and birthright in a GUI
+("read only for these groups, write for those, or write only via
+request, and everything is audited"), simple enough that automation
+could draft changes.
 
 ## Context
 
@@ -131,7 +139,7 @@ line between them (P1):
   gateway-added header — the gateway's own config is in `catalog/` and
   therefore agent-writable. What authentication yields is exactly one
   fact: *this call is being made by this person*.
-- **Authorization** — the **policy repo** (Decision 5) carries the
+- **Authorization** — the **policy store** (Decision 5) carries the
   Cedar **entity store**: principals, their group memberships, and the
   group lattice. Token group claims are ignored for Airlock decisions
   — after the scope-mapping finding above, a claim computed by
@@ -149,12 +157,12 @@ Group::"hr-recruiter" in Group::"hr"    birthright and add their own
 Group::"hr-admin" in Group::"hr"
 ```
 
-Onboarding a person into Airlock is a PR **to the policy repo** —
-human-reviewed, human-merged, agent-unreachable. That is not
-bureaucracy; it is the review trail the platform is built on, applied
-to the one place it was missing. (The owner's future "request access"
-feature slots here naturally as a workflow that *opens* such PRs — a
-later update, not built now; see Non-goals.)
+Onboarding a person into Airlock is a **passkey-authenticated console
+action** — add the person, pick their groups — audited and versioned
+like every other Sentinel decision (Decision 5). (The owner's future
+"request access" feature slots here naturally as a workflow that
+files *pending drafts* for that console — a later update, not built
+now; see Non-goals.)
 
 Principals are keyed by email. On first authenticated contact the
 broker pins the IdP `sub` to the principal row (trust-on-first-use);
@@ -207,7 +215,7 @@ Rules that keep it honest:
   with *no* resource map gets `Resource::"<server>/*"` with
   `tier: "unclassified"` — and policy decides what unclassified may do
   (for a chat-summarizer, everything; for a database, nothing).
-- **The map lives in the policy repo, not the chart.** A chart-side
+- **The map lives in the policy store, not the chart.** A chart-side
   map would let a PR re-point extraction at a harmless argument and
   smuggle `prod` through as `staging` — the same P1 violation as
   claims. The chart's own tool allowlist (layer 2) stays chart-side;
@@ -262,37 +270,84 @@ server is assigned to, denied at baseline *and* under elevation for
 everyone else. An HR client cannot even complete `initialize` against
 the GitHub server: the server does not exist for them.
 
-## Decision 5 — Where policy lives: a second repo the agent cannot reach
+## Decision 5 — Where policy lives and how it changes: Sentinel owns it, the console is the pen, git is the memory
 
-Cedar policies, the entity store, and the resource maps live in a
-**separate git repository** (working name `homelab-policy`) with these
-properties:
+*(Amended 2026-08-02 after owner review. The first draft made every
+policy change a human-authored PR to a second repo. The owner
+rejected the ceremony, rightly: CLAUDE.md promises humans never type
+git on this platform, and in a single-admin lab the "second reviewer"
+on such PRs is fiction. What the repo was actually buying —
+agent-unreachability, history, revert — survives below without it.)*
 
-- The operator's GitHub App is **not installed on it** — the agent has
-  no path to open PRs there, and no credential in any flow can push
-  to it. Same branch protection; the *owner* reviews and merges.
-- The Sentinel host **pulls** it (systemd timer as the `sentinel`
-  user, read-only deploy key) into `/var/lib/sentinel/policy/`,
-  validates the policy set against the Cedar schema, and **atomically
-  activates only a set that validates** — a broken push keeps the
-  last-good policy live rather than failing open or crashing the hot
-  path. The active policy version (commit hash) is stamped into every
-  audit row it decides.
-- The cloud shape is identical (the Sentinel VM pulls the same repo),
-  which satisfies ADR-004's construction rule — nothing about this is
-  lab-specific.
+**Policy is structured data, not hand-written Cedar.** The store is
+three small documents under `/var/lib/sentinel/policy/`, owned by the
+`sentinel` user:
 
-Host-side-only files (no repo) were considered and rejected: they
-deny the agent the pen but also deny the *human* a review trail, and
-the platform's whole thesis is that the trail is the feature. A second
-repo keeps author ≠ approver, history, and revert — the Mission
-Control properties — for the policy plane itself.
+- the **entity store** — people, groups, the lattice;
+- the **access matrix** — per (group, server): `none | read | write |
+  write-on-request`, plus allowed windows and tier rules. The
+  owner's sketch is the schema, verbatim: *"read only for these
+  groups, write for those, or write only via request, and everything
+  is audited."*
+- the **resource maps** (Decision 3).
 
-This dissolves blockers 3 and 4 **together**: group membership *is*
-policy data, so "where policy lives" and "where membership lives" have
-one answer, and the Authentik blueprint path stops mattering for
-authorization entirely (blueprint groups remain for portal cosmetics
-and non-Airlock app UX only).
+**Cedar is generated from that data at activation.** Cedar policy
+templates exist for exactly this shape (and `cedarpy` links them). A
+raw-Cedar overlay file remains for the rare thing a matrix cannot
+say; it passes the same validation gate, and the expectation is that
+it stays nearly empty — anything accumulating there is a schema smell
+to fold back into the matrix.
+
+**The authoring surface is the Sentinel admin console** — an
+**Access screen** (built in 7.2) on the same passkey-gated,
+loopback-bound surface as granting and the kill switch. The admin
+edits groups, people, and the matrix; **save = validate (schema +
+generated policy — the activation gate) → activate atomically → bump
+`policy_version` → audit row carrying the diff**. A broken edit never
+activates; last-good stays live. Nobody authors a PR; nobody needs
+git literacy.
+
+**Git stays — as memory, not ceremony.** Sentinel auto-commits every
+activated version to a local repository inside its state directory
+(author stamped from the console operator's audit row). That keeps
+history, diffs, and revert — "restore version N" is a console action
+that re-activates an old snapshot, itself audited — and the directory
+rides the same host backup / off-box export path as the audit log
+(ADR-004's durability line). An optional push-mirror to a private
+remote is a backup knob, never an authoring path; nothing ever
+*pulls from* git into the live store.
+
+**Why P1 holds — and holds simpler than the PR design:** the only
+writers are passkey-holding humans on the console. The agent cannot
+reach the console (loopback + WebAuthn), cannot write
+`/var/lib/sentinel` (different user, sandboxed units), and has no
+repo to PR because the authoring path contains none. The first draft
+required a second GitHub repo whose branch protection had to stay
+correct forever; this design deletes that surface entirely.
+
+**Consciously given up, with mitigations:** pre-change review by a
+*second* human. Mitigated now by the audit trail + version history;
+in Phase 8 by an alert on `policy_version` changes to
+`#claude-alerts`; and the named future option (console-addable, no
+architecture change) is a **two-passkey confirm** for changes
+touching `approve`/`forbid` tiers or admin-grade groups, for when
+more than one admin exists.
+
+**Automation drafts, humans activate** — the owner's "build it so
+even a small model could modify it" idea, given its safe shape:
+because policy is schema'd data, *drafts* can come from anything — a
+script, the future access-request workflow, a local 4b model told
+"give contractors read on github." A draft becomes live policy only
+when a passkey holder confirms it on the console. Proposal/pen
+separation, identical to every other flow on this platform: a model
+that could *apply* policy would be the self-granting hole reopened; a
+model that can only *draft* is free labor.
+
+This still dissolves blockers 3 and 4 **together**: group membership
+*is* policy data, so "where policy lives" and "where membership
+lives" have one answer — Sentinel's store — and the Authentik
+blueprint path stops mattering for authorization entirely (blueprint
+groups remain for portal cosmetics and non-Airlock app UX only).
 
 ## Decision 6 — The carve: who approves vs. who self-elevates (amends ADR-004)
 
@@ -320,7 +375,7 @@ Elevation mechanics (implemented in 7.2, decided here):
 - A `confirm` mints a **windowed grant**: `(principal, profile,
   expires_at)` — a *set* of tools for a *window*, retiring
   one-tool-one-call. **Profiles** are named tool-sets declared in the
-  policy repo per server at levels (`github:read`, `github:write`);
+  policy store per server at levels (`github:read`, `github:write`);
   the six-approval finding dies structurally, because handshake scopes
   are birthright (Decision 4) and a working session needs **zero**
   approvals at baseline and **one** confirm when it borrows.
@@ -489,18 +544,20 @@ wrong risk for this phase.
 ## Consequences
 
 - **7.2 implements:** Cedar evaluation in `check_capability`; the
-  policy-repo pull + validate + activate unit; schema migration —
-  `principal` on flows/requests/grants, profile grants (tool-set +
-  window), per-grant revoke, `resource` + `principal` +
+  console **Access screen** + matrix→Cedar generator + the
+  validate/activate path with auto-committed version history; schema
+  migration — `principal` on flows/requests/grants, profile grants
+  (tool-set + window), per-grant revoke, `resource` + `principal` +
   `policy_version` on `audit_events`. Tenant scoping (ADR-004 debt 1)
   lands **first**, before real person-flows exist.
 - **7.3 implements:** the public door + gateway OAuth against
   Authentik, broker-side JWT validation, handshake-scope birthright,
   stream-lifetime caps.
 - **7.4 / 7.5** build the GitHub and Slack servers per Decisions 7–8.
-- **A new repo exists** (`homelab-policy`), owned and merged by
-  humans only; bootstrap gains a pull-key install step on the
-  Sentinel host.
+- **No new repo.** The `homelab-policy` repo from this ADR's first
+  draft is cancelled; the policy store is Sentinel host state with
+  its own automatic local git history, and it joins the audit log's
+  backup / off-box export line in ADR-004's durability table.
 - **CLAUDE.md** needs no structural edit now (the flows section
   already matches); its 15/30/60 illustration is superseded by
   policy-declared windows — correct at the next architecture edit,
@@ -510,8 +567,9 @@ wrong risk for this phase.
 
 - **A "request access you don't have" workflow** (asking to join a
   group / have a server assigned). Out of scope for the build; the
-  natural later shape is a workflow that opens PRs against the policy
-  repo. Until then: humans edit the policy repo.
+  natural later shape is a workflow that files pending *drafts* for
+  the console's Access screen. Until then: an admin makes the change
+  directly on the console.
 - **Universal undo** of what happened inside an elevation window.
   Recording is required; reversal is per-upstream-tool and scoped
   honestly where it exists.
@@ -529,8 +587,15 @@ wrong risk for this phase.
 - **A per-MCP-server policy sidecar.** Rejected — a second enforcement
   hop re-implementing what Envoy + ext_authz + broker already do,
   with N config surfaces instead of one.
-- **Host-side-only policy files (no repo).** Rejected above — kills
-  the review trail; the trail is the product.
+- **Hand-edited host files with no history.** Rejected — the trail is
+  the product; the adopted design gets the trail from audit rows plus
+  auto-committed versions instead of human ceremony.
+- **A human-authored policy repo with PR review (this ADR's own first
+  draft).** Rejected by the owner the same day it was proposed: it
+  reintroduces a manual git flow for humans CLAUDE.md promises never
+  touch git, and with one admin the second reviewer is fiction. Its
+  real properties — agent-unreachability, history, revert — survive
+  in the adopted design; its ceremony does not.
 - **ToolHive as the Airlock substrate.** Examined at v0.41.0
   (2026-07-28; Apache-2.0, near-daily releases, real Kubernetes
   operator). The strongest *validation* of this ADR available: its

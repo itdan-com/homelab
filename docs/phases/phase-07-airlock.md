@@ -15,6 +15,10 @@ the appearance of oversight. See `CLAUDE.md` → "Two flows".
 owner acceptance is the gate to 7.2). All four blockers resolved,
 both forward decisions made (7.4 GitHub upstream, 7.5 Slack), all
 four audit gaps assigned homes, ADR-004 amended with the carve.
+**Amended same day on owner review:** policy authoring is the
+Sentinel console's new Access screen (group×server matrix, Cedar
+generated, changes audited + auto-versioned) — **not** a human PR
+flow; the `homelab-policy` repo idea is cancelled (Decision 5).
 Next: owner reads/accepts ADR-005, then **7.2 — capability profiles
 + multi-user Sentinel** in a fresh session.
 
@@ -61,11 +65,13 @@ is a human with their own GitHub account, and that is the feature
 ✅" was never implementable). Its Phase 6 residue, the admin-bypass
 decision, is phase-06 item 6.4. Four survived, and **all four are
 resolved by ADR-005 (2026-08-02):** 1 → Decision 3 (resource maps in
-the policy repo, deny-closed, tier always total); 2 → Decision 6
+the policy store, deny-closed, tier always total); 2 → Decision 6
 (the carve; ADR-004 amended in place); 3 + 4 → Decision 5 with one
-answer (the agent-unreachable policy repo carries the Cedar policies
-*and* the entity store — group membership IS policy data). Kept
-below for the record:
+answer (the agent-unreachable **policy store** — Sentinel-owned,
+authored from the console's Access screen, Cedar generated from the
+access matrix, auto-versioned — carries the policies *and* the
+entity store: group membership IS policy data). Kept below for the
+record:
 
 1. **Cedar has no *resource*, so three of the four outcomes are
    unexpressible today.** `app/scope.py` derives `<server>.<tool>`
@@ -239,3 +245,13 @@ birthright plus Decision 6's profile grants.
   bypasses the Sentinel proxy → rejected; korotovsky/slack-mcp-server
   self-hosted with an `xoxb` token chosen instead. Bot tokens cannot
   do classic search (user-token-only scope) — accepted limitation.
+- **2026-08-02 (7.1 amendment, owner review):** the first-draft
+  "policy changes are PRs to a second repo" flow broke CLAUDE.md's
+  "owner never types git" promise — owner caught it on first read.
+  Decision 5 rewritten: the Sentinel console gains an **Access
+  screen** (7.2); policy is a group×server matrix (`none / read /
+  write / write-on-request` + windows + tier rules) from which Cedar
+  is *generated*; every change is passkey-gated, audited, and
+  auto-committed to a local history (revert = console action). The
+  owner's automation idea gets its safe shape: anything may *draft*
+  a policy change; only a passkey holder *activates* it.
