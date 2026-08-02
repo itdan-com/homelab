@@ -657,17 +657,25 @@ function buildLimitsPane() {
     row.append(mkSelect(['write', 'read'], (rule.actions || ['write'])[0],
       (v) => { rule.actions = [v]; }));
     row.append(el('span', 'ctx', 'on'));
-    row.append(mkSelect(servers, rule.server, (v) => { rule.server = v; }));
+    row.append(mkSelect(servers, rule.server, (v) => {
+      rule.server = v;
+      delete rule.tier;   // environments belong to a server; reset on switch
+      buildEditor();
+    }));
     row.append(el('span', 'ctx', 'environment'));
-    const t = document.createElement('input');
-    t.size = 10;
-    t.value = rule.tier || '';
-    t.placeholder = 'any';
-    t.onchange = () => {
-      if (t.value.trim()) rule.tier = t.value.trim(); else delete rule.tier;
-      markDirty();
-    };
-    row.append(t);
+    // Environments are DECLARED per server — offer what exists, never
+    // a free-typed guess (owner review: "environment prod is typed in?").
+    const tiers = Object.keys(
+      ((draft.servers[rule.server] || {}).resource || {}).tiers || {});
+    const envOpts = ['any', ...tiers];
+    if (rule.tier && !envOpts.includes(rule.tier)) envOpts.push(rule.tier);
+    row.append(mkSelect(envOpts, rule.tier || 'any', (v) => {
+      if (v === 'any') delete rule.tier; else rule.tier = v;
+    }));
+    if (!tiers.length) {
+      row.append(el('span', 'ctx',
+        'this server has no environments — the limit covers everything'));
+    }
     row.append(mkX(() => draft.matrix.forbids.splice(i, 1)));
     fbox.append(row);
   });
