@@ -147,6 +147,20 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   handshake-birthright). Owner half: run the install line, log in as
   usual, look at the Access screen.
 
+- [ ] **7.2.6 — the Access GUI proper** (owner-promoted 2026-08-02 on
+  first look at the screen: *"I would like an actual GUI to easily
+  add what you have here — Groups, permissions, tools, something
+  that really makes sense"* — the second friction veto of the day,
+  after the PR flow; raw YAML is the MVP's floor, not the product).
+  Forms over the SAME store and the SAME validate→activate endpoint —
+  nothing changes underneath: people (add/remove, group
+  checkboxes), groups (add/nest), the **matrix as clickable cells**
+  (a level dropdown per group×server), windows picker, a forbids
+  list editor, and a guided per-server tools/tiers form. The YAML
+  textareas demote to an "advanced" drawer — still the escape hatch
+  and the automation-drafting surface. Same CSP/vanilla-JS/
+  textContent discipline as the rest of the console.
+
 ## ADR-005 must resolve — blockers from the 2026-07-28 audit
 
 Recorded before the re-cut as five. **Original #1 — "no identity can

@@ -133,16 +133,33 @@ chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
 # `-user`, not the machine store: no elevation, and the blast radius is
 # one account. Firefox keeps its OWN store and is not covered here.
 # Undo:  certutil.exe -user -delstore Root "Sentinel CA"
-if [[ -z "${SENTINEL_SKIP_CA_TRUST:-}" ]] && command -v certutil.exe >/dev/null 2>&1; then
-  WINTMP="/mnt/c/Users/Public/sentinel-ca.crt"
-  if cp "$CERT_DIR/ca.crt" "$WINTMP" 2>/dev/null; then
-    if certutil.exe -user -addstore Root 'C:\Users\Public\sentinel-ca.crt' >/dev/null 2>&1; then
-      echo "== Sentinel CA trusted for the Windows user (Edge/Chrome)."
-      echo "   undo: certutil.exe -user -delstore Root \"Sentinel CA\""
+if [[ -z "${SENTINEL_SKIP_CA_TRUST:-}" ]]; then
+  # Under sudo, root's PATH carries no Windows interop — `command -v
+  # certutil.exe` fails and this block used to skip SILENTLY. That
+  # skip meant the CA was never actually trusted at 5.5.7, masked for
+  # days by the http-era console (2026-08-02 finding). Full-path
+  # fallback first; if genuinely unavailable, say so loudly — on a
+  # pure Linux host that line is expected and harmless.
+  CERTUTIL="$(command -v certutil.exe || true)"
+  [[ -z "$CERTUTIL" && -x /mnt/c/Windows/System32/certutil.exe ]] && \
+    CERTUTIL=/mnt/c/Windows/System32/certutil.exe
+  if [[ -n "$CERTUTIL" ]]; then
+    WINTMP="/mnt/c/Users/Public/sentinel-ca.crt"
+    if cp "$CERT_DIR/ca.crt" "$WINTMP" 2>/dev/null; then
+      if "$CERTUTIL" -user -addstore Root 'C:\Users\Public\sentinel-ca.crt' >/dev/null 2>&1; then
+        echo "== Sentinel CA trusted for the Windows user (Edge/Chrome)."
+        echo "   undo: certutil.exe -user -delstore Root \"Sentinel CA\""
+      else
+        echo "!! could not trust the CA automatically — import $CERT_DIR/ca.crt by hand"
+      fi
+      rm -f "$WINTMP"
     else
-      echo "!! could not trust the CA automatically — import $CERT_DIR/ca.crt by hand"
+      echo "!! could not stage the CA on /mnt/c — import $CERT_DIR/ca.crt by hand"
     fi
-    rm -f "$WINTMP"
+  else
+    echo "== note: certutil.exe not reachable — Windows CA trust NOT updated."
+    echo "   From a normal WSL shell: cp $CERT_DIR/ca.crt /mnt/c/Users/Public/ &&"
+    echo "   certutil.exe -user -addstore Root 'C:\\Users\\Public\\ca.crt'"
   fi
 fi
 
