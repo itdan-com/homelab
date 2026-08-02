@@ -10,7 +10,16 @@ The gate is elevation, not per-call approval — you cannot diff an
 action that already happened, and a queue nobody reads manufactures
 the appearance of oversight. See `CLAUDE.md` → "Two flows".
 
-**Status:** **7.1 DONE 2026-08-02** —
+**Status:** **7.2 CLOSED 2026-08-02** (7.2.1–7.2.6 all done; live on
+the installed units; battery 18/18; owner drove the Access GUI
+through two same-day iterations and accepted it as far as example
+data allows — v3+ iterates against REAL servers). Next: **7.3 — the
+public MCP door + gateway OAuth**, fresh session; first todo is
+broker-process policy activation + reload (see notes); then **7.4
+deploys the first real MCP server — owner direction: their own
+on-prem GitHub as the first upstream** (GHES host; a second
+`github-homelab` server entry stays a separate matrix column).
+**7.1 DONE 2026-08-02** —
 `docs/adr/ADR-005-airlock-policy-model.md` written (**Proposed**;
 owner acceptance is the gate to 7.2). All four blockers resolved,
 both forward decisions made (7.4 GitHub upstream, 7.5 Slack), all
