@@ -1,0 +1,512 @@
+"""Sentinel Door — the PERSON-facing listener (7.3.3).
+
+The third of Sentinel's three surfaces, one per population:
+
+    broker  (mTLS, cluster-facing)   — pods and the Envoy proxy
+    admin   (loopback, passkey)      — the human operator, kill switch
+    door    (TLS, people)            — employees' MCP clients
+
+The door is an MCP resource server AND its own minimal authorization
+server. It is its own AS because the product ships Authentik as the
+customer's IdP (ADR-005 D9 amendment) and Authentik does not speak the
+dialect MCP clients want — CIMD client identity, RFC 9728 discovery,
+resource-bound tokens. So the split is: **Authentik answers WHO you
+are** (passwords, passkeys, sessions), **the door turns that into a
+short-lived token bound to this resource**, and **the policy store
+alone answers WHAT you may do** (ADR-005 P1 — a person unknown to the
+store gets a perfectly valid token and `forbid` on every call).
+
+Deliberately absent, permanently: **dynamic client registration**
+(owner, 2026-08-02). Unauthenticated self-registration is the branch
+the MCP spec deprecated; clients present a CIMD document or a
+statically allowlisted id.
+
+Also absent by design in 7.3.3: refresh tokens. Revocation that
+matters happens per call — every request re-reads the principal ledger
+and the policy store, so disabling a person takes effect on their next
+call regardless of what token they hold. A refresh store would add
+revocable state for an authority the token does not carry.
+"""
+
+import base64
+import hashlib
+import json
+import logging
+import os
+import secrets
+import time
+from contextlib import asynccontextmanager
+
+from pathlib import Path
+from urllib.parse import urlencode, urlparse, urlunparse
+
+import httpx
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+from . import __version__
+from . import policy
+from .cimd import ClientError, fetch_cimd, redirect_uri_allowed
+from .config import (
+    DOOR_KEY_PATH,
+    DOOR_ORIGIN,
+    DOOR_STATIC_CLIENTS,
+    DOOR_TOKEN_TTL_MINUTES,
+    OIDC_CA_BUNDLE,
+    OIDC_CLIENT_ID,
+    OIDC_CLIENT_SECRET,
+    OIDC_HTTP_BASE,
+    OIDC_ISSUER,
+    POLICY_RELOAD_SECONDS,
+)
+from .db import SessionLocal
+from .models import AuditEventType
+from .service import audit, get_or_create_principal
+
+log = logging.getLogger("sentinel")
+
+MCP_PATH = "/mcp"
+RESOURCE = f"{DOOR_ORIGIN}{MCP_PATH}"
+PENDING_TTL_SECONDS = 300   # a human has 5 minutes to finish signing in
+CODE_TTL_SECONDS = 60       # an authorization code is a baton, not a token
+
+# Short-lived, single-process, single-use state. Not database rows on
+# purpose: a restart mid-sign-in should lose the half-finished dance
+# (the client simply retries), and codes that outlive a restart are
+# state an attacker can wait for.
+_pending: dict[str, dict] = {}
+_codes: dict[str, dict] = {}
+
+
+def _sweep(store: dict, ttl: int) -> None:
+    now = time.time()
+    for k in [k for k, v in store.items() if now - v["t"] > ttl]:
+        store.pop(k, None)
+
+
+# --- the door's own signing key ----------------------------------------------
+
+_key = None
+
+
+def signing_key():
+    """RSA key for the door's person-tokens, created on first start.
+    0600 before any bytes are written — a key file that is briefly
+    world-readable was briefly compromised."""
+    global _key
+    if _key is not None:
+        return _key
+    p = Path(DOOR_KEY_PATH)
+    if p.exists():
+        _key = serialization.load_pem_private_key(p.read_bytes(), password=None)
+        return _key
+    k = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = k.private_bytes(serialization.Encoding.PEM,
+                          serialization.PrivateFormat.PKCS8,
+                          serialization.NoEncryption())
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(pem)
+    log.info("door signing key created at %s", p)
+    _key = k
+    return _key
+
+
+def _b64u(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode().rstrip("=")
+
+
+def door_jwk() -> dict:
+    pub = signing_key().public_key().public_numbers()
+    n = pub.n.to_bytes((pub.n.bit_length() + 7) // 8, "big")
+    e = pub.e.to_bytes((pub.e.bit_length() + 7) // 8, "big")
+    jwk = {"kty": "RSA", "use": "sig", "alg": "RS256",
+           "n": _b64u(n), "e": _b64u(e)}
+    jwk["kid"] = _b64u(hashlib.sha256(
+        json.dumps({"e": jwk["e"], "kty": "RSA", "n": jwk["n"]},
+                   separators=(",", ":"), sort_keys=True).encode()).digest())[:16]
+    return jwk
+
+
+# --- the upstream IdP (Authentik) --------------------------------------------
+
+_oidc_cache: dict = {}
+
+
+def _transport_url(url: str) -> str:
+    """Rewrite host:port for TRANSPORT only (see config.OIDC_HTTP_BASE).
+    The logical issuer in `iss` is never rewritten — validation uses the
+    issuer the IdP claims, transport uses the address that answers."""
+    if not OIDC_HTTP_BASE:
+        return url
+    base, u = urlparse(OIDC_HTTP_BASE), urlparse(url)
+    return urlunparse(u._replace(scheme=base.scheme, netloc=base.netloc))
+
+
+def _http() -> httpx.Client:
+    return httpx.Client(timeout=10.0, follow_redirects=False,
+                        verify=OIDC_CA_BUNDLE or True)
+
+
+def oidc_config() -> dict:
+    """Authentik's discovery document, cached. Fetched from the issuer
+    (transport-rewritten); the `iss` inside it stays authoritative."""
+    if "config" in _oidc_cache:
+        return _oidc_cache["config"]
+    url = _transport_url(OIDC_ISSUER.rstrip("/") + "/.well-known/openid-configuration")
+    with _http() as c:
+        r = c.get(url, headers={"Host": urlparse(OIDC_ISSUER).netloc})
+        r.raise_for_status()
+        cfg = r.json()
+    _oidc_cache["config"] = cfg
+    return cfg
+
+
+def _idp_key(kid: str | None):
+    """Authentik's signing key for id_token validation, cached with a
+    one-shot refresh so a key rotation heals without a restart."""
+    for attempt in (0, 1):
+        jwks = _oidc_cache.get("jwks")
+        if jwks is None or attempt:
+            with _http() as c:
+                r = c.get(_transport_url(oidc_config()["jwks_uri"]),
+                          headers={"Host": urlparse(OIDC_ISSUER).netloc})
+                r.raise_for_status()
+                jwks = _oidc_cache["jwks"] = r.json()
+        for k in jwks.get("keys", []):
+            if kid is None or k.get("kid") == kid:
+                return jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(k))
+    raise ClientError("no matching IdP signing key")
+
+
+# --- app ----------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    signing_key()
+    try:
+        ap = policy.refresh(policy.POLICY_DIR)
+        log.info("policy store active: %s", ap.version)
+    except Exception as e:
+        log.warning("policy store not active: %s", e)
+    task = None
+    if POLICY_RELOAD_SECONDS > 0:
+        import asyncio
+        task = asyncio.create_task(
+            policy.watch_store(policy.POLICY_DIR, POLICY_RELOAD_SECONDS))
+    yield
+    if task:
+        import asyncio
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+app = FastAPI(
+    lifespan=lifespan,
+    title="Sentinel Door (person-facing)",
+    version=__version__,
+    description="Sign in with the company identity; reach the tools your "
+                "role should have. Authority comes from the policy store, "
+                "never from this token.",
+    docs_url=None, redoc_url=None,
+)
+
+
+@app.get("/healthz", tags=["meta"])
+def healthz() -> dict:
+    ap = policy.get_active()
+    return {"status": "ok", "listener": "door", "version": __version__,
+            "policy_version": ap.version if ap else None}
+
+
+# --- discovery ----------------------------------------------------------------
+
+def _prm() -> dict:
+    """RFC 9728 protected-resource metadata: how a client learns which
+    authorization server guards this resource. Here they are the same
+    origin, which is allowed and keeps the deployment one component."""
+    return {"resource": RESOURCE,
+            "authorization_servers": [DOOR_ORIGIN],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": ["mcp"],
+            "resource_documentation": f"{DOOR_ORIGIN}/"}
+
+
+@app.get("/.well-known/oauth-protected-resource", tags=["discovery"])
+@app.get("/.well-known/oauth-protected-resource/mcp", tags=["discovery"])
+def protected_resource_metadata() -> dict:
+    return _prm()
+
+
+@app.get("/.well-known/oauth-authorization-server", tags=["discovery"])
+@app.get("/.well-known/openid-configuration", tags=["discovery"])
+def as_metadata() -> dict:
+    return {
+        "issuer": DOOR_ORIGIN,
+        "authorization_endpoint": f"{DOOR_ORIGIN}/authorize",
+        "token_endpoint": f"{DOOR_ORIGIN}/token",
+        "jwks_uri": f"{DOOR_ORIGIN}/jwks",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        # OAuth 2.1 posture, stated where clients can read it: no
+        # implicit, no password, and PKCE is not optional.
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "scopes_supported": ["mcp"],
+        # The one flag that makes CIMD happen: clients only present a
+        # URL client_id when the AS says it understands one.
+        "client_id_metadata_document_supported": True,
+        # No registration_endpoint — DCR is refused permanently.
+        "resource_indicators_supported": True,
+    }
+
+
+@app.get("/jwks", tags=["discovery"])
+def jwks() -> dict:
+    return {"keys": [door_jwk()]}
+
+
+# --- authorization ------------------------------------------------------------
+
+def _err(message: str, status: int = 400) -> HTMLResponse:
+    """Errors render HERE rather than redirecting to a client-supplied
+    URL: until a redirect_uri is proven registered, sending anything to
+    it makes the door an open redirector."""
+    return HTMLResponse(
+        f"<!doctype html><meta charset=utf-8><title>Sign-in problem</title>"
+        f"<body style='font-family:system-ui;max-width:40em;margin:4em auto'>"
+        f"<h1>Sign-in problem</h1><p>{message}</p>"
+        f"<p style='color:#666'>Nothing was granted. You can close this tab.</p>",
+        status_code=status)
+
+
+def resolve_client(client_id: str) -> dict:
+    """Client identity: a CIMD document, or a statically allowlisted id.
+    Never registration-on-demand."""
+    if client_id in DOOR_STATIC_CLIENTS:
+        return {"client_id": client_id, "client_name": client_id,
+                "redirect_uris": None, "source": "static"}
+    doc = fetch_cimd(client_id)
+    doc["source"] = "cimd"
+    return doc
+
+
+@app.get("/authorize", tags=["oauth"])
+def authorize(request: Request):
+    _sweep(_pending, PENDING_TTL_SECONDS)
+    q = request.query_params
+    client_id, redirect_uri = q.get("client_id"), q.get("redirect_uri")
+    if q.get("response_type") != "code":
+        return _err("This client asked for an unsupported response type. "
+                    "Only the authorization-code flow is supported.")
+    if not client_id or not redirect_uri:
+        return _err("The sign-in request was missing its client or return URL.")
+    if q.get("code_challenge_method") != "S256" or not q.get("code_challenge"):
+        return _err("This client did not use PKCE (S256), which is required.")
+
+    try:
+        client = resolve_client(client_id)
+    except ClientError as e:
+        return _err(f"This client could not be identified: {e}")
+    if client["redirect_uris"] is not None and not redirect_uri_allowed(
+            redirect_uri, client["redirect_uris"]):
+        return _err("This client's return URL is not one it published.")
+    if client["redirect_uris"] is None and urlparse(redirect_uri).hostname not in (
+            "127.0.0.1", "::1", "localhost"):
+        return _err("A statically registered client may only return to loopback.")
+
+    sid = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(48)
+    _pending[sid] = {
+        "t": time.time(), "client_id": client_id, "redirect_uri": redirect_uri,
+        "client_state": q.get("state"), "challenge": q.get("code_challenge"),
+        "resource": q.get("resource") or RESOURCE, "verifier": verifier,
+        "client_name": client.get("client_name") or client_id,
+    }
+    challenge = _b64u(hashlib.sha256(verifier.encode()).digest())
+    upstream = oidc_config()["authorization_endpoint"] + "?" + urlencode({
+        "response_type": "code", "client_id": OIDC_CLIENT_ID,
+        "redirect_uri": f"{DOOR_ORIGIN}/callback",
+        "scope": "openid email profile", "state": sid,
+        "code_challenge": challenge, "code_challenge_method": "S256",
+    })
+    return RedirectResponse(upstream, status_code=302)
+
+
+@app.get("/callback", tags=["oauth"])
+def callback(request: Request):
+    """Back from Authentik. Turn their proof of WHO into our code."""
+    _sweep(_pending, PENDING_TTL_SECONDS)
+    q = request.query_params
+    sess = _pending.pop(q.get("state") or "", None)
+    if sess is None:
+        return _err("This sign-in expired or was already used. "
+                    "Start it again from your MCP client.")
+    if q.get("error"):
+        return _err(f"The identity provider refused: {q.get('error')}")
+    code = q.get("code")
+    if not code:
+        return _err("The identity provider returned no authorization code.")
+
+    data = {"grant_type": "authorization_code", "code": code,
+            "redirect_uri": f"{DOOR_ORIGIN}/callback",
+            "client_id": OIDC_CLIENT_ID, "code_verifier": sess["verifier"]}
+    if OIDC_CLIENT_SECRET:
+        data["client_secret"] = OIDC_CLIENT_SECRET
+    try:
+        with _http() as c:
+            r = c.post(_transport_url(oidc_config()["token_endpoint"]), data=data,
+                       headers={"Host": urlparse(OIDC_ISSUER).netloc})
+        if r.status_code != 200:
+            raise ClientError(f"token exchange failed ({r.status_code})")
+        id_token = r.json().get("id_token")
+        if not id_token:
+            raise ClientError("identity provider returned no id_token")
+        header = jwt.get_unverified_header(id_token)
+        claims = jwt.decode(
+            id_token, _idp_key(header.get("kid")), algorithms=["RS256"],
+            audience=OIDC_CLIENT_ID, issuer=OIDC_ISSUER,
+            options={"require": ["exp", "iat", "sub", "iss", "aud"]})
+    except (ClientError, jwt.PyJWTError, httpx.HTTPError) as e:
+        log.warning("door sign-in failed: %s", e)
+        with SessionLocal() as s:
+            audit(s, AuditEventType.AUTH_FAILURE,
+                  details={"surface": "door", "reason": str(e)[:200]})
+            s.commit()
+        return _err("Sign-in could not be completed.")
+
+    email = (claims.get("email") or "").strip().lower()
+    if not email:
+        return _err("Your identity provider did not release an email address.")
+    try:
+        with SessionLocal() as s:
+            p = get_or_create_principal(
+                s, email=email, idp_sub=claims.get("sub"),
+                display_name=claims.get("name"))
+            principal_id, principal_email = p.id, p.email
+            audit(s, AuditEventType.AUTH_SUCCESS, principal=p.email,
+                  details={"surface": "door", "client": sess["client_name"]})
+            s.commit()
+    except ValueError as e:  # principal-disabled, idp-sub-mismatch (audited)
+        return _err("Your account cannot sign in here. "
+                    f"({e}) Contact your platform administrator.")
+
+    ac = secrets.token_urlsafe(32)
+    _codes[ac] = {"t": time.time(), "client_id": sess["client_id"],
+                  "redirect_uri": sess["redirect_uri"],
+                  "challenge": sess["challenge"], "resource": sess["resource"],
+                  "principal_id": principal_id, "email": principal_email}
+    params = {"code": ac}
+    if sess["client_state"] is not None:
+        params["state"] = sess["client_state"]
+    sep = "&" if urlparse(sess["redirect_uri"]).query else "?"
+    return RedirectResponse(f"{sess['redirect_uri']}{sep}{urlencode(params)}",
+                            status_code=302)
+
+
+@app.post("/token", tags=["oauth"])
+def token(grant_type: str = Form(...), code: str = Form(None),
+          redirect_uri: str = Form(None), client_id: str = Form(None),
+          code_verifier: str = Form(None)):
+    _sweep(_codes, CODE_TTL_SECONDS)
+    if grant_type != "authorization_code":
+        return JSONResponse({"error": "unsupported_grant_type"}, 400)
+    rec = _codes.pop(code or "", None)  # single use: popped before validation
+    if rec is None:
+        return JSONResponse({"error": "invalid_grant"}, 400)
+    if rec["client_id"] != client_id or rec["redirect_uri"] != redirect_uri:
+        return JSONResponse({"error": "invalid_grant"}, 400)
+    if not code_verifier or _b64u(hashlib.sha256(
+            code_verifier.encode()).digest()) != rec["challenge"]:
+        return JSONResponse({"error": "invalid_grant",
+                             "error_description": "PKCE verification failed"}, 400)
+
+    # JWT time claims are epoch seconds and MUST come from an
+    # epoch-native clock. models.utcnow() is naive-UTC (the DB
+    # convention), and .timestamp() on a naive datetime silently
+    # applies the host's LOCAL offset — which stamped every token six
+    # hours into the future on this box and made it "not yet valid" to
+    # any correct validator. Two time conventions, one of them
+    # invisible: use time.time() here, never the DB helper.
+    now = int(time.time())
+    claims = {
+        "iss": DOOR_ORIGIN, "sub": rec["principal_id"], "email": rec["email"],
+        # Audience-bound to the resource the client named (RFC 8707,
+        # which Claude Code sends and Authentik would have ignored): a
+        # token minted for this door cannot be replayed at another.
+        "aud": rec["resource"], "client_id": rec["client_id"],
+        "iat": now, "exp": now + DOOR_TOKEN_TTL_MINUTES * 60,
+        "jti": secrets.token_urlsafe(12),
+    }
+    access = jwt.encode(claims, signing_key(), algorithm="RS256",
+                        headers={"kid": door_jwk()["kid"]})
+    return {"access_token": access, "token_type": "Bearer",
+            "expires_in": DOOR_TOKEN_TTL_MINUTES * 60, "scope": "mcp"}
+
+
+# --- the resource ------------------------------------------------------------
+
+class TokenError(Exception):
+    pass
+
+
+def person_from_bearer(request: Request) -> dict:
+    """Validate a door token and return the claims. Signature, issuer,
+    audience and expiry are checked by the library; the LEDGER check is
+    ours and is why a disabled person's token dies on its next call
+    rather than at expiry."""
+    h = request.headers.get("authorization", "")
+    if not h.lower().startswith("bearer "):
+        raise TokenError("missing token")
+    try:
+        claims = jwt.decode(h[7:].strip(), signing_key().public_key(),
+                            algorithms=["RS256"], audience=RESOURCE,
+                            issuer=DOOR_ORIGIN,
+                            options={"require": ["exp", "iat", "sub", "aud"]})
+    except jwt.PyJWTError as e:
+        raise TokenError(str(e))
+    with SessionLocal() as s:
+        from .models import Principal
+        p = s.get(Principal, claims["sub"])
+        if p is None or p.disabled_at is not None:
+            raise TokenError("principal disabled or unknown")
+    return claims
+
+
+def _unauthorized(detail: str) -> JSONResponse:
+    """401 carrying the RFC 9728 pointer — this header is how an MCP
+    client discovers where to sign in."""
+    return JSONResponse(
+        {"error": "unauthorized", "error_description": detail}, 401,
+        headers={"WWW-Authenticate":
+                 f'Bearer resource_metadata='
+                 f'"{DOOR_ORIGIN}/.well-known/oauth-protected-resource/mcp"'})
+
+
+@app.post(MCP_PATH, tags=["mcp"])
+@app.get(MCP_PATH, tags=["mcp"])
+async def mcp(request: Request):
+    try:
+        claims = person_from_bearer(request)
+    except TokenError as e:
+        return _unauthorized(str(e))
+    # Person-flow ids are minted HERE, never accepted from the client
+    # (7.2.1 note): unique by construction, so two people's sessions
+    # can never collide and every audit row attributes correctly.
+    flow_id = f"person-{secrets.token_urlsafe(9)}"
+    return JSONResponse({
+        "jsonrpc": "2.0", "id": None,
+        "error": {"code": -32601,
+                  "message": "authenticated; tool routing arrives in 7.3.4",
+                  "data": {"principal": claims.get("email"),
+                           "flow_id": flow_id,
+                           "policy_version": (policy.get_active().version
+                                              if policy.get_active() else None)}},
+    })

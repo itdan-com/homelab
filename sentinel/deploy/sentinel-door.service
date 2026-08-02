@@ -1,0 +1,70 @@
+# Sentinel door — the PERSON-facing listener (7.3.3): OAuth 2.1 + PKCE
+# sign-in federated to the shipped IdP, CIMD client identity, and the
+# MCP resource endpoint people's clients actually call.
+#
+# Written for a production Linux host (ADR-004 "construction rule").
+# Host-specific values — the public origin, the IdP's reachable address,
+# the CA bundle — are injected by the install step, never baked in.
+#
+# Why a THIRD unit rather than routes on an existing one: Sentinel now
+# faces three populations with three trust levels, and they must fail
+# independently. The broker must never be down (every in-cluster MCP
+# call waits on it); the admin console holds the kill switch and binds
+# loopback; this one is the only surface an ordinary employee may
+# reach, so it holds no admin capability and its blast radius is a
+# sign-in outage — not a lost kill switch and not a stalled cluster.
+#
+# It is deliberately NOT reachable by the cluster's identity: pods talk
+# to the broker over mTLS, people talk here over public TLS. One
+# process serving both would be one bug away from letting a pod mint a
+# person's token.
+
+[Unit]
+Description=Sentinel door (MCP sign-in + resource endpoint for people)
+Documentation=https://github.com/itdan-com/homelab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=sentinel
+Group=sentinel
+EnvironmentFile=/etc/sentinel/sentinel.env
+WorkingDirectory=/opt/sentinel
+# Public TLS (the lab CA locally, a real issuer in cloud). No
+# --ssl-cert-reqs here on purpose: the whole point of this listener is
+# that a human's laptop, holding no Sentinel-issued certificate, can
+# reach it — the bearer token is the credential, and the policy store
+# is what decides whether it means anything.
+ExecStart=/opt/sentinel/.venv/bin/uvicorn app.door:app \
+  --host ${SENTINEL_DOOR_BIND} --port ${SENTINEL_DOOR_PORT} \
+  --ssl-certfile ${SENTINEL_CERT_DIR}/door.crt \
+  --ssl-keyfile ${SENTINEL_CERT_DIR}/door.key \
+  --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=2
+
+StateDirectory=sentinel
+StateDirectoryMode=0700
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+[Install]
+WantedBy=multi-user.target

@@ -33,3 +33,9 @@ watchfiles==1.2.0
 webauthn==3.0.0
 websockets==16.1.1
 cedarpy==4.8.7
+# The door (7.3.3): OAuth/OIDC federation to the shipped IdP and the
+# door's own RS256 person-tokens. Both were present in the dev venv as
+# transitive installs and are pinned here because a trust anchor must
+# not depend on what happened to be lying around.
+PyJWT==2.13.0
+httpx==0.28.1

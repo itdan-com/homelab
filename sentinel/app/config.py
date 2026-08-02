@@ -104,3 +104,56 @@ POLICY_DIR = os.environ.get("SENTINEL_POLICY_DIR", "./policy-dev")
 # how long the two processes may disagree about the active version
 # after a console save.
 POLICY_RELOAD_SECONDS = float(os.environ.get("SENTINEL_POLICY_RELOAD_SECONDS", "2"))
+
+# --- the Airlock door (7.3.3) -------------------------------------------------
+#
+# A THIRD listener, because Sentinel now faces three populations with
+# three trust levels: the cluster (broker, mTLS), the human operator
+# (admin console, loopback + passkey), and now PEOPLE AT WORKSTATIONS
+# with MCP clients. The door is the only one meant to be reachable by
+# an ordinary signed-in employee, so it holds no admin capability and
+# never binds the console's port.
+DOOR_BIND = os.environ.get("SENTINEL_DOOR_BIND", "127.0.0.1")
+DOOR_PORT = int(os.environ.get("SENTINEL_DOOR_PORT", "8402"))
+
+# The door's PUBLIC origin — what clients type and what every issued
+# document must self-describe as. OAuth metadata that advertises an
+# address the client cannot reach is worse than none; and the `iss`
+# and `aud` claims are derived from this, so a mismatch is a security
+# bug, not a cosmetic one. Cloud (ADR-002) sets https://mcp.<domain>.
+DOOR_ORIGIN = os.environ.get("SENTINEL_DOOR_ORIGIN",
+                             f"https://localhost:{DOOR_PORT}")
+
+# Where the door sends people to prove WHO they are. Authentik is the
+# shipped IdP (ADR-005 D9 amendment): it authenticates; it does not
+# authorize — that is the policy store's job alone.
+OIDC_ISSUER = os.environ.get(
+    "SENTINEL_OIDC_ISSUER", "https://authentik.lab.local/application/o/mcp/")
+OIDC_CLIENT_ID = os.environ.get("SENTINEL_OIDC_CLIENT_ID", "mcp-door")
+OIDC_CLIENT_SECRET = os.environ.get("SENTINEL_OIDC_CLIENT_SECRET") or None
+
+# Lab-parity wart, honestly named: the issuer is a logical identity
+# (https://authentik.lab.local/...) while the reachable address here is
+# localhost:8443 behind a Host header. This override rewrites the
+# host:port of fetched endpoint URLs for TRANSPORT only — `iss` stays
+# the logical issuer for validation. In cloud the two are identical and
+# this is empty, which is exactly ADR-004's rule: the host-specific
+# value is detected at install and written to config, never baked in.
+OIDC_HTTP_BASE = os.environ.get("SENTINEL_OIDC_HTTP_BASE") or None
+OIDC_CA_BUNDLE = os.environ.get("SENTINEL_OIDC_CA_BUNDLE") or None
+
+# The door signs its own person-tokens (RS256). Key lives beside the
+# database in the state dir, 0600, generated on first start.
+DOOR_KEY_PATH = os.environ.get(
+    "SENTINEL_DOOR_KEY", os.path.join(os.path.dirname(DB_PATH) or ".",
+                                      "door-signing-key.pem"))
+DOOR_TOKEN_TTL_MINUTES = int(
+    os.environ.get("SENTINEL_DOOR_TOKEN_TTL_MINUTES", "480"))
+
+# Static client allowlist (comma-separated client_ids) for MCP clients
+# that do not publish a CIMD document. CIMD is the preferred path and
+# DCR is refused permanently (owner, 2026-08-02): unauthenticated
+# self-registration is the deprecated, insecure branch of the spec.
+DOOR_STATIC_CLIENTS = [c.strip() for c in
+                       os.environ.get("SENTINEL_DOOR_STATIC_CLIENTS", "").split(",")
+                       if c.strip()]
