@@ -308,12 +308,16 @@ data:
     metadata:
       name: mcp-oidc
     entries:
-      # The Airlock door's client (7.3.2) differs from every app above
-      # on purpose:
-      #  - PUBLIC client, no secret: MCP clients (Claude Code, IDEs)
-      #    run on workstations that cannot keep one. PKCE S256 is the
-      #    code-interception defense (OAuth 2.1) — observed on the
-      #    live client before being relied on (probe rig 2026-08-02).
+      # The Airlock door's client (7.3.2, re-homed at 7.3.3) differs
+      # from every app above on purpose. Note WHO the client is: the
+      # DOOR, not anybody's MCP client. People point Claude Code at
+      # the door; the door federates the human's sign-in here and then
+      # issues its own resource-bound tokens (ADR-005 D9 amendment —
+      # it needs CIMD and RFC 9728, which an IdP does not speak).
+      #  - PUBLIC client + PKCE S256 rather than a client secret. The
+      #    door is a server and COULD keep one; using PKCE keeps this
+      #    install secret-free, and the confidential flip (SOPS leaf +
+      #    env) is recorded as a hardening item rather than assumed.
       #  - NO group policy binding: Authentik answers WHO you are.
       #    WHAT you may do is the Sentinel policy store's alone
       #    (ADR-005 P1 — authorization must not derive from state the
@@ -349,15 +353,13 @@ data:
             - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
             - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
           redirect_uris:
-            # Strict, not regex: the port is FIXED client-side
-            # (oauth.callbackPort in the MCP client config), so exact
-            # URIs can be pinned. Both loopback spellings — Claude
-            # Code was observed sending localhost; other clients use
-            # 127.0.0.1.
+            # Exactly one, strict, and it is a SERVER's address — no
+            # ephemeral loopback ports to wildcard, because no
+            # end-user client redirects here. That is a security win
+            # the facade bought: the IdP's allowlist has one entry
+            # that never varies.
             - matching_mode: strict
-              url: http://localhost:{{ .callbackPort }}/callback
-            - matching_mode: strict
-              url: http://127.0.0.1:{{ .callbackPort }}/callback
+              url: {{ .doorOrigin }}/callback
       # The application: slug `mcp` fixes the issuer at
       # /application/o/mcp/ — the `iss` claim the broker pins (7.3.3).
       - model: authentik_core.application

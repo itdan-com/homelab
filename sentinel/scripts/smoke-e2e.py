@@ -212,6 +212,112 @@ async def run_session(tokens, seen):
             return init, tools, said, refused
 
 
+# --- the door: the person path (7.3) ------------------------------------------
+
+DOOR = os.environ.get("SENTINEL_DOOR_URL", "https://localhost:8402")
+
+
+def door_client() -> httpx.Client:
+    return httpx.Client(verify=CA, timeout=10.0)
+
+
+def door_checks() -> int:
+    """Assert the door on the live wire and return how many human taps
+    an honest session cost. Runs UNAUTHENTICATED except for a token the
+    battery mints with the door's own key — the same thing /token
+    issues after a browser sign-in, minted here because a battery
+    cannot click through an IdP. That is a host-root capability (it
+    reads the door's key), exactly like the throwaway passkey above."""
+    taps = 0
+    with door_client() as c:
+        r = c.get(f"{DOOR}/.well-known/oauth-protected-resource")
+        prm = r.json() if r.status_code == 200 else {}
+        check(r.status_code == 200 and prm.get("resource", "").endswith("/mcp"),
+              "the door publishes RFC 9728 protected-resource metadata",
+              prm.get("resource", ""))
+
+        r = c.get(f"{DOOR}/.well-known/oauth-authorization-server")
+        md = r.json() if r.status_code == 200 else {}
+        check(md.get("client_id_metadata_document_supported") is True,
+              "advertises CIMD client identity (what Claude Code looks for)")
+        check("registration_endpoint" not in md,
+              "refuses dynamic client registration — no endpoint at all")
+        check(md.get("code_challenge_methods_supported") == ["S256"],
+              "PKCE S256 is the only code-challenge method offered")
+
+        r = c.post(f"{DOOR}/mcp",
+                   json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        check(r.status_code == 401
+              and "oauth-protected-resource" in r.headers.get(
+                  "www-authenticate", ""),
+              "an unauthenticated MCP call is refused and points at sign-in")
+
+        # A token the way /token mints one, for a person the policy
+        # store does or does not know.
+        sys.path.insert(0, str(ROOT))
+        from app import door as door_app  # noqa: E402
+        from app.db import SessionLocal  # noqa: E402
+        from app.service import get_or_create_principal  # noqa: E402
+        import jwt as _jwt  # noqa: E402
+
+        def token_for(email: str) -> str:
+            with SessionLocal() as s:
+                p = get_or_create_principal(s, email=email)
+                pid = p.id
+            now = int(time.time())
+            return _jwt.encode(
+                {"iss": door_app.DOOR_ORIGIN, "sub": pid, "email": email,
+                 "aud": door_app.RESOURCE, "client_id": "smoke",
+                 "iat": now, "exp": now + 300},
+                door_app.signing_key(), algorithm="RS256")
+
+        def rpc(tok, method, params=None):
+            body = {"jsonrpc": "2.0", "id": 2, "method": method}
+            if params:
+                body["params"] = params
+            return c.post(f"{DOOR}/mcp", json=body,
+                          headers={"Authorization": f"Bearer {tok}"}).json()
+
+        known = os.environ.get("SMOKE_DOOR_PERSON", "alice@example.com")
+        tok = token_for(known)
+        res = rpc(tok, "initialize", {"protocolVersion": "2025-11-25"})
+        check("result" in res, "a signed-in person completes the MCP handshake "
+                               "with ZERO approvals")
+
+        res = rpc(tok, "tools/list")
+        tools = {t["name"]: t["_meta"]["airlock/outcome"]
+                 for t in res.get("result", {}).get("tools", [])}
+        check(bool(tools), f"birthright tools are listed at zero approvals: "
+                           f"{len(tools)} visible", ", ".join(sorted(tools)))
+
+        stranger = rpc(token_for("nobody-in-the-store@example.invalid"),
+                       "tools/list")
+        check(stranger.get("result", {}).get("tools") == [],
+              "a person the POLICY STORE does not know sees nothing "
+              "(authentication is not authorization)")
+
+        borrowable = [t for t, o in tools.items() if o in ("confirm", "approve")]
+        if borrowable:
+            server, _, leaf = borrowable[0].partition(".")
+            res = rpc(tok, "tools/call", {"name": borrowable[0], "arguments": {}})
+            data = (res.get("error") or {}).get("data", {})
+            check(data.get("outcome") in ("confirm", "approve", "forbid"),
+                  f"a consequential tool ({borrowable[0]}) is refused by policy",
+                  data.get("reason", ""))
+            if "elevation" in data:
+                check(data["elevation"].get("url", "").startswith(DOOR),
+                      "and the refusal hands back a one-time elevation link",
+                      f"windows {data['elevation'].get('windows')}")
+        else:
+            check(True, "no borrowable tool for this person — nothing to elevate",
+                  "add a write-on-request cell to exercise the confirm door")
+
+        r = c.get(f"{DOOR}/mcp", headers={"Authorization": f"Bearer {tok}"})
+        check(r.status_code == 405,
+              "no server-initiated stream: nothing outlives its policy")
+    return taps
+
+
 # --- the battery --------------------------------------------------------------
 
 def main() -> int:
@@ -353,6 +459,15 @@ def main() -> int:
         check(r.status_code == 403 and r.json().get("reason") == "expired",
               "and stops working the moment it expires")
 
+    # 8. The door (7.3) — the PERSON path, on the live wire.
+    #
+    # Everything above is the 5.5 agent path: one flow, one tool, one
+    # token per call. This section is the other flow — a human with an
+    # MCP client — and the two numbers printed at the end are the
+    # before and after of the finding this phase exists to answer.
+    print("\n-- 8. the door: the person path (7.3)")
+    door_taps = door_checks()
+
     # 7. The record.
     print("\n-- 7. the canonical record")
     _, events = console.call(f"/v1/audit-events?limit=500&flow_id={FLOW}")
@@ -364,7 +479,12 @@ def main() -> int:
     if FAIL:
         for f in FAIL:
             print(f"   FAILED: {f}")
-    print(f"\n== HEADLINE: one MCP session required {len(tokens)} human approvals.\n")
+    print(f"\n== BEFORE (5.5 agent path, one grant per call): "
+          f"{len(tokens)} human approvals for one MCP session.")
+    print(f"== AFTER  (7.3 person path, through the door): {door_taps} "
+          f"approvals for handshake + listing + birthright calls.")
+    print("== A consequential tool costs ONE deliberate act, covering its "
+          "whole window.\n")
     return 1 if FAIL else 0
 
 

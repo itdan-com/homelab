@@ -36,6 +36,7 @@ CERT_DIR="${SENTINEL_CERT_DIR:-$SENTINEL_DIR/certs}"
 BROKER_NAME="${SENTINEL_BROKER_HOSTNAME:-sentinel-broker.internal}"
 CONSOLE_HOSTNAME="${SENTINEL_RP_ID:-localhost}"
 CONSOLE_ALT_HOSTNAME="${SENTINEL_CONSOLE_ALT_HOSTNAME:-sentinel.lab.local}"
+DOOR_HOSTNAME="${SENTINEL_DOOR_HOSTNAME:-mcp.lab.local}"
 K3D_NETWORK="${K3D_NETWORK:-k3d-devlab}"
 NAMESPACE="${SENTINEL_PROXY_NAMESPACE:-mcp-servers}"
 CA_DAYS="${SENTINEL_CA_DAYS:-730}"
@@ -64,7 +65,7 @@ cd "$CERT_DIR"
 
 [[ "$ROTATE_CA" == 1 ]] && rm -f ca.crt ca.key
 [[ "$ROTATE" == 1 ]] && rm -f broker.crt broker.key proxy-client.crt proxy-client.key \
-                                console.crt console.key
+                                console.crt console.key door.crt door.key
 
 # --- CA (ECDSA P-256, matching the lab CA's curve choice) --------------------
 if [[ -f ca.crt ]]; then
@@ -133,7 +134,19 @@ keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 subjectAltName=DNS:localhost,DNS:$CONSOLE_ALT_HOSTNAME,IP:127.0.0.1"
 
-for leaf in broker console; do
+# The DOOR's server certificate (7.3.3). Unlike the console this one is
+# meant to be reached by other machines — people's workstations — so it
+# carries the door hostname alongside the loopback names the lab uses.
+# In cloud this leaf is replaced by a publicly-trusted certificate for
+# `mcp.<domain>` (ADR-002): an employee's laptop will not have our CA,
+# and telling people to install a root CA to use a tool is how you train
+# a workforce to click through certificate warnings.
+mint_leaf door "$DOOR_HOSTNAME" "basicConstraints=CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:$DOOR_HOSTNAME,DNS:localhost,IP:127.0.0.1"
+
+for leaf in broker console door; do
   echo "== SANs on $leaf.crt:"
   openssl x509 -in "$leaf.crt" -noout -ext subjectAltName | sed 's/^/   /'
 done

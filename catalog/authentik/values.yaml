@@ -42,16 +42,14 @@ oidcClients:
     clientId: argocd
     baseUrl: https://argocd.lab.local:8443
   mcp:
-    # The Airlock door's client (7.3.2). PUBLIC client — an MCP client
-    # on a workstation cannot keep a secret; PKCE S256 replaces it
-    # (OAuth 2.1). client_id is not sensitive for a public client.
+    # The Airlock door's client (7.3.2, re-homed 7.3.3). Authentik's
+    # client here is the DOOR ITSELF, not anybody's MCP client: people
+    # sign in to the door, the door federates that sign-in to
+    # Authentik, and the door issues its own resource-bound tokens.
+    # So exactly one redirect URI matters — the door's callback.
     clientId: mcp-door
-    # Claude Code randomizes its OAuth callback port per login unless
-    # pinned client-side (oauth.callbackPort — observed live
-    # 2026-08-02: 3118 then 54491). Pinning it lets the redirect
-    # allowlist stay matching_mode: strict — no regex redirect URIs,
-    # a classic allowlist foot-gun.
-    callbackPort: 18789
+    # The door's public origin. Cloud (ADR-002) sets https://mcp.<domain>.
+    doorOrigin: https://localhost:8402
 
 # Portal tiles for platform surfaces that are deliberately NOT SSO
 # clients. These create an authentik *application with no provider* —
