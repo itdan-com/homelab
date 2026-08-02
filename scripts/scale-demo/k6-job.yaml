@@ -23,6 +23,9 @@ spec:
                 secretKeyRef:
                   name: k6-gateway-key
                   key: API_KEY
+            # Overridden by scale-demo.sh's MODEL env (sed at apply time).
+            - name: MODEL
+              value: "qwen3.5:9b"
           resources:
             requests:
               cpu: 100m

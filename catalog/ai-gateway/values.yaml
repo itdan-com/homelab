@@ -15,6 +15,10 @@ catalog:
 models:
   - name: qwen3.5:9b
     backend: ollama
+  # Small sibling (3.4GB): the local bulk/canary tier — ~3x the
+  # tokens/s of the 9b on the same GPU (added 2026-08-02).
+  - name: qwen3.5:4b
+    backend: ollama
 
 # Where model traffic goes. schema OpenAI = backend speaks the
 # OpenAI-compatible /v1 surface (Ollama does natively).

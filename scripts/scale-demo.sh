@@ -18,10 +18,13 @@
 #       -n <gateway-ns> --from-literal=API_KEY=<that key>
 #   - GPU free: close games/GPU-heavy apps first (see phase-03 notes).
 #
-# Overridable env: GW_NS, CTRL_NS, GW_NAME, EXEC_POD_DEPLOY, PROM_URL.
+# Overridable env: GW_NS, CTRL_NS, GW_NAME, EXEC_POD_DEPLOY, PROM_URL,
+#   MODEL (which gateway model the burst drives; default qwen3.5:9b —
+#   smaller siblings generate faster and push the token rate higher).
 # =============================================================================
 set -euo pipefail
 
+MODEL="${MODEL:-qwen3.5:9b}"
 GW_NS="${GW_NS:-chat}"
 CTRL_NS="${CTRL_NS:-envoy-gateway-system}"
 GW_NAME="${GW_NAME:-ai-gateway}"
@@ -49,8 +52,10 @@ echo ">>> Open Grafana dashboard: 'AI Gateway — Token-Rate Autoscaling' (uid a
 
 kubectl create configmap k6-burst-script -n "$GW_NS" \
   --from-file=burst.js="$SCRIPT_DIR/burst.js" --dry-run=client -o yaml | kubectl apply -f -
-sed "s/namespace: chat/namespace: $GW_NS/" "$SCRIPT_DIR/k6-job.yaml" | kubectl apply -f -
-echo ">>> Load running (4 VUs x 4m). Sampling every 20s:"
+sed -e "s/namespace: chat/namespace: $GW_NS/" \
+    -e "s/value: \"qwen3.5:9b\"/value: \"$MODEL\"/" \
+    "$SCRIPT_DIR/k6-job.yaml" | kubectl apply -f -
+echo ">>> Load running (4 VUs x 4m) against model: $MODEL. Sampling every 20s:"
 
 RATE_PY='import urllib.request,urllib.parse,json,sys;u=sys.argv[1]+"/api/v1/query?query="+urllib.parse.quote("sum(rate(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\"}[1m]))");r=json.loads(urllib.request.urlopen(u,timeout=8).read())["data"]["result"];print(round(float(r[0]["value"][1]),1) if r else 0)'
 

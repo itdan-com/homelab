@@ -24,7 +24,7 @@ const prompts = [
 
 export default function () {
   const payload = JSON.stringify({
-    model: 'qwen3.5:9b',
+    model: __ENV.MODEL || 'qwen3.5:9b',
     messages: [
       { role: 'user', content: prompts[Math.floor(Math.random() * prompts.length)] },
     ],
