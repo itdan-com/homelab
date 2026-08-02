@@ -268,11 +268,14 @@ def test_full_sign_in_mints_a_resource_bound_token_and_a_principal(
         p = s.get(Principal, claims["sub"])
         assert p.email == "alice@example.com" and p.idp_sub == "idp-sub-alice"
 
-    r = c.post("/mcp", json={"method": "initialize"},
+    # The token opens the resource: a real MCP handshake answers.
+    # (Policy-driven behaviour is test_door_mcp's subject; `initialize`
+    # is deliberately the one method that needs no active store.)
+    r = c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                             "params": {"protocolVersion": "2025-11-25"}},
                headers={"Authorization": f"Bearer {access}"})
     assert r.status_code == 200
-    assert r.json()["error"]["data"]["principal"] == "alice@example.com"
-    assert r.json()["error"]["data"]["flow_id"].startswith("person-")
+    assert r.json()["result"]["serverInfo"]["name"] == "sentinel-airlock"
 
 
 def test_authorization_code_is_single_use(c, cimd_ok, idp):

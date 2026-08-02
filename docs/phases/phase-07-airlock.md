@@ -251,13 +251,28 @@ RFC 8693 at the gateway.
   `/mcp` validates them and mints person-flow ids (gateway-minted,
   never client-chosen). Ladder wiring + cluster forwarding stay
   7.3.4 by design.
-- [ ] **7.3.4 Handshake birthright through the ladder.** The door
-  routes person-calls into `ladder.decide()`: a signed-in person
-  reaches their assigned servers' handshake (`rpc.*`) and
-  birthright tools at ZERO approvals; unassigned servers invisible
-  even to `initialize`; store-unknown person = forbid. Stream-
-  lifetime caps: a long-lived MCP stream cannot outlive policy —
-  re-evaluation cadence/cap decided and tested here.
+- [x] **7.3.4 Handshake birthright through the ladder** (DONE
+  2026-08-02, code + tests; suite 84/84, 15 new). The door speaks
+  MCP: `initialize` / `tools/list` / `tools/call` / `ping` /
+  notifications / batches, one address fronting every server, tools
+  namespaced `<server>.<leaf>` — the same string the ladder decides
+  on and the audit log records. **Visibility became its own
+  question:** `ladder.visible_tools()` evaluates policy per tool
+  with NO grants, NO DB and deliberately NO audit rows (a listing
+  would otherwise bury real denials under thousands), against the
+  SERVER-level resource — "may you use this somewhere", with the
+  concrete-resource question left to call time. A borrowable tool is
+  listed and marked; a server whose handshake is forbidden is absent
+  whole. Proven: engineering sees echo+github and hr-platform is
+  invisible; hr-head sees the approve rung; **prod-tier write stays
+  forbidden while the staging twin offers approval**; a refusal
+  carries the elevation offer (profile + windows); holding the grant
+  turns the same call into a pass; every decision audits with its
+  `policy_version`. Stream caps: **no SSE, by construction** — the
+  door is request/response only, so ADR-005 audit gap 1 (an
+  elevation cannot close an open stream) has no surface here; when
+  server-initiated notifications need SSE, the cap ships in the same
+  change (`GET /mcp` → 405 saying so).
 - [ ] **7.3.5 The confirm + approve doors.** A borrowable denial
   already carries the offer (7.2.3); the doors mint the profile
   grants: `confirm` = the caller self-elevates from their own
@@ -592,6 +607,34 @@ birthright plus Decision 6's profile grants.
   demo sign-in path is `claude mcp login <name> --no-browser`
   (v2.1.186+). Full token mint deliberately NOT yet exercised — it
   needs 7.3.3's door.
+- **2026-08-02 (7.3.3):** a bug the tests caught that production
+  would have shown as a mystery — `models.utcnow()` is NAIVE UTC (the
+  DB convention) and `.timestamp()` on a naive datetime applies the
+  HOST's local offset, so every door token was stamped six hours into
+  the future on this MDT box and any correct validator would call it
+  not-yet-valid. JWT claims now come from `time.time()`. Transferable:
+  two time conventions in one process, one of them invisible at the
+  call site. Also recorded: the door's upstream leg to Authentik is
+  still a PUBLIC client using PKCE rather than confidential with a
+  secret — spec-legal, works, and named as a hardening item rather
+  than quietly left (SOPS + blueprint flip when touched).
+- **2026-08-02 (7.3.4) — the finding that will bite the demo if
+  forgotten:** a person the POLICY STORE has never heard of sees
+  **zero** tools, not even the `all-employees` birthright, because
+  that group's membership is a fact of the entity store, not of the
+  IdP (7.2.3's "store-unknown person = forbid", now proven at the
+  visibility layer too). So onboarding is a policy-store edit in the
+  console's Access screen, and an SSO login alone buys nothing —
+  **the owner's own email must be added to the store before the 7.3.6
+  demo can list a single tool.** Second bug caught by tests, not by
+  production: the door passed `{"arguments": {...}}` into
+  `ladder.decide()` where the store's resource map walks the
+  `params.arguments` RECORD itself, so every resource-mapped tool
+  derived `unmapped-resource` and denied closed — safe, and silently
+  unusable. Also: `SENTINEL_MCP_UPSTREAMS` keeps each server's URL in
+  CONFIG, never in the policy store, so a console policy edit can
+  never retarget traffic to another host; a server with no upstream
+  is decidable but not callable, which is the honest state until 7.4.
 - **2026-08-02 (owner, mid-7.3 — the product frame that re-cut
   7.3.3):** *"we would be using authentik in an end state would we
   not? easy enough for a small company"*; *"im not sure why we

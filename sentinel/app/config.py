@@ -157,3 +157,17 @@ DOOR_TOKEN_TTL_MINUTES = int(
 DOOR_STATIC_CLIENTS = [c.strip() for c in
                        os.environ.get("SENTINEL_DOOR_STATIC_CLIENTS", "").split(",")
                        if c.strip()]
+
+# Where each MCP server actually lives: `name=url,name=url`. This is
+# CONFIG, not policy, on purpose — the policy store says WHETHER a
+# person may call a server, config says WHERE that server is. Keeping
+# the URL out of the console means a policy edit can never retarget
+# traffic to an attacker's host; the two authorities stay separate.
+# A server with no upstream here is decidable but not callable, which
+# is the honest state until 7.4 deploys the first real one.
+MCP_UPSTREAMS = {
+    k.strip(): v.strip() for k, _, v in
+    (part.partition("=") for part in
+     os.environ.get("SENTINEL_MCP_UPSTREAMS", "").split(",") if part.strip())
+    if k.strip() and v.strip()
+}

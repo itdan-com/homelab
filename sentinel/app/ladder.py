@@ -95,6 +95,48 @@ def _deny(s: Session, *, email: str, tool: str, reason: str, outcome: str,
                         resource=resource, hint=hint)
 
 
+def visible_tools(ap, email: str) -> dict[str, str]:
+    """What this person may SEE — `{tool: outcome}` for every tool the
+    policy does not forbid outright (7.3.4).
+
+    Visibility is a policy question only: no DB, no grants, and
+    deliberately **no audit rows** — a listing evaluates every tool of
+    every server, and auditing each one would bury real denials under
+    thousands of routine rows (the listing itself audits once, at the
+    door). A tool needing elevation IS listed: that is how a client
+    learns what it could borrow. A server whose handshake is forbidden
+    is absent entirely — nobody sees what they have no business
+    seeing.
+
+    Each tool is evaluated against its SERVER-level resource
+    (`<server>/*`), not a concrete one: "may you use this tool
+    somewhere". Whether you may use it on *this* database is the
+    call-time question, and `decide()` answers that with the real
+    arguments — which is why a prod-forbidden tool can appear here and
+    still be refused on prod."""
+    out: dict[str, str] = {}
+    for server, spec in (ap.servers or {}).items():
+        resource_id, tier = f"{server}/*", "unclassified"
+        if not _ask(ap, email, "read", resource_id, server, tier, {}):
+            continue  # handshake forbidden ⇒ the server is invisible whole
+        for action in ("read", "write"):
+            for leaf in spec.get(action) or []:
+                if leaf.endswith(".*"):
+                    continue  # transport plumbing, never a listed tool
+                if _ask(ap, email, action, resource_id, server, tier, {}):
+                    outcome = "permit"
+                elif _ask(ap, email, action, resource_id, server, tier,
+                          {"elevated": True}):
+                    outcome = "confirm"
+                elif _ask(ap, email, action, resource_id, server, tier,
+                          {"approved": True}):
+                    outcome = "approve"
+                else:
+                    continue
+                out[f"{server}.{leaf}"] = outcome
+    return out
+
+
 def decide(s: Session, *, principal: Principal, tool: str,
            arguments: dict | None = None) -> LadderResult:
     """May this person make this call, right now? `tool` is scope.py's

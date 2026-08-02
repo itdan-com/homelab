@@ -44,10 +44,11 @@ import httpx
 import jwt
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from . import __version__
+from . import ladder
 from . import policy
 from .cimd import ClientError, fetch_cimd, redirect_uri_allowed
 from .config import (
@@ -55,6 +56,7 @@ from .config import (
     DOOR_ORIGIN,
     DOOR_STATIC_CLIENTS,
     DOOR_TOKEN_TTL_MINUTES,
+    MCP_UPSTREAMS,
     OIDC_CA_BUNDLE,
     OIDC_CLIENT_ID,
     OIDC_CLIENT_SECRET,
@@ -63,7 +65,7 @@ from .config import (
     POLICY_RELOAD_SECONDS,
 )
 from .db import SessionLocal
-from .models import AuditEventType
+from .models import AuditEventType, Principal
 from .service import audit, get_or_create_principal
 
 log = logging.getLogger("sentinel")
@@ -473,7 +475,6 @@ def person_from_bearer(request: Request) -> dict:
     except jwt.PyJWTError as e:
         raise TokenError(str(e))
     with SessionLocal() as s:
-        from .models import Principal
         p = s.get(Principal, claims["sub"])
         if p is None or p.disabled_at is not None:
             raise TokenError("principal disabled or unknown")
@@ -490,23 +491,184 @@ def _unauthorized(detail: str) -> JSONResponse:
                  f'"{DOOR_ORIGIN}/.well-known/oauth-protected-resource/mcp"'})
 
 
+# --- MCP protocol (7.3.4) -----------------------------------------------------
+#
+# The door is ONE address fronting every MCP server (CLAUDE.md's
+# promise: "point an MCP client at one address"). Tools are namespaced
+# `<server>.<leaf>` — the same string the ladder decides on and the
+# audit log records, so what a person saw, what they called, and what
+# was allowed are all the same identifier.
+#
+# Request/response only: no SSE. That is a deliberate 7.3.4 boundary,
+# and it settles ADR-005's audit gap 1 (an elevation's expiry cannot
+# close an already-open stream) the simplest way — there are no open
+# streams to outlive a policy change, and every call re-decides against
+# the live policy version. When server-initiated notifications need
+# SSE, the stream cap must arrive in the same change.
+
+_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
+
+
+def _rpc_error(rid, code: int, message: str, data: dict | None = None) -> dict:
+    err = {"code": code, "message": message}
+    if data:
+        err["data"] = data
+    return {"jsonrpc": "2.0", "id": rid, "error": err}
+
+
+def _tool_entry(name: str, outcome: str) -> dict:
+    borrowed = outcome != "permit"
+    note = {"confirm": " Requires a timed elevation you can start yourself.",
+            "approve": " Requires approval from another person."}.get(outcome, "")
+    return {
+        "name": name,
+        "description": f"{name} via Airlock.{note}",
+        "inputSchema": {"type": "object", "additionalProperties": True},
+        "_meta": {"airlock/outcome": outcome, "airlock/elevation": borrowed},
+    }
+
+
+def _call_upstream(server: str, leaf: str, arguments: dict, *,
+                   principal: str, flow_id: str) -> dict:
+    """Forward an ALLOWED call to the server's real upstream. The
+    person's identity and flow travel as headers so the upstream's own
+    logs can be correlated with Sentinel's audit trail — they are
+    context, never authority: the decision was made here."""
+    url = MCP_UPSTREAMS.get(server)
+    if not url:
+        return {"content": [{"type": "text", "text":
+                             f"Allowed by policy, but no upstream is "
+                             f"configured for '{server}' on this "
+                             f"deployment."}], "isError": True}
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": leaf, "arguments": arguments}}
+    with _http() as c:
+        r = c.post(url, json=body, headers={
+            "X-Airlock-Principal": principal, "X-Airlock-Flow": flow_id,
+            "Accept": "application/json"})
+    if r.status_code != 200:
+        return {"content": [{"type": "text", "text":
+                             f"Upstream '{server}' returned "
+                             f"HTTP {r.status_code}."}], "isError": True}
+    payload = r.json()
+    return payload.get("result") or {
+        "content": [{"type": "text",
+                     "text": json.dumps(payload.get("error", {}))}],
+        "isError": True}
+
+
+def _handle_rpc(msg: dict, claims: dict, flow_id: str) -> dict | None:
+    """One JSON-RPC message → one response (None for notifications)."""
+    rid, method = msg.get("id"), msg.get("method")
+    params = msg.get("params") or {}
+
+    if method == "initialize":
+        want = params.get("protocolVersion")
+        return {"jsonrpc": "2.0", "id": rid, "result": {
+            "protocolVersion": want if want in _PROTOCOL_VERSIONS
+                               else _PROTOCOL_VERSIONS[0],
+            "capabilities": {"tools": {"listChanged": False}},
+            "serverInfo": {"name": "sentinel-airlock", "version": __version__,
+                           "title": "Airlock"},
+            "instructions": "Tools are named <server>.<tool>. You see only "
+                            "what your role entitles. Tools marked as "
+                            "needing elevation can be unlocked for a "
+                            "time-boxed window.",
+        }}
+    if method in ("notifications/initialized", "notifications/cancelled"):
+        return None
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": rid, "result": {}}
+
+    ap = policy.get_active()
+    if ap is None:
+        return _rpc_error(rid, -32001, "Airlock has no active policy; "
+                                       "nothing is reachable.")
+
+    if method == "tools/list":
+        visible = ladder.visible_tools(ap, claims["email"])
+        with SessionLocal() as s:
+            # ONE audit row for the listing (see visible_tools: the
+            # per-tool evaluations are deliberately silent).
+            audit(s, AuditEventType.USE, flow_id=flow_id, tool="rpc.tools_list",
+                  principal=claims["email"], policy_version=ap.version,
+                  details={"source": "door", "visible": len(visible)})
+            s.commit()
+        return {"jsonrpc": "2.0", "id": rid, "result": {
+            "tools": [_tool_entry(n, o) for n, o in sorted(visible.items())]}}
+
+    if method == "tools/call":
+        name = params.get("name") or ""
+        arguments = params.get("arguments") or {}
+        server, _, leaf = name.partition(".")
+        with SessionLocal() as s:
+            p = s.get(Principal, claims["sub"])
+            if p is None:
+                return _rpc_error(rid, -32002, "Unknown principal.")
+            # `arguments` is passed as the JSON-RPC params.arguments
+            # RECORD itself — the store's resource map (`from:
+            # params.arguments.repo`) walks the keys inside it. Wrapping
+            # it one level deeper makes every mapped tool derive
+            # `unmapped-resource` and deny closed: safe, but silently
+            # unusable.
+            result = ladder.decide(s, principal=p, tool=name,
+                                   arguments=arguments)
+        if not result.allowed:
+            # The refusal is the product: it says what borrowing would
+            # take, so a client can offer the elevation rather than
+            # leaving the person at a dead end.
+            return _rpc_error(rid, -32003, {
+                "elevation-available": "This tool needs a timed elevation "
+                                       "you can start yourself.",
+                "approval-required": "This tool needs another person's "
+                                     "approval.",
+            }.get(result.reason, "Not permitted."), {
+                "outcome": result.outcome, "reason": result.reason,
+                "resource": result.resource, "policy_version": ap.version,
+                **({"elevation": result.hint} if result.hint else {})})
+        return {"jsonrpc": "2.0", "id": rid,
+                "result": _call_upstream(server, leaf, arguments,
+                                         principal=claims["email"],
+                                         flow_id=flow_id)}
+
+    return _rpc_error(rid, -32601, f"Method not supported: {method}")
+
+
 @app.post(MCP_PATH, tags=["mcp"])
-@app.get(MCP_PATH, tags=["mcp"])
 async def mcp(request: Request):
     try:
         claims = person_from_bearer(request)
     except TokenError as e:
         return _unauthorized(str(e))
+    try:
+        msg = await request.json()
+    except Exception:
+        return JSONResponse(_rpc_error(None, -32700, "Parse error"), 400)
+
     # Person-flow ids are minted HERE, never accepted from the client
     # (7.2.1 note): unique by construction, so two people's sessions
     # can never collide and every audit row attributes correctly.
     flow_id = f"person-{secrets.token_urlsafe(9)}"
-    return JSONResponse({
-        "jsonrpc": "2.0", "id": None,
-        "error": {"code": -32601,
-                  "message": "authenticated; tool routing arrives in 7.3.4",
-                  "data": {"principal": claims.get("email"),
-                           "flow_id": flow_id,
-                           "policy_version": (policy.get_active().version
-                                              if policy.get_active() else None)}},
-    })
+
+    if isinstance(msg, list):  # JSON-RPC batch
+        out = [r for r in (_handle_rpc(m, claims, flow_id) for m in msg)
+               if r is not None]
+        return JSONResponse(out) if out else Response(status_code=202)
+    if not isinstance(msg, dict):
+        return JSONResponse(_rpc_error(None, -32600, "Invalid Request"), 400)
+    resp = _handle_rpc(msg, claims, flow_id)
+    return Response(status_code=202) if resp is None else JSONResponse(resp)
+
+
+@app.get(MCP_PATH, tags=["mcp"])
+async def mcp_stream(request: Request):
+    """MCP's optional server→client stream. Refused deliberately (see
+    the section comment): without an open stream, no session can
+    outlive the policy that authorized it."""
+    try:
+        person_from_bearer(request)
+    except TokenError as e:
+        return _unauthorized(str(e))
+    return JSONResponse(_rpc_error(None, -32004,
+                                   "This door does not open server-initiated "
+                                   "streams; send requests as POST."), 405)
