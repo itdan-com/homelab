@@ -234,6 +234,37 @@ def healthz() -> dict:
             "policy_version": ap.version if ap else None}
 
 
+@app.get("/", tags=["meta"], response_class=HTMLResponse)
+def index() -> HTMLResponse:
+    """A door that answers 404 to a human looks broken (owner, first
+    live visit — it was the first thing anyone tried). This is an
+    address people are *given*, so it has to explain itself to whoever
+    types it into a browser: machines get the metadata documents,
+    people get a page."""
+    active = policy.get_active()
+    return HTMLResponse(
+        "<!doctype html><meta charset=utf-8><title>Airlock</title>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<body style='font-family:system-ui;max-width:40em;margin:4em auto;"
+        "line-height:1.6'>"
+        "<h1>Airlock</h1>"
+        "<p>This address is for <strong>MCP clients</strong>, not browsers "
+        "— there is nothing to click here. Point a client at it and sign "
+        "in with your company account:</p>"
+        f"<pre style='background:#f4f4f5;padding:1em;border-radius:6px;"
+        f"overflow-x:auto'>claude mcp add --transport http airlock "
+        f"{DOOR_ORIGIN}/mcp\nclaude mcp login airlock</pre>"
+        "<p>You will then have the tools your role entitles you to. "
+        "Signing in proves <em>who</em> you are; <strong>what</strong> you "
+        "may do comes from the access policy — so if you sign in "
+        "successfully and see no tools at all, you have not been added to "
+        "it yet. Ask whoever runs this platform.</p>"
+        f"<p style='color:#666;font-size:.9em'>Policy version: "
+        f"{active.version if active else 'none active — nothing is reachable'}"
+        f" · <a href='{DOOR_ORIGIN}/.well-known/oauth-protected-resource'>"
+        "resource metadata</a></p>")
+
+
 # --- discovery ----------------------------------------------------------------
 
 def _prm() -> dict:
