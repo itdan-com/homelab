@@ -41,6 +41,25 @@ On the console (`https://localhost:8400`) → **Access → People → add**:
 
 Save & activate. Watch the version change.
 
+**3 — (optional) let an allowed call actually run something.** Policy
+decides either way, but with no upstream configured the door answers
+"allowed, but nothing is deployed for that server." To point it at the
+5.5 stand-in, in your terminal:
+
+```bash
+echo '127.0.0.1 mcp-proxy.lab.local' | sudo tee -a /etc/hosts
+sudo sed -i 's|^SENTINEL_MCP_UPSTREAMS=.*|SENTINEL_MCP_UPSTREAMS=mock=https://mcp-proxy.lab.local:8443/mock/mcp|' /etc/sentinel/sentinel.env
+sudo systemctl restart sentinel-door
+```
+
+Then add a `mock` server to the store (console → Access → Servers) with
+`say` and `rpc.*` as read tools, and give your group `read` on it.
+
+> The installer deliberately does **not** edit `/etc/hosts` or assume an
+> upstream. A script that rewrites system files unattended is how this
+> project once blanked a hosts file, and an upstream URL is deployment
+> truth that belongs to whoever runs the deployment.
+
 ---
 
 ## The demo

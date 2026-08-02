@@ -687,6 +687,36 @@ birthright plus Decision 6's profile grants.
   Also confirmed: `authentik.lab.local` resolves from WSL through
   Windows DNS, so the door uses the REAL hostname and verifies TLS
   strictly (no Host-header/SNI mismatch fudge).
+- **2026-08-02 (7.3.6, forwarding) — the door goes THROUGH the
+  enforcement point, not around it.** An allowed person-call now
+  reaches a real MCP server the same way in-cluster callers do:
+  `service.mint_forwarding_token()` issues a one-call, 30-second,
+  scope-locked token AFTER `ladder.decide()` allowed, and the proxy
+  independently re-checks the kill switch and derives scope from the
+  request itself. Costs zero human taps (the approval question was
+  answered upstairs); a leaked copy buys one call it was already
+  entitled to make. Rejected alternative: letting the door talk
+  straight to MCP services — that would make "nothing reaches an MCP
+  server without a capability check" read "…unless it came from the
+  door". **Three infrastructure findings:** (1) the host-side path to
+  the proxy was a **root `kubectl port-forward` running since
+  2026-07-28** — undeclared, reboot-fatal, invisible to
+  `bootstrap.sh`; replaced with a chart IngressRoute; (2) k3s Traefik
+  refuses **ExternalName** services AND cross-namespace service refs
+  by default, so the route sits in the controller namespace targeting
+  the data-plane service by the chart's deterministic name helper
+  rather than loosening two global flags; (3) upstream MCP servers
+  may answer a POST as JSON *or* as a one-message SSE stream —
+  the door handles both, because which one is the server's choice.
+  Live-only bug: the ORM principal crossed a closed session boundary
+  and raised `DetachedInstanceError` on the first real call; identity
+  now travels as plain values. **Proven live: door → ladder → mint →
+  proxy → broker check.** The last hop returned `unknown-token`
+  because a DEV door writes its own SQLite while the installed broker
+  reads `/var/lib/sentinel/sentinel.db` — which is the two processes
+  disagreeing about the database, not the design; both units share
+  that file after the install, and the proxy refusing a token it
+  cannot verify is the gate working.
 - **2026-08-02 (owner, mid-7.3 — the product frame that re-cut
   7.3.3):** *"we would be using authentik in an end state would we
   not? easy enough for a small company"*; *"im not sure why we
