@@ -530,6 +530,35 @@ building our own ID-JAG issuer against Anthropic's still-beta client
 feature would be pioneering both ends of a wire simultaneously —
 wrong risk for this phase.
 
+**Amended 2026-08-02 (owner, at the 7.3 door): the shipped IdP is
+the end state, and CIMD does not wait for XAA.** The product frame
+(ADR-002, "domain in, platform out") means a small company's
+deployment SHIPS Authentik as its IdP — bring-your-own-IdP is the
+enterprise upgrade path, not the plan of record. Consequences:
+(a) **CIMD lands in Phase 7 after all.** The component that must
+speak it is the authorization server MCP clients face, and that is
+OUR door: 7.3.3 gives Sentinel's door a minimal AS facade —
+auth-code + PKCE (S256) as the only flow, client identity via CIMD
+metadata documents (SSRF-guarded fetch; redirect_uri validation with
+RFC 8252 loopback-port variance, which neutralizes claude-code
+#37747 correctly) or a static allowlist, and **no DCR, permanently**
+(owner security stance: unauthenticated dynamic registration is the
+deprecated, insecure piece). The facade federates human login to
+Authentik (the 7.3.2 client re-homed as its confidential upstream
+leg) and issues the door's own short-lived resource-bound
+person-tokens (the client's observed RFC 8707 `resource` parameter
+becomes honorable — Authentik alone would ignore it). Authentik
+remains a pure IdP: credentials, sessions, login UI.
+(b) **The XAA posture above is unchanged** — the facade issues
+person-tokens for our own door; it never issues upstream
+credentials, so layer 1 still waits for the external tenant.
+(c) **Self-hosted MCP servers are product scope, not lab
+convenience**: the stack terraform-deploys with its MCP servers
+alongside by default (compliance buyers self-host — the owner's GHES
+first, 7.4), and the roadmap names the common enterprise set
+(Snowflake and peers) as future catalog charts + `servers.yaml`
+columns.
+
 ## Homes for the four audit gaps (so nobody rediscovers them expensively)
 
 1. **An elevation's expiry cannot close an already-open SSE stream**

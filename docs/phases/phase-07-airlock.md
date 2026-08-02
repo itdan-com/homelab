@@ -229,17 +229,28 @@ RFC 8693 at the gateway.
   honestly (CIMD-shaped vs full CIMD). RFC 8414/OIDC discovery
   verified against the live Authentik; the redirect-URI story for a
   loopback CLI client settled here.
-- [ ] **7.3.3 The door itself.** `mcp.lab.local` (local equivalent
-  of `mcp.<domain>`) with real TLS from the lab CA. Topology decided
-  in-item against CLAUDE.md's "on Envoy" line — which listener
-  terminates it (existing Traefik 8443 entry vs the Envoy AI
-  gateway), recorded with reasoning. RFC 9728 protected-resource
-  metadata served at the door so MCP clients discover the
-  authorization server; broker-side JWT validation (issuer,
-  audience, expiry, signature against Authentik's JWKS) so every
-  call knows WHICH PERSON is calling; person-flow ids
-  GATEWAY-MINTED (7.2.1 note — unique by construction, never
-  client-chosen).
+- [ ] **7.3.3 The door itself — re-cut 2026-08-02 (owner product
+  frame): the door carries its own authorization-server facade.**
+  Shipped Authentik is the end-state IdP, so the AS that MCP
+  clients face is OURS — CIMD lands here, not with the
+  external-IdP move (ADR-005 D9 amendment). `mcp.lab.local` with
+  real TLS; topology decision recorded in-item (lean: a Sentinel
+  HOST listener — the facade holds the key that MINTS trusted
+  person-identity, and P1 puts that key outside the agent-writable
+  cluster; in-cluster Envoy remains the enforcement point in front
+  of MCP servers). RFC 9728 PRM at the door; AS metadata
+  advertising CIMD; auth-code + PKCE (S256 only); client identity
+  via CIMD document (SSRF-guarded fetch, redirect_uri validated
+  with RFC 8252 loopback-port variance — neutralizes claude-code
+  #37747 correctly) or static allowlist; **NO DCR, permanently**
+  (owner). Human login federates to Authentik through the 7.3.2
+  client (flips confidential; redirect becomes the door's own
+  callback). The door issues its OWN short-lived RS256
+  person-tokens, audience-bound to the door resource (honoring the
+  client's observed RFC 8707 `resource` param) + rotating refresh;
+  `/mcp` validates them and mints person-flow ids (gateway-minted,
+  never client-chosen). Ladder wiring + cluster forwarding stay
+  7.3.4 by design.
 - [ ] **7.3.4 Handshake birthright through the ladder.** The door
   routes person-calls into `ladder.decide()`: a signed-in person
   reaches their assigned servers' handshake (`rpc.*`) and
@@ -581,3 +592,17 @@ birthright plus Decision 6's profile grants.
   demo sign-in path is `claude mcp login <name> --no-browser`
   (v2.1.186+). Full token mint deliberately NOT yet exercised — it
   needs 7.3.3's door.
+- **2026-08-02 (owner, mid-7.3 — the product frame that re-cut
+  7.3.3):** *"we would be using authentik in an end state would we
+  not? easy enough for a small company"*; *"im not sure why we
+  can't use cimd but we are NOT using dcr its not secure"*; the
+  stack terraform-deploys WITH self-hosted MCP servers alongside
+  (compliance buyers self-host — their own GitHub MCP for GHES,
+  custom servers) and must grow the common enterprise set
+  (Snowflake named first). Consequences applied same hour: ADR-005
+  D9 amended (CIMD via the door's own AS facade NOW; XAA posture
+  unchanged); 7.3.3 re-cut to carry the facade; DCR recorded as a
+  standing owner security stance, not an accident of Authentik's
+  feature set; common-servers catalog added to STATUS backlog;
+  7.3.2's `mcp-door` client re-homes as the facade's confidential
+  upstream leg (blueprint flip rides 7.3.3's build).
