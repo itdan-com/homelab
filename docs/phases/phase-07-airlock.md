@@ -169,7 +169,16 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   clobbered by the poll; Reset-to-active button. Suite 46/46; JS
   node-checked. Residual: tiers/resource-map editing stays
   Advanced-only for now (rarely touched; a guided form is future
-  polish).
+  polish). **v2 same day, from the owner's review of v1** ("I can't
+  easily see who has access to what"): rebuilt as four lenses on the
+  established IAM patterns (GitHub access page, Okta assignments,
+  Tailscale/Access-Analyzer resolved views) — **Groups** (click →
+  members, grants, inherited-via chips), **People** (search, capped
+  20, click → EFFECTIVE access with provenance — whichever-is-higher,
+  computed and shown), **Servers** (who-can-reach-it buckets;
+  "environments" replaces tier/map jargon), **Limits & windows**
+  ("Never allow" sentences + window chips). Human level labels
+  throughout. Same draft→structured-save gate underneath.
 
 ## ADR-005 must resolve — blockers from the 2026-07-28 audit
 
