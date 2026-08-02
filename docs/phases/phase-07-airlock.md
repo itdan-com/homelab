@@ -255,3 +255,11 @@ birthright plus Decision 6's profile grants.
   auto-committed to a local history (revert = console action). The
   owner's automation idea gets its safe shape: anything may *draft*
   a policy change; only a passkey holder *activates* it.
+- **2026-08-02 (7.1 second refinement, owner):** the matrix gains a
+  fifth level — `write-on-approval` (high risk, a *different human*
+  decides) — and it costs almost nothing to build: it is 5.5.5's
+  pending-card + grant flow reused as Airlock's `approve` path (same
+  windowed-grant primitive, other door, `granted_by` = the approver).
+  Generator mapping stated in Decision 5; lab collapse (one human =
+  requester ≈ approver until a second passkey enrolls) named
+  honestly in Decision 6.

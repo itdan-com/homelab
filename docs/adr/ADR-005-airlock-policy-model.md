@@ -1,10 +1,11 @@
 # ADR-005: Airlock's policy model — Cedar, identity, resources, and the elevation gate
 
-**Status:** **Proposed** 2026-08-02 (Phase 7.1); **amended same day
-after owner review** — policy authoring moved from human PRs to the
-Sentinel console (Decision 5); git demoted from authoring surface to
-automatic memory. Needs owner acceptance before 7.2 (schema + policy
-engine) begins.
+**Status:** **Proposed** 2026-08-02 (Phase 7.1); **amended twice same
+day on owner review** — (1) policy authoring moved from human PRs to
+the Sentinel console (Decision 5), git demoted from authoring surface
+to automatic memory; (2) the access matrix gained its high-risk rung,
+`write-on-approval`, riding 5.5's console grant flow (Decisions 5/6).
+Needs owner acceptance before 7.2 (schema + policy engine) begins.
 **Owner input (2026-08-02):** the elevation model in their words —
 person → group → birthright; elevation is a *request that is
 auto-approved because the group already entitles it*, time-boxed
@@ -18,6 +19,11 @@ an admin configures groups, permissions, and birthright in a GUI
 ("read only for these groups, write for those, or write only via
 request, and everything is audited"), simple enough that automation
 could draft changes.
+**Third owner input, same day:** the ladder gains an explicit
+high-risk rung — per (group, server): read · write ·
+write+temp-approved (auto, windowed) · **write+manual-approve (high
+risk — a different human decides)**, everything audited; the manual
+approval lives in Sentinel.
 
 ## Context
 
@@ -247,7 +253,9 @@ Cedar up to three times, cheapest first:
    directly and the call proceeds (logged against the grant).
 3. **Approved** — `context: {approved: true}` (only if 2 denied).
    Permit ⇒ **approve**: possible only via a *different human* on the
-   Sentinel console — the rare path, kept deliberately rare.
+   Sentinel console — the rare path, kept deliberately rare. The
+   surface already exists: this is 5.5's pending-card + grant flow,
+   reused (mechanics in Decision 6).
 
 Deny on all three ⇒ **forbid**. And explicit `forbid(...)` policies
 override every permit at every step — Cedar's forbid-trumps-permit is
@@ -285,11 +293,18 @@ three small documents under `/var/lib/sentinel/policy/`, owned by the
 
 - the **entity store** — people, groups, the lattice;
 - the **access matrix** — per (group, server): `none | read | write |
-  write-on-request`, plus allowed windows and tier rules. The
-  owner's sketch is the schema, verbatim: *"read only for these
-  groups, write for those, or write only via request, and everything
-  is audited."*
+  write-on-request | write-on-approval`, plus allowed windows and
+  tier rules. The owner's sketches are the schema: reads and standing
+  writes are birthright; `write-on-request` is the auto-approved
+  temporary elevation; `write-on-approval` is the high-risk rung
+  where a *different human* grants; *"everything is audited."*
 - the **resource maps** (Decision 3).
+
+The generator's mapping is mechanical, one row at a time: `read` and
+`write` emit baseline permits; `write-on-request` emits permits
+conditioned on `context.elevated`; `write-on-approval` emits permits
+conditioned on `context.approved`; `none` emits nothing — and
+explicit forbids (tier rules) trump every level at every rung.
 
 **Cedar is generated from that data at activation.** Cedar policy
 templates exist for exactly this shape (and `cedarpy` links them). A
@@ -383,6 +398,17 @@ Elevation mechanics (implemented in 7.2, decided here):
   set is 30 min / 1 h / 2 h (supersedes the 15/30/60 illustration in
   CLAUDE.md), declared per profile — a sensitive profile may offer
   only 30 min.
+- An `approve` (the matrix's `write-on-approval` rung) mints the
+  **same windowed grant through the other door**: the request lands
+  as a pending card on the admin console — person, profile, window,
+  reason — and a passkey holder grants or denies it. This is 5.5.5's
+  card-and-grant flow reused verbatim as Airlock's high-risk path;
+  `granted_by` names the approver, where self-elevation's names the
+  requester. One primitive, two doors. (Lab honesty: with a single
+  enrolled human, requester and approver collapse into one person —
+  the mechanism still enforces console-side grant, window, and
+  audit, and the different-human property turns on the day a second
+  passkey enrolls.)
 - Grants are revocable individually (**per-grant / per-flow revoke —
   ADR-004 debt 4 — lands in the same 7.2 schema change**), and the
   global kill switch keeps overriding everything.
