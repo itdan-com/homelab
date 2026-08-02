@@ -230,6 +230,18 @@ def main() -> int:
     if not check(console.sign_in(enroll_code), "signed in with a passkey"):
         return 1
 
+    # 7.2: the policy plane is live — the Access screen has data to
+    # show and the revocation surface answers. On a fresh dev checkout
+    # this needs a seeded store (the installer seeds it; dev: copy
+    # policy-example/ to sentinel/policy-dev/).
+    print("\n-- 0. the policy plane (7.2)")
+    status, pol = console.call("/v1/policy/status")
+    check(status == 200 and pol.get("active") is True,
+          f"policy store ACTIVE (version {pol.get('version')})",
+          "" if pol.get("active") else "no active store — seed it")
+    status, _grants = console.call("/v1/grants?live=true")
+    check(status == 200, "the grants/revocation surface answers")
+
     # 1. No token at all.
     print("\n-- 1. no token")
     r = httpx.post(PROXY + MCP_PATH, timeout=15,

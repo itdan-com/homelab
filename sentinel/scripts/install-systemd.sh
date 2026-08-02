@@ -29,6 +29,14 @@ K3D_NETWORK="${K3D_NETWORK:-k3d-devlab}"
 
 [[ $EUID -eq 0 ]] || { echo "!! run with sudo" >&2; exit 1; }
 
+# 7.2: the policy store keeps its version history in a local git repo
+# (ADR-005 D5 — git as memory). Without git, activation fails and the
+# person-path stays closed, so refuse loudly here instead of quietly
+# there. Cloud-init installs git before calling this script.
+command -v git >/dev/null 2>&1 || {
+  echo "!! git is required (the policy store's history is a local git repo)." >&2
+  exit 1; }
+
 # The broker's address: given, or detected from the local container
 # network. Detection lives HERE and only here.
 BROKER_BIND="${SENTINEL_BROKER_BIND:-$(docker network inspect "$K3D_NETWORK" \
@@ -60,6 +68,20 @@ echo "== state + config directories"
 install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$STATE_DIR"
 install -d -o root -g root -m 0755 "$ETC_DIR"
 install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$CERT_DIR"
+
+# The policy store (7.2, ADR-005 D5). Seeded ONCE from the committed
+# example so the console's Access screen lands on something real —
+# and never re-seeded: the store belongs to the operator from the
+# moment it exists, and an install must not overwrite their policy.
+POLICY_DIR="$STATE_DIR/policy"
+install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$POLICY_DIR"
+if [[ ! -f "$POLICY_DIR/entities.yaml" ]]; then
+  for f in entities.yaml matrix.yaml servers.yaml overlay.cedar; do
+    install -o "$SVC_USER" -g "$SVC_USER" -m 0600 \
+      "$REPO_DIR/policy-example/$f" "$POLICY_DIR/$f"
+  done
+  echo "== policy store seeded from policy-example/ (edit it on the console)"
+fi
 
 # Certificates: reuse what already exists so the CA — and therefore the
 # cluster's trust in it — survives a reinstall. Only mint when there is
@@ -102,6 +124,7 @@ SENTINEL_BROKER_PORT=$BROKER_PORT
 SENTINEL_RP_ID=$RP_ID
 SENTINEL_CONSOLE_ORIGIN=https://$RP_ID:$ADMIN_PORT
 SENTINEL_CONSOLE_HOSTS=127.0.0.1,localhost
+SENTINEL_POLICY_DIR=$STATE_DIR/policy
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
 
@@ -124,6 +147,14 @@ if [[ -z "${SENTINEL_SKIP_CA_TRUST:-}" ]] && command -v certutil.exe >/dev/null 
 fi
 
 echo "== schema"
+# Snapshot before migrating — a system-state rewrite gets a same-script
+# backup, always. Keep the last three, rotate the rest.
+DB_FILE="$STATE_DIR/sentinel.db"
+if [[ -f "$DB_FILE" ]]; then
+  cp -a "$DB_FILE" "$DB_FILE.pre-migrate.$(date +%Y%m%d%H%M%S)"
+  ls -1t "$DB_FILE".pre-migrate.* 2>/dev/null | tail -n +4 | xargs -r rm --
+  echo "== database snapshot taken (keeping the last 3)"
+fi
 SENTINEL_DB="$STATE_DIR/sentinel.db" \
   runuser -u "$SVC_USER" -- "$APP_DIR/.venv/bin/alembic" \
   -c "$APP_DIR/alembic.ini" upgrade head
@@ -135,20 +166,45 @@ systemctl daemon-reload
 systemctl enable --now sentinel-broker.service sentinel-admin.service
 systemctl --no-pager --lines=0 status sentinel-broker.service sentinel-admin.service || true
 
-# One command in, one URL out. The enrollment code is minted here and
-# carried in the URL fragment — fragments are never sent to the server
-# and never appear in access logs, so this is a link the operator can
-# click rather than a code to copy between windows.
-ENROLL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo operator)}"
-CODE=$(runuser -u "$SVC_USER" -- env "SENTINEL_DB=$STATE_DIR/sentinel.db" \
+# First install: mint an enrollment code and hand over one clickable
+# URL (the code rides the fragment — never sent to the server, never in
+# access logs). RE-install with operators already enrolled: no code, no
+# banner telling an enrolled human to enroll — their passkey keeps
+# working because the DB, the RP ID, and the certificate all survived.
+OPERATORS=$(runuser -u "$SVC_USER" -- env "SENTINEL_DB=$STATE_DIR/sentinel.db" \
   "$APP_DIR/.venv/bin/python" -c "
+import sys; sys.path.insert(0, '$APP_DIR')
+from sqlalchemy import func, select
+from app.db import SessionLocal
+from app.models import Operator
+with SessionLocal() as s:
+    print(s.scalar(select(func.count()).select_from(Operator)) or 0)")
+
+if [[ "$OPERATORS" -gt 0 ]]; then
+  cat <<EOF
+
+  ============================================================
+   Sentinel updated. $OPERATORS operator(s) already enrolled —
+   log in as usual:
+
+     https://$RP_ID:$ADMIN_PORT/
+  ============================================================
+
+  Add a second device:  sudo $REPO_DIR/scripts/enroll-operator.sh
+  logs:  journalctl -u sentinel-admin -u sentinel-broker -f
+
+EOF
+else
+  ENROLL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo operator)}"
+  CODE=$(runuser -u "$SVC_USER" -- env "SENTINEL_DB=$STATE_DIR/sentinel.db" \
+    "$APP_DIR/.venv/bin/python" -c "
 import sys; sys.path.insert(0, '$APP_DIR')
 from app.auth import mint_enrollment_code
 from app.db import SessionLocal
 s = SessionLocal()
 print(mint_enrollment_code(s, '$ENROLL_USER', 'first device'))")
 
-cat <<EOF
+  cat <<EOF
 
   ============================================================
    Sentinel is running. Open this once and register a passkey:
@@ -164,3 +220,4 @@ cat <<EOF
   logs:  journalctl -u sentinel-admin -u sentinel-broker -f
 
 EOF
+fi

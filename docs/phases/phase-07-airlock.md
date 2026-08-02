@@ -129,10 +129,23 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   full validation loop is the MVP; **owner has not yet SEEN the
   screen** — browser look rides 7.2.5's install (same note 5.5.5
   carried).
-- [ ] **7.2.5 Proof battery + live install.** Golden matrix→Cedar
-  tests; the one-approval-per-honest-session demo (5.5.8 measured
-  six); `sudo scripts/install-systemd.sh` re-run to roll the live
-  units + migration (owner action, same as 5.5.7).
+- [x] **7.2.5 Proof battery + live install — builder half DONE
+  2026-08-02; owner half = one line + one look.** Installer gains:
+  the policy store (**seed-once** from `policy-example/`, never
+  re-seeded — the store belongs to the operator from the moment it
+  exists; `SENTINEL_POLICY_DIR` in the env file), a **hard git
+  requirement** (activation dies without git — refuse loudly at
+  install, not quietly at runtime), a **pre-migration DB snapshot**
+  (same-script backup, keep last 3 — the hosts-file lesson as
+  policy), and re-install awareness (**operators already enrolled →
+  "log in as usual" banner**, no enrollment code minted at an
+  enrolled human). Smoke battery now asserts the policy plane first
+  (status ACTIVE + grants surface answering). **Honesty
+  adjustment:** the END-TO-END one-approval-per-session demo needs
+  the `confirm` door, which is 7.3 — it moves to 7.3's proof; the
+  retirement is proven at unit level today (test_ladder's
+  handshake-birthright). Owner half: run the install line, log in as
+  usual, look at the Access screen.
 
 ## ADR-005 must resolve — blockers from the 2026-07-28 audit
 
@@ -370,6 +383,13 @@ birthright plus Decision 6's profile grants.
   server, never a gateway feature. Any MCP server slots in via
   catalog chart + `servers.yaml` classification, each bringing its
   own layer-1 credential shape (PAT, xoxb, OAuth, …).
+- **2026-08-02 (7.2.5, load-bearing for 7.3):** the console's PUT
+  activates policy in the ADMIN process only; the broker process
+  never loads the store today (nothing there consumes it — the
+  ladder has no route yet). When 7.3 wires `decide()` into the
+  broker's door, the broker needs its own startup activation PLUS a
+  reload path (store-mtime watch, SIGHUP, or an admin→broker poke) —
+  two processes must never disagree about the active version.
 - **2026-08-02 (7.2.1):** deliberately deferred: an elevation-CLOSE
   audit event at window expiry (open is the GRANT row; expiry is
   lazy, nothing sweeps). Decide at 7.2.4 whether the console's
