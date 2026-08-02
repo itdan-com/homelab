@@ -31,6 +31,32 @@ Recorded in STATUS backlog + ADR-004; resolve before or during this phase:
 - DNS: a real public domain (Cloudflare-fronted), or stay on `*.cluster.local` and access via `kubectl port-forward`?
 - Secrets: how does Sentinel run in the cloud variant? **It doesn't, for this phase** — Phase 9 is the cloud-portability proof of the *catalog*, not the full security stack. Sentinel's cloud shape is answered by ADR-004 (its own VPC droplet outside the cluster); implementing it is separate, later work.
 
+## Sizing profiles — "pick your company size" (owner ask 2026-08-02)
+
+The product bar (ADR-002: domain in, platform out) plus one knob: an
+adopter picks a **company-size profile** and the platform deploys
+pre-sized — a small business builds nothing and scales all their AI
+tools on tested numbers. Tiers: **150 / 500 / 1000 / 2500 / 5000 /
+10000 / 15000 people.** Each profile pins the platform values for
+that scale: node pool size/count, gateway replica floor/ceiling,
+KEDA thresholds, model-serving replicas, DB sizing.
+
+- **Validated, not guessed:** real k6 suites run against the cloud
+  deploy for the small tiers — **up to the 1000-person tier,
+  cost-gated; the 500-person tier is the floor goal** (owner,
+  2026-08-02). Larger tiers ship as labeled extrapolations.
+- **Scale-DOWN is half the test:** each profile must also prove
+  graceful contraction — quiet hours → floor replicas → near-idle
+  cost. Ultra-low idle spend is a stated product property, not a
+  nice-to-have.
+- **Workload model per tier** defined in the k6 suite with cited
+  assumptions (e.g. concurrent users ≈ 5–10% of headcount, token
+  distribution per request).
+- **Depends on the knobs work landing first:** the STATUS backlog
+  item "scaling/threshold knobs need one obvious surface" + ADR-002's
+  platform-values contract. The fewer and better-derived the knobs,
+  the cheaper every profile is to define, test, and trust.
+
 ## Cost guardrails (must verify BEFORE `terraform apply`)
 
 - Estimate hourly burn rate from the chosen node sizes + count.

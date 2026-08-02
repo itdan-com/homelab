@@ -37,7 +37,26 @@ work. A green gate is the entry criterion for every session.
 
 ## Step 1 — Orient
 
-Read these files in order. Then state in 2 sentences where the project stands and what the next action is.
+Read these files in order. Then open with a kickoff statement that
+**proves orientation without being asked** — the owner must never
+have to say "do you know what we're working on?" It must name:
+
+- **(a) The two flows, one line each:** Mission Control (the platform
+  operates itself — the operator proposes PRs, the owner approves in
+  GitHub as themselves, ArgoCD applies, `git revert` is the undo; no
+  Slack, no Sentinel) and Airlock (the workforce reaches MCP tools —
+  birthright entitlements by policy, dangerous power borrowed via
+  time-boxed elevation through Sentinel/Cedar). The dividing line is
+  revertibility.
+- **(b) Exact position:** current phase, its next checklist item, and
+  what that item actually does.
+- **(c) Owner-paced pending items** from STATUS (name them once,
+  no nagging).
+- **(d) Anything broken, paused, or mid-flight** (e.g. a stopped
+  timer, an open operator PR, a failed gate check).
+
+If the docs left you unsure of ANYTHING, say so explicitly instead of
+papering over it.
 
 1. `CLAUDE.md` — architecture and principles
 2. `STATUS.md` — current cursor (active phase, next action, recent activity log, backlog, blocks)
