@@ -219,39 +219,274 @@ function renderPolicy(store) {
   document.getElementById('policy-status').textContent = store.active
     ? `version ${store.version} · ${store.servers.length} servers · ` +
       `${Object.keys(store.people).length} people · activated ${ago(store.loaded_at)}`
-    : 'NO ACTIVE POLICY — the person path denies closed until a store activates.';
+    : 'NO ACTIVE POLICY — the person path denies closed. Fix the store in Advanced below.';
+  document.getElementById('gui-editor').classList.toggle('hidden', !store.active);
+}
 
-  const mv = document.getElementById('matrix-view');
-  mv.replaceChildren();
-  if (!store.active) return;
+/* --- the GUI editor (7.2.6): forms over the same store -------------------
+ * The owner's ask, verbatim: "an actual GUI... Groups, permissions,
+ * tools" with the raw layer kept underneath in Advanced. All edits go
+ * into a client-side DRAFT; Save serializes the draft through the SAME
+ * validate→activate gate as a raw save. The slow poll never rebuilds
+ * these forms — unsaved edits are the operator's.
+ */
 
-  const grants = store.matrix.grants || {};
+const LEVELS = ['none', 'read', 'write', 'write-on-request', 'write-on-approval'];
+let draft = null;
+let draftDirty = false;
+
+function setGuiState(msg) {
+  document.getElementById('gui-save-state').textContent = msg;
+}
+function markDirty() {
+  draftDirty = true;
+  setGuiState('unsaved changes — Save & activate to apply');
+}
+function initDraft(store) {
+  draft = structuredClone({
+    groups: store.groups, people: store.people,
+    matrix: store.matrix, servers: store.servers_detail,
+  });
+  draft.matrix.defaults ||= {};
+  draft.matrix.defaults.windows ||= [30, 60, 120];
+  draft.matrix.grants ||= {};
+  draft.matrix.forbids ||= [];
+  draftDirty = false;
+  setGuiState('');
+}
+
+const opt = (value, label) => {
+  const o = el('option', null, label ?? value);
+  o.value = value;
+  return o;
+};
+function mkSelect(values, current, onchange) {
+  const s = el('select');
+  for (const v of values) s.append(opt(v));
+  s.value = current;
+  s.onchange = () => { onchange(s.value); markDirty(); };
+  return s;
+}
+function mkCheck(labelText, checked, onchange) {
+  const lab = el('label', 'check');
+  const c = document.createElement('input');
+  c.type = 'checkbox';
+  c.checked = checked;
+  c.onchange = () => { onchange(c.checked); markDirty(); };
+  lab.append(c, el('span', null, labelText));
+  return lab;
+}
+function mkList(values, onchange, size = 44) {
+  const i = document.createElement('input');
+  i.size = size;
+  i.value = (values || []).join(', ');
+  i.onchange = () => {
+    onchange(i.value.split(',').map((s) => s.trim()).filter(Boolean));
+    markDirty();
+  };
+  return i;
+}
+const mkX = (fn) => {
+  const b = el('button', 'ghost x', '✕');
+  b.onclick = () => { fn(); markDirty(); buildEditor(); };
+  return b;
+};
+
+function buildEditor() {
+  if (!draft) return;
+  const groups = Object.keys(draft.groups).sort();
+  const servers = Object.keys(draft.servers).sort();
+
+  // The matrix, clickable: a level dropdown per (group, server) cell.
+  const me = document.getElementById('matrix-editor');
+  me.replaceChildren();
   const table = el('table');
   const head = el('tr');
   head.append(el('th', null, 'group \\ server'));
-  for (const s of store.servers) head.append(el('th', null, s));
+  for (const s of servers) head.append(el('th', null, s));
   table.append(head);
-  for (const g of Object.keys(grants).sort()) {
+  for (const g of groups) {
     const tr = el('tr');
     tr.append(el('th', null, g));
-    for (const s of store.servers) {
-      const level = ((grants[g] || {})[s] || {}).level || '—';
-      tr.append(el('td', level === '—' ? 'lv-none' : `lv-${level}`, level));
+    for (const s of servers) {
+      const cell = el('td');
+      const current = ((draft.matrix.grants[g] || {})[s] || {}).level || 'none';
+      cell.append(mkSelect(LEVELS, current, (v) => {
+        if (v === 'none') {
+          if (draft.matrix.grants[g]) {
+            delete draft.matrix.grants[g][s];
+            if (!Object.keys(draft.matrix.grants[g]).length) {
+              delete draft.matrix.grants[g];
+            }
+          }
+        } else {
+          (draft.matrix.grants[g] ||= {})[s] =
+            { ...((draft.matrix.grants[g] || {})[s] || {}), level: v };
+        }
+      }));
+      tr.append(cell);
     }
     table.append(tr);
   }
-  mv.append(table);
+  me.append(table);
 
-  const pv = document.getElementById('people-view');
-  pv.replaceChildren();
-  for (const email of Object.keys(store.people).sort()) {
-    const row = el('div', 'row');
+  const wi = document.getElementById('windows-input');
+  wi.value = (draft.matrix.defaults.windows || []).join(', ');
+  wi.onchange = () => {
+    draft.matrix.defaults.windows = wi.value.split(',')
+      .map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n));
+    markDirty();
+  };
+
+  // People: email · name · group membership as checkboxes.
+  const pe = document.getElementById('people-editor');
+  pe.replaceChildren();
+  for (const email of Object.keys(draft.people).sort()) {
+    const p = draft.people[email];
+    const row = el('div', 'prow');
     row.append(el('span', 'id', email));
-    row.append(el('span', 'tail',
-      (store.people[email].groups || []).join(', ') || 'all-employees only'));
-    pv.append(row);
+    if (p.display_name) row.append(el('span', 't', p.display_name));
+    for (const g of groups) {
+      row.append(mkCheck(g, (p.groups || []).includes(g), (on) => {
+        const set = new Set(p.groups || []);
+        if (on) set.add(g); else set.delete(g);
+        p.groups = [...set].sort();
+      }));
+    }
+    row.append(mkX(() => delete draft.people[email]));
+    pe.append(row);
+  }
+  if (!Object.keys(draft.people).length) {
+    pe.append(el('p', 'empty', 'Nobody yet — add the first person below.'));
+  }
+
+  // Groups: name · parent · remove (all-employees is load-bearing).
+  const ge = document.getElementById('groups-editor');
+  ge.replaceChildren();
+  for (const name of groups) {
+    const row = el('div', 'prow');
+    row.append(el('span', 'id', name));
+    if (name === 'all-employees') {
+      row.append(el('span', 'ctx', 'birthright base — everyone, always'));
+    } else {
+      row.append(el('span', 'ctx', 'parent:'));
+      row.append(mkSelect(['—', ...groups.filter((g) => g !== name)],
+        draft.groups[name].parent || '—',
+        (v) => { draft.groups[name].parent = v === '—' ? null : v; }));
+      row.append(mkX(() => delete draft.groups[name]));
+    }
+    ge.append(row);
+  }
+
+  // Forbids: "no <action> on <server> tier <t>" as dropdowns.
+  const fe = document.getElementById('forbids-editor');
+  fe.replaceChildren();
+  draft.matrix.forbids.forEach((rule, i) => {
+    const row = el('div', 'prow');
+    row.append(el('span', 'ctx', 'no'));
+    row.append(mkSelect(['write', 'read'], (rule.actions || ['write'])[0],
+      (v) => { rule.actions = [v]; }));
+    row.append(el('span', 'ctx', 'on'));
+    row.append(mkSelect(servers, rule.server, (v) => { rule.server = v; }));
+    row.append(el('span', 'ctx', 'tier'));
+    const t = document.createElement('input');
+    t.size = 10;
+    t.value = rule.tier || '';
+    t.placeholder = 'any tier';
+    t.onchange = () => {
+      if (t.value.trim()) rule.tier = t.value.trim(); else delete rule.tier;
+      markDirty();
+    };
+    row.append(t);
+    row.append(mkX(() => draft.matrix.forbids.splice(i, 1)));
+    fe.append(row);
+  });
+  const addF = el('button', 'ghost', 'Add forbid');
+  addF.onclick = () => {
+    if (!servers.length || !draft) return;
+    draft.matrix.forbids.push({ server: servers[0], actions: ['write'] });
+    markDirty();
+    buildEditor();
+  };
+  fe.append(addF);
+
+  // Servers: the read/write tool classes, editable in place.
+  const se = document.getElementById('servers-editor');
+  se.replaceChildren();
+  for (const name of servers) {
+    const spec = draft.servers[name];
+    const box = el('div', 'srow');
+    const h = el('div', 'prow');
+    h.append(el('span', 'id', name));
+    if (spec.resource) {
+      h.append(el('span', 'ctx',
+        `tiers: ${Object.keys((spec.resource || {}).tiers || {}).join(', ') || '—'}`
+        + ' — edit the map in Advanced'));
+    }
+    h.append(mkX(() => delete draft.servers[name]));
+    box.append(h);
+    const r1 = el('div', 'prow');
+    r1.append(el('span', 'ctx', 'read:'), mkList(spec.read, (v) => { spec.read = v; }));
+    const r2 = el('div', 'prow');
+    r2.append(el('span', 'ctx', 'write:'), mkList(spec.write, (v) => { spec.write = v; }));
+    box.append(r1, r2);
+    se.append(box);
   }
 }
+
+function renderGuiErrors(errs) {
+  const box = document.getElementById('gui-errors');
+  box.replaceChildren();
+  for (const e of errs || []) box.append(el('div', null, `✗ ${e}`));
+}
+
+document.getElementById('add-person').onclick = () => {
+  const email = document.getElementById('add-person-email').value.trim().toLowerCase();
+  const name = document.getElementById('add-person-name').value.trim();
+  if (!email || !draft) return;
+  draft.people[email] = { ...(name ? { display_name: name } : {}), groups: [] };
+  document.getElementById('add-person-email').value = '';
+  document.getElementById('add-person-name').value = '';
+  markDirty();
+  buildEditor();
+};
+document.getElementById('add-group').onclick = () => {
+  const name = document.getElementById('add-group-name').value.trim();
+  if (!name || !draft) return;
+  draft.groups[name] ||= { parent: null };
+  document.getElementById('add-group-name').value = '';
+  markDirty();
+  buildEditor();
+};
+document.getElementById('add-server').onclick = () => {
+  const name = document.getElementById('add-server-name').value.trim();
+  if (!name || !draft) return;
+  // rpc.* by default: an assigned server should at least handshake.
+  draft.servers[name] ||= { read: ['rpc.*'], write: [] };
+  document.getElementById('add-server-name').value = '';
+  markDirty();
+  buildEditor();
+};
+document.getElementById('gui-save').onclick = async () => {
+  if (!draft) return;
+  setGuiState('validating…');
+  renderGuiErrors([]);
+  try {
+    const out = await api('/v1/policy/store/structured', {
+      method: 'PUT',
+      body: JSON.stringify({ groups: draft.groups, people: draft.people,
+                             matrix: draft.matrix, servers: draft.servers }),
+    });
+    setGuiState(`activated ${out.version}`);
+    await loadAccess(true);
+    refresh();
+  } catch (e) {
+    setGuiState('rejected — nothing changed');
+    renderGuiErrors(e.detail || [e.message]);
+  }
+};
+document.getElementById('gui-reset').onclick = () =>
+  loadAccess(true).catch(() => {});
 
 function populateEditors(docs) {
   for (const key of ['entities', 'matrix', 'servers', 'overlay']) {
@@ -301,7 +536,13 @@ async function loadAccess(populate) {
   ]);
   renderPolicy(store);
   renderHistory(hist);
-  if (populate) populateEditors(store.documents);
+  if (populate) {
+    populateEditors(store.documents);
+    if (store.active) {
+      initDraft(store);
+      buildEditor();
+    }
+  }
 }
 
 document.getElementById('policy-save').onclick = async () => {

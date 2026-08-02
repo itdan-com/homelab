@@ -183,3 +183,30 @@ header #logout { margin-left: 8px; }
 .errors { font-size: .82rem; white-space: pre-wrap; margin-top: .4rem; color: #e5484d; }
 h2.sub { margin-top: 1rem; font-size: .95rem; }
 #policy-history button, #grants button { margin-left: auto; }
+
+/* --- the GUI editor (7.2.6) ---------------------------------------------- */
+#gui-editor select, #gui-editor input {
+  background: inherit; color: inherit;
+  border: 1px solid rgba(128,128,128,.35); border-radius: 4px;
+  padding: .15rem .3rem; font-size: .8rem;
+}
+#matrix-editor table { border-collapse: collapse; margin: .4rem 0; width: 100%; }
+#matrix-editor th, #matrix-editor td {
+  border: 1px solid rgba(128,128,128,.3); padding: .2rem .35rem;
+  text-align: left; font-size: .8rem;
+}
+#matrix-editor select { width: 100%; border: none; }
+.prow {
+  display: flex; gap: .5rem; align-items: center; flex-wrap: wrap;
+  padding: .28rem 0; border-bottom: 1px solid rgba(128,128,128,.15);
+  font-size: .82rem;
+}
+.prow label.check {
+  display: inline-flex; align-items: center; gap: .2rem;
+  font-size: .76rem; opacity: .9;
+}
+.srow { margin: .4rem 0 .8rem; }
+button.x { padding: 0 .45rem; margin-left: auto; }
+.adder { margin: .3rem 0 .9rem; }
+h3.sub { margin: 1rem 0 .3rem; font-size: .9rem; }
+h3.sub .ctx { font-weight: normal; font-size: .74rem; opacity: .7; margin-left: .5rem; }

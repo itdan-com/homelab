@@ -119,6 +119,42 @@ def test_store_lifecycle(store_dir, admin):
         assert results.count("rejected") >= 1
 
 
+def test_structured_save_roundtrip(store_dir, admin):
+    """The GUI's path (7.2.6): parsed objects in, same gate, YAML out —
+    overlay preserved from disk, deterministic version on unchanged
+    intent, rejection leaves everything standing."""
+    admin.put("/v1/policy/store", json=_docs(), headers=CONSOLE)  # seed raw
+    store = admin.get("/v1/policy/store", headers=CONSOLE).json()
+    body = {"groups": store["groups"], "people": store["people"],
+            "matrix": store["matrix"], "servers": store["servers_detail"]}
+    # A GUI-shaped edit: one new person, one matrix cell flipped.
+    body["people"]["newbie@example.com"] = {"groups": ["engineering"]}
+    body["matrix"]["grants"]["engineering"]["echo"] = {"level": "read"}
+
+    r = admin.put("/v1/policy/store/structured", json=body, headers=CONSOLE)
+    assert r.status_code == 200
+    v1 = r.json()["version"]
+
+    after = admin.get("/v1/policy/store", headers=CONSOLE).json()
+    assert "newbie@example.com" in after["people"]
+    assert after["matrix"]["grants"]["engineering"]["echo"]["level"] == "read"
+    # The escape hatch survives a GUI save untouched.
+    assert after["documents"]["overlay"] == _docs()["overlay"]
+
+    # Same intent again → same version (deterministic emission).
+    r = admin.put("/v1/policy/store/structured", json=body, headers=CONSOLE)
+    assert r.status_code == 200 and r.json()["version"] == v1
+
+    # Garbage shapes fail the SAME gate, with the store left standing.
+    bad = dict(body, matrix={"grants": {"ghosts": {"echo": {"level": "read"}}}})
+    r = admin.put("/v1/policy/store/structured", json=bad, headers=CONSOLE)
+    assert r.status_code == 422
+    assert any("unknown group" in e for e in r.json()["detail"])
+    still = admin.get("/v1/policy/store", headers=CONSOLE).json()
+    assert still["version"] == v1
+    assert "newbie@example.com" in still["people"]
+
+
 def test_unknown_version_restore_is_422(store_dir, admin):
     admin.put("/v1/policy/store", json=_docs(), headers=CONSOLE)
     r = admin.post("/v1/policy/revert", json={"version": "0" * 12},

@@ -147,19 +147,29 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   handshake-birthright). Owner half: run the install line, log in as
   usual, look at the Access screen.
 
-- [ ] **7.2.6 — the Access GUI proper** (owner-promoted 2026-08-02 on
-  first look at the screen: *"I would like an actual GUI to easily
-  add what you have here — Groups, permissions, tools, something
-  that really makes sense"* — the second friction veto of the day,
-  after the PR flow; raw YAML is the MVP's floor, not the product).
-  Forms over the SAME store and the SAME validate→activate endpoint —
-  nothing changes underneath: people (add/remove, group
-  checkboxes), groups (add/nest), the **matrix as clickable cells**
-  (a level dropdown per group×server), windows picker, a forbids
-  list editor, and a guided per-server tools/tiers form. The YAML
-  textareas demote to an "advanced" drawer — still the escape hatch
-  and the automation-drafting surface. Same CSP/vanilla-JS/
-  textContent discipline as the rest of the console.
+- [x] **7.2.6 — the Access GUI proper** (owner-promoted 2026-08-02 on
+  first look — *"an actual GUI… Groups, permissions, tools"*, the
+  second friction veto of the day after the PR flow — **BUILT same
+  day**; owner look pending deploy). The matrix is **clickable** — a
+  level dropdown per group×server cell (`none` removes the entry,
+  empty group rows are pruned); people are rows with **group
+  checkboxes** + add/remove; groups get a parent dropdown
+  (`all-employees` is uneditable — it is load-bearing); **forbids
+  read as a sentence** ("no *write* on *hr-platform* tier *prod*")
+  built from dropdowns; servers edit their read/write tool classes
+  in place (a new server starts with `rpc.*` read so it can at least
+  handshake). Saves go through a new **structured endpoint** — JSON
+  in, server-side YAML emission (deterministic: unchanged intent =
+  unchanged version, tested), the SAME validate→activate gate, and
+  the **overlay is preserved from disk** so a GUI save can never
+  blank the escape hatch (tested). The raw documents live on in the
+  **Advanced drawer** (owner's ask verbatim: "see/edit the store
+  with advanced settings… keeping your layer underneath"), labeled
+  honestly that GUI saves rewrite them without comments. Draft never
+  clobbered by the poll; Reset-to-active button. Suite 46/46; JS
+  node-checked. Residual: tiers/resource-map editing stays
+  Advanced-only for now (rarely touched; a guided form is future
+  polish).
 
 ## ADR-005 must resolve — blockers from the 2026-07-28 audit
 

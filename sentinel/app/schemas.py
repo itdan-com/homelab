@@ -190,6 +190,10 @@ class PolicyStoreOut(SentinelModel):
     people: dict = Field(default_factory=dict)
     matrix: dict = Field(default_factory=dict)
     servers: list[str] = Field(default_factory=list)
+    servers_detail: dict = Field(
+        default_factory=dict,
+        description="Per-server tool classes + resource map — what the "
+                    "GUI's servers form edits.")
 
 
 class PolicyStoreIn(AdminAction):
@@ -197,6 +201,22 @@ class PolicyStoreIn(AdminAction):
     matrix: str = Field(max_length=200_000)
     servers: str = Field(max_length=200_000)
     overlay: str = Field(default="", max_length=200_000)
+
+
+class PolicyStructuredIn(AdminAction):
+    """The GUI's save shape (7.2.6): the parsed store, edited as
+    objects. The server serializes to YAML and runs the SAME
+    validate→activate gate — garbage shapes fail there with the same
+    every-error-listed 422 a raw save gets."""
+    groups: dict
+    people: dict
+    matrix: dict
+    servers: dict = Field(
+        description="Normalized per-server shape: {name: {read: [...], "
+                    "write: [...], resource: {...}|null}}.")
+    overlay: str | None = Field(
+        default=None, max_length=200_000,
+        description="None = keep the overlay currently on disk.")
 
 
 class PolicyActivateOut(SentinelModel):

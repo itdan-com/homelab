@@ -435,6 +435,49 @@ def save_and_activate(policy_dir: str | Path, docs: dict[str, str], *,
     return activate(d, actor=actor)
 
 
+def structured_to_documents(groups: dict, people: dict, matrix: dict,
+                            servers: dict) -> dict[str, str]:
+    """The GUI's save path (7.2.6): structured JSON → the store's YAML
+    documents, which then ride the exact same validate→activate gate
+    as a raw save. `sort_keys` keeps the emission deterministic, so an
+    unchanged intent hashes to an unchanged version. Comments do not
+    survive a GUI save — a GUI-managed file is machine-formatted, and
+    the annotated human story lives in policy-example/."""
+    ent = {
+        "groups": {
+            name: ({"parent": spec["parent"]}
+                   if (spec or {}).get("parent") else {})
+            for name, spec in (groups or {}).items()
+        },
+        "people": {
+            email: {
+                **({"display_name": p["display_name"]}
+                   if (p or {}).get("display_name") else {}),
+                "groups": list((p or {}).get("groups") or []),
+            }
+            for email, p in (people or {}).items()
+        },
+    }
+    srv = {}
+    for name, spec in (servers or {}).items():
+        spec = spec or {}
+        entry = {"tools": {"read": list(spec.get("read") or []),
+                           "write": list(spec.get("write") or [])}}
+        if spec.get("resource"):
+            entry["resource"] = spec["resource"]
+        srv[name] = entry
+    mat = {"defaults": (matrix or {}).get("defaults") or
+           {"windows": list(DEFAULT_WINDOWS)},
+           "grants": (matrix or {}).get("grants") or {}}
+    if (matrix or {}).get("forbids"):
+        mat["forbids"] = matrix["forbids"]
+
+    def dump(obj: dict) -> str:
+        return yaml.safe_dump(obj, sort_keys=True, default_flow_style=False)
+
+    return {"entities": dump(ent), "matrix": dump(mat), "servers": dump(srv)}
+
+
 _SUBJECT = re.compile(r"^policy ([0-9a-f]{12}) by (.+)$")
 
 

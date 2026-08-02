@@ -79,6 +79,7 @@ from .schemas import (
     PolicyStatusOut,
     PolicyStoreIn,
     PolicyStoreOut,
+    PolicyStructuredIn,
     RevokeIn,
 )
 from .service import (
@@ -451,6 +452,7 @@ def policy_store():
         active=True, version=ap.version, loaded_at=ap.loaded_at,
         documents=docs, groups=ap.groups, people=ap.people,
         matrix=ap.matrix, servers=sorted(ap.servers),
+        servers_detail=ap.servers,
     )
 
 
@@ -477,6 +479,39 @@ def policy_save(body: PolicyStoreIn, operator: str = Depends(current_operator)):
                                         "errors": e.errors[:20]})
         raise HTTPException(status_code=422, detail=e.errors)
     _audit_policy_change(operator, {"result": "activated",
+                                    "version": ap.version,
+                                    "previous_version": prev}, ap.version)
+    return PolicyActivateOut(version=ap.version, previous_version=prev)
+
+
+@app.put(
+    "/v1/policy/store/structured",
+    response_model=PolicyActivateOut,
+    response_model_exclude_none=True,
+    tags=["access"],
+    summary="The GUI's save — same gate, structured input",
+    dependencies=[Depends(console_guard)],
+    responses={422: {"description": "Rejected — every error listed; "
+                                    "disk untouched, last-good serving."}},
+)
+def policy_save_structured(body: PolicyStructuredIn,
+                           operator: str = Depends(current_operator)):
+    """Serializes the edited objects to the store's YAML documents and
+    rides the exact validate→activate path a raw save rides. The
+    overlay is preserved from disk unless explicitly supplied — the
+    GUI's save must never silently blank the escape hatch."""
+    docs = policy.structured_to_documents(body.groups, body.people,
+                                          body.matrix, body.servers)
+    docs["overlay"] = (body.overlay if body.overlay is not None
+                       else policy.store_documents(policy.POLICY_DIR)["overlay"])
+    prev = policy.get_active().version if policy.get_active() else None
+    try:
+        ap = policy.save_and_activate(policy.POLICY_DIR, docs, actor=operator)
+    except PolicyError as e:
+        _audit_policy_change(operator, {"result": "rejected", "via": "gui",
+                                        "errors": e.errors[:20]})
+        raise HTTPException(status_code=422, detail=e.errors)
+    _audit_policy_change(operator, {"result": "activated", "via": "gui",
                                     "version": ap.version,
                                     "previous_version": prev}, ap.version)
     return PolicyActivateOut(version=ap.version, previous_version=prev)
