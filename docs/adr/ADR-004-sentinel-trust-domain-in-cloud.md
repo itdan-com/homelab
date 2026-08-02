@@ -292,6 +292,19 @@ agent's request for real-world power" are different questions, and
 answering both from one directory quietly grants the kill switch to
 every SSO user.
 
+### Amendment (2026-08-02, the ADR-005 carve)
+
+This section's "no" was written about — and remains true of — the
+**admin surface**: approve, deny, kill, release. Airlock's `confirm`
+(ADR-005) does not contradict it; it carves the line precisely: **who
+may APPROVE stays local passkeys on the loopback console; who may
+SELF-ELEVATE is an IdP-authenticated person**, decided by Cedar over
+entities from the agent-unreachable policy repo, on the broker's
+cluster-facing surface — never on this listener. The corollary above
+("who may approve is a deliberately smaller set than who may see")
+is thereby promoted from footnote to load-bearing architecture. See
+ADR-005 Decision 6.
+
 ## Alternatives considered
 
 - **Sentinel in-cluster, hardened.** Rejected: ends the trust model.

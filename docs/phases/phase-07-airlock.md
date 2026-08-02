@@ -10,8 +10,13 @@ The gate is elevation, not per-call approval — you cannot diff an
 action that already happened, and a queue nobody reads manufactures
 the appearance of oversight. See `CLAUDE.md` → "Two flows".
 
-**Status:** Not started. Blocked on Phase 6 (Mission Control
-complete). First work item: **7.1 — ADR-005.**
+**Status:** **7.1 DONE 2026-08-02** —
+`docs/adr/ADR-005-airlock-policy-model.md` written (**Proposed**;
+owner acceptance is the gate to 7.2). All four blockers resolved,
+both forward decisions made (7.4 GitHub upstream, 7.5 Slack), all
+four audit gaps assigned homes, ADR-004 amended with the carve.
+Next: owner reads/accepts ADR-005, then **7.2 — capability profiles
++ multi-user Sentinel** in a fresh session.
 
 **Origin:** named 2026-07-28 (briefly "Phase 6.5", promoted to a
 full phase the same day). Everything below moved here from the
@@ -23,12 +28,13 @@ decisions.
 
 ## The five sessions (CLAUDE.md build plan)
 
-1. **7.1 — ADR-005.** Cedar policy model; XAA/ID-JAG delegation; how
-   a *resource* is derived from a tool call; the
-   approve-vs-self-elevate carve against ADR-004. Also decided here
-   so later sessions don't spin: the GitHub MCP server's upstream +
-   toolset (for 7.4) and Slack Socket Mode (for 7.5). Must resolve
-   the four blockers below.
+1. **7.1 — ADR-005.** ✅ **DONE 2026-08-02** — Cedar policy model;
+   XAA/ID-JAG delegation; how a *resource* is derived from a tool
+   call; the approve-vs-self-elevate carve against ADR-004. Also
+   decided here so later sessions don't spin: the GitHub MCP server's
+   upstream + toolset (for 7.4) and Slack Socket Mode (for 7.5).
+   Resolved the four blockers below → see
+   `docs/adr/ADR-005-airlock-policy-model.md` (Proposed).
 2. **7.2 — Capability profiles + multi-user Sentinel.** A grant
    covers a SET of tools for a WINDOW (schema change + policy
    evaluation in `check_capability`) — this is where 5.5.8's
@@ -53,7 +59,13 @@ approve the agent's PRs" — DISSOLVED on 2026-07-28:** the approver
 is a human with their own GitHub account, and that is the feature
 (GitHub 422s self-approval unconditionally, so "the bot merges on
 ✅" was never implementable). Its Phase 6 residue, the admin-bypass
-decision, is phase-06 item 6.4. Four survive:
+decision, is phase-06 item 6.4. Four survived, and **all four are
+resolved by ADR-005 (2026-08-02):** 1 → Decision 3 (resource maps in
+the policy repo, deny-closed, tier always total); 2 → Decision 6
+(the carve; ADR-004 amended in place); 3 + 4 → Decision 5 with one
+answer (the agent-unreachable policy repo carries the Cedar policies
+*and* the entity store — group membership IS policy data). Kept
+below for the record:
 
 1. **Cedar has no *resource*, so three of the four outcomes are
    unexpressible today.** `app/scope.py` derives `<server>.<tool>`
@@ -89,6 +101,14 @@ decision, is phase-06 item 6.4. Four survive:
 
 ## Further gaps from the same audit (do not rediscover expensively)
 
+*All four assigned homes by ADR-005 ("Homes for the four audit
+gaps"): SSE teardown → bounded + 7.3 stream-lifetime cap; tools/list
+rewriting → accepted MVP limitation, whole-server invisibility via
+handshake-scope policy is the real boundary; RP-ID → Phase 9
+re-enrolment runbook; OAuth/DCR → resolved by verification (DCR is
+deprecated in the 2026-07-28 MCP spec; static registration + CIMD
+carry it; 7.3 serves RFC 9728).*
+
 - An elevation window does **not** tear down an already-open
   server-push channel: ext_authz runs per request; the kill switch
   cannot close an established SSE stream.
@@ -103,7 +123,7 @@ decision, is phase-06 item 6.4. Four survive:
   either, and Authentik support is unverified — verify in the same
   spike as ID-JAG.
 
-## Slack: Socket Mode (recorded 2026-07-28; formalize in 7.1/7.5)
+## Slack: Socket Mode (recorded 2026-07-28; formalized 2026-08-02)
 
 Slack's interactive features normally call back to a public HTTPS
 URL, which a lab behind a home router does not have. **Socket Mode**
@@ -111,6 +131,15 @@ is the way out: the app opens an OUTBOUND WebSocket and receives
 events over it — no inbound ingress, and it fits the trust model
 (another outbound-only path). In cloud, Socket Mode still works; a
 public request URL becomes possible but is not required.
+
+**Formalized by ADR-005 Decision 8, corrected by verification:** the
+tools 7.5 actually needs (post, read history, list channels) are all
+*outbound* Web API calls — **no inbound path of any kind is
+required, so Socket Mode is not a 7.5 deliverable at all.** It
+becomes relevant only if Slack must ever push to the platform
+(events, buttons, slash commands), which the current design
+deliberately avoids. The paragraph above stays as the recorded
+trigger condition.
 
 ## The three layers for real: XAA (layer 1) + Cedar (layer 3)
 
@@ -155,7 +184,12 @@ rich enough to reconstruct an elevation window — and, where the
 upstream tool supports it, reverse it (universal undo is not a
 thing; scope honestly).
 
-## Exit criteria sketch (firm these up in 7.1)
+## Exit criteria (firmed by ADR-005, 2026-08-02)
+
+Unchanged in substance from the sketch, now grounded: "the agent
+cannot PR the policy that governs it" is Decision 5's repo split;
+"one approval per honest session" is Decision 4's handshake-scope
+birthright plus Decision 6's profile grants.
 
 - A person with an MCP client and company SSO reaches their
   birthright tools with ZERO approvals.
@@ -172,4 +206,36 @@ thing; scope honestly).
 
 ## Notes captured during execution
 
-- (empty)
+- **2026-08-02 (7.1):** The scope-mapping finding — blocker 3 was
+  understated: not just group *membership* but the **claim-computing
+  expressions** live in this repo's blueprints, so a PR can make the
+  IdP assert any membership for anyone. This produced ADR-005's P1
+  (authorization never derives from agent-writable state) and the
+  entity-store-in-policy-repo design.
+- **2026-08-02 (7.1):** Cedar proven executable on this host before
+  the ADR claimed it: `cedarpy` 4.8.7 wheel (cp312 manylinux, no Rust
+  toolchain) + a 5-case four-outcome ladder (permit / confirm /
+  forbid-through-elevation / can't-even-ask ×2) — 5/5. PyPI trap for
+  7.2: the dist is `cedarpy`; `cedar-py` and `cedarpolicy` don't
+  exist.
+- **2026-08-02 (7.1):** Authentik 2026.5.6 (which IS current
+  upstream) verified: has RFC 8414 + OIDC discovery (door-sufficient),
+  has NO RFC 8693 / ID-JAG / DCR — and DCR was *deprecated* by the
+  2026-07-28 MCP spec revision anyway (CIMD + static registration
+  won). Don't chase Authentik 2026.8's DCR (likely enterprise-gated).
+- **2026-08-02 (7.1):** ToolHive v0.41.0 embeds Cedar (official
+  cedar-go) as its default MCP authorizer — strong independent
+  validation of the architecture — and verifiably contains no
+  human-in-the-loop grant/TTL/elevation at any tier: the Sentinel
+  primitive remains ours.
+- **2026-08-02 (7.1):** GitHub MCP: official server has a native
+  Streamable-HTTP mode (v1.8.0); GitHub App server-to-server auth is
+  **stdio-only**, and there is **no server-side repo allowlist**
+  (open #1685) → fine-grained PAT is the only repo-scoping lever in
+  http mode. A `--read-only` bypass existed in http mode pre-1.0
+  (fixed 2026-04-13) — 7.4 must negative-test the flag live.
+- **2026-08-02 (7.1):** Slack ships an official MCP server
+  (`mcp.slack.com`, GA 2026-02-17) but it is hosted-only SaaS → it
+  bypasses the Sentinel proxy → rejected; korotovsky/slack-mcp-server
+  self-hosted with an `xoxb` token chosen instead. Bot tokens cannot
+  do classic search (user-token-only scope) — accepted limitation.
