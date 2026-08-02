@@ -246,9 +246,22 @@ def _grant_covers(grant: CapabilityGrant, tool: str) -> bool:
     """Single-tool grants match exactly; profile grants (7.2.1) match
     membership in the tool-set SNAPSHOT taken at mint time. The live
     policy store is deliberately not consulted here — a profile edit
-    after mint must never widen a grant already in the wild."""
+    after mint must never widen a grant already in the wild.
+
+    Snapshot entries ending `.*` are prefix classes (7.2.2's tool
+    classification writes e.g. `github.rpc.*` into read profiles, so
+    the MCP handshake rides one grant): `github.rpc.*` covers
+    `github.rpc.tools.list` and the bare `github.rpc`, and covers
+    nothing that merely shares the letters (`github.rpcx` is not a
+    match — the dot is part of the prefix)."""
     if grant.tools_json:
-        return tool in grant.tools_json
+        for entry in grant.tools_json:
+            if entry.endswith(".*"):
+                if tool.startswith(entry[:-1]) or tool == entry[:-2]:
+                    return True
+            elif tool == entry:
+                return True
+        return False
     return grant.tool == tool
 
 

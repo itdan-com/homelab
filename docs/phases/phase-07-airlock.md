@@ -90,9 +90,25 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   own `.git`). Suite 33/33 (12 new), crown assert: the ADR's
   four-outcome ladder proven against GENERATED policy — hr-head
   `approve` on staging, `forbid` on prod through every context.
-- [ ] **7.2.3 The ladder into `check_capability`.** Baseline /
-  elevated / approved context evaluations; forbid rules trump;
-  `policy_version` stamped on decision rows.
+- [x] **7.2.3 The ladder** (DONE 2026-08-02). `app/ladder.py::decide`
+  — kill first, no-active-policy denies closed, tool classified via
+  the store (`unclassified-tool` = no guessing), resource derived
+  with the same reject-don't-escape guard (`unmapped-resource`), then
+  the three hypothetical contexts → outcome class, then POSSESSION:
+  any live covering grant satisfies `elevated`; only human-issued
+  grants (`granted_via` approve|admin — the console door) satisfy
+  `approved`; a denial that borrowing would fix carries the offer
+  (`profile` + `windows` from the matrix cell via transitive groups).
+  `_grant_covers` gained `.*` prefix classes (the handshake rides one
+  snapshot entry). Every decision row stamps principal + resource +
+  `policy_version`. Proven: birthright permit with zero grants,
+  handshake-at-zero-approvals (the six-approvals finding retired in
+  miniature), confirm offer→grant→yes→revoke→offer again,
+  self-issued grant does NOT satisfy approve, **forbid trumps a held
+  human-issued grant on the prod tier**, unassigned server invisible
+  even to `initialize`, kill beats policy, store-unknown person =
+  forbid regardless of DB. Suite 42/42 (9 new). No HTTP route yet —
+  that is 7.3's door, by design.
 - [ ] **7.2.4 Console Access screen.** Groups / people / matrix
   editor; save = validate→activate→audit(diff); version list +
   revert-to-N; revoke buttons on the grants panel.

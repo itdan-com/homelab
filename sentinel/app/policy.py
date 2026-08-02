@@ -106,6 +106,8 @@ class ActivePolicy:
     entities_json: str
     matrix: dict
     servers: dict
+    groups: dict
+    people: dict
     loaded_at: datetime
 
 
@@ -208,8 +210,19 @@ def load_store(policy_dir: str | Path = POLICY_DIR):
             if not isinstance(base, str) or not re.fullmatch(
                     r"[A-Za-z0-9._-]{1,120}", base):
                 errors.append(f"server {name!r}: bad tool entry {leaf!r}")
+        resource = spec.get("resource")
+        if resource is not None:
+            src = (resource or {}).get("from", "")
+            if not re.fullmatch(r"params\.arguments\.[A-Za-z0-9_.-]{1,64}", str(src)):
+                errors.append(f"server {name!r}: resource.from must be "
+                              f"'params.arguments.<key>', got {src!r}")
+            for tier, members in ((resource or {}).get("tiers") or {}).items():
+                if not _safe(str(tier), f"server {name!r} tier", errors):
+                    continue
+                if not isinstance(members, list):
+                    errors.append(f"server {name!r} tier {tier!r}: not a list")
         servers[name] = {"read": list(read), "write": list(write),
-                         "resource": spec.get("resource")}
+                         "resource": resource}
 
     defaults = matrix.get("defaults") or {}
     windows = defaults.get("windows", DEFAULT_WINDOWS)
@@ -375,7 +388,8 @@ def activate(policy_dir: str | Path = POLICY_DIR, *,
     with _lock:
         _active = ActivePolicy(version=version, policies=policies,
                                entities_json=entities_json, matrix=matrix,
-                               servers=servers, loaded_at=utcnow())
+                               servers=servers, groups=groups, people=people,
+                               loaded_at=utcnow())
     return _active
 
 
@@ -395,6 +409,65 @@ def classify_tool(servers: dict, server: str, leaf: str) -> str | None:
             elif leaf == entry:
                 return action
     return None
+
+
+def transitive_groups(groups: dict, direct: set[str]) -> set[str]:
+    """A person's full group set: direct memberships expanded UP the
+    parent chain (hr-head ⇒ hr). Cedar does this itself during
+    evaluation via entity parents; this helper exists for the parts
+    that are NOT Cedar — the elevation hint (which matrix cell's
+    windows apply) and the doors' profile lookups."""
+    out: set[str] = set()
+    for g in direct:
+        cur = g
+        while cur is not None and cur not in out:
+            out.add(cur)
+            cur = (groups.get(cur) or {}).get("parent")
+    return out
+
+
+# The resource id lands inside a Cedar literal exactly like emails do —
+# same guard, same stance: reject, never escape.
+_SAFE_RESOURCE = re.compile(r"^[A-Za-z0-9@._:/-]{1,200}$")
+
+
+def derive_resource(servers: dict, server: str, leaf: str,
+                    arguments: dict | None) -> tuple[str, str] | None:
+    """(resource_id, tier), or None ⇒ the caller denies closed.
+
+    Handshake scopes (`rpc.*`) carry no arguments and address the
+    server itself. A server without a resource map yields
+    `<server>/*` at tier `unclassified` — and POLICY decides what
+    unclassified may do (for a chat toy, everything; for a database,
+    nothing). A server WITH a map must extract cleanly or the call
+    dies: a missing key, a non-string, or an unsafe value is
+    `unmapped-resource`, never a permissive default. Tier membership
+    is exact match, or prefix when the entry ends with `*`; an
+    unmatched value is tier `unclassified` — the ADR's rule that the
+    tier attribute is TOTAL (Cedar skip-on-error) while staying
+    deny-biased through policy."""
+    spec = servers.get(server) or {}
+    rmap = spec.get("resource")
+    if leaf.startswith("rpc.") or rmap is None:
+        return f"{server}/*", "unclassified"
+    key_path = rmap["from"].split(".")[2:]  # validated shape at load
+    value = arguments or {}
+    for key in key_path:
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    if not isinstance(value, str) or not _SAFE_RESOURCE.fullmatch(value):
+        return None
+    tier = "unclassified"
+    for name, members in (rmap.get("tiers") or {}).items():
+        for entry in members:
+            e = str(entry)
+            if (e.endswith("*") and value.startswith(e[:-1])) or value == e:
+                tier = name
+                break
+        if tier != "unclassified":
+            break
+    return f"{server}/{value}", tier
 
 
 def profile_tools(servers: dict, server: str, level: str) -> list[str]:
