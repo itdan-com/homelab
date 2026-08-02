@@ -39,8 +39,10 @@ written by the calling endpoint (it holds the DB session); this module
 deliberately knows nothing about the database.
 """
 
+import asyncio
 import hashlib
 import json
+import logging
 import re
 import subprocess
 import tempfile
@@ -98,6 +100,12 @@ class PolicyError(ValueError):
     def __init__(self, errors: list[str]):
         super().__init__("; ".join(errors))
         self.errors = errors
+
+
+class StoreUnstable(Exception):
+    """A refresh caught the store mid-write (a console save lands as
+    four sequential file writes). Not an error — the tick is skipped
+    and the next one sees the finished store."""
 
 
 @dataclass(frozen=True)
@@ -359,13 +367,11 @@ def _commit_history(d: Path, version: str, actor: str) -> None:
             raise RuntimeError(f"policy history commit failed: {r.stderr.strip()}")
 
 
-def activate(policy_dir: str | Path = POLICY_DIR, *,
-             actor: str = "system") -> ActivePolicy:
-    """Load → generate → validate → swap, atomically. Raises
-    PolicyError (and keeps last-good live) on any failure before the
-    swap. Returns the now-active policy."""
-    global _active
-    d = Path(policy_dir)
+def _build(d: Path) -> ActivePolicy:
+    """Load → generate → Cedar-validate → content-hash. Pure read: it
+    touches nothing on disk and swaps nothing — the shared core of
+    activate() (the console's writing path) and refresh() (every
+    process's read-only path). Raises PolicyError on any failure."""
     groups, people, matrix, servers, overlay, sources = load_store(d)
     policies, entities_json = generate(groups, people, matrix, overlay)
 
@@ -378,19 +384,31 @@ def activate(policy_dir: str | Path = POLICY_DIR, *,
     for name in sorted(sources):
         h.update(name.encode() + b"\0" + sources[name] + b"\0")
     h.update(policies.encode())
-    version = h.hexdigest()[:12]
+    return ActivePolicy(version=h.hexdigest()[:12], policies=policies,
+                        entities_json=entities_json, matrix=matrix,
+                        servers=servers, groups=groups, people=people,
+                        loaded_at=utcnow())
+
+
+def activate(policy_dir: str | Path = POLICY_DIR, *,
+             actor: str = "system") -> ActivePolicy:
+    """Load → generate → validate → swap, atomically. Raises
+    PolicyError (and keeps last-good live) on any failure before the
+    swap. Returns the now-active policy. This is the WRITING path —
+    generated/ artifacts + the git history commit — and belongs to the
+    console (admin process); the broker only ever refresh()es."""
+    global _active
+    d = Path(policy_dir)
+    ap = _build(d)
 
     gen = d / "generated"
     gen.mkdir(exist_ok=True)
-    (gen / "policies.cedar").write_text(policies)
-    (gen / "entities.json").write_text(entities_json)
-    _commit_history(d, version, actor)
+    (gen / "policies.cedar").write_text(ap.policies)
+    (gen / "entities.json").write_text(ap.entities_json)
+    _commit_history(d, ap.version, actor)
 
     with _lock:
-        _active = ActivePolicy(version=version, policies=policies,
-                               entities_json=entities_json, matrix=matrix,
-                               servers=servers, groups=groups, people=people,
-                               loaded_at=utcnow())
+        _active = ap
     return _active
 
 
@@ -433,6 +451,101 @@ def save_and_activate(policy_dir: str | Path, docs: dict[str, str], *,
     for key, name in _DOCS.items():
         (d / name).write_text(docs.get(key, ""))
     return activate(d, actor=actor)
+
+
+# --- cross-process reload (7.3.1) ---------------------------------------------
+#
+# The console activates policy in the ADMIN process; the BROKER is a
+# separate process whose only shared state with it is the store on
+# disk. Rather than a signal (there is no privilege path between the
+# units) or an admin→broker network poke (new surface on the mTLS
+# listener, and a poke missed while the broker is down still needs a
+# catch-up scan), each process WATCHES the store: a stat signature per
+# tick, a READ-ONLY rebuild when it changes. POLICY_RELOAD_SECONDS
+# bounds how long the processes may disagree; the version each one
+# serves is observable (admin /v1/policy/status, broker /healthz), and
+# every decision row stamps policy_version — disagreement is visible,
+# never silent.
+
+_watch_sig: tuple | None = None  # last signature this process acted on
+
+
+def store_signature(policy_dir: str | Path = POLICY_DIR) -> tuple:
+    """(name, mtime_ns, size) per source document — changes whenever
+    the store's bytes could have. Missing files sign as None so a
+    seeded/deleted document is a change like any other."""
+    d = Path(policy_dir)
+    sig = []
+    for name in sorted(_DOCS.values()):
+        try:
+            st = (d / name).stat()
+            sig.append((name, st.st_mtime_ns, st.st_size))
+        except FileNotFoundError:
+            sig.append((name, None, None))
+    return tuple(sig)
+
+
+def refresh(policy_dir: str | Path = POLICY_DIR) -> ActivePolicy:
+    """Read-only activation: rebuild from disk and swap this process's
+    active policy. Writes NOTHING — no generated/, no git commit — so
+    the console stays the store's only author and two processes never
+    race on its artifacts. Same last-good-stays-live contract as
+    activate(): any failure raises before the swap. A torn read (a
+    console save caught between its four file writes) is excluded by a
+    stability check — the signature must match before and after the
+    build, else StoreUnstable skips this tick and the next converges."""
+    global _active
+    d = Path(policy_dir)
+    before = store_signature(d)
+    ap = _build(d)
+    if store_signature(d) != before:
+        raise StoreUnstable()
+    with _lock:
+        if _active is not None and _active.loaded_at > ap.loaded_at:
+            return _active  # a concurrent activate() swapped in newer; keep it
+        _active = ap
+    return _active
+
+
+def maybe_refresh(policy_dir: str | Path = POLICY_DIR) -> str | None:
+    """One watcher tick. Returns the newly active version when the
+    on-disk store changed and swapped in; None otherwise — unchanged,
+    mid-write (retried next tick), or broken (logged once per distinct
+    on-disk state; last-good keeps serving until the store changes
+    again)."""
+    global _watch_sig
+    sig = store_signature(policy_dir)
+    if sig == _watch_sig:
+        return None
+    prev = _active.version if _active else None
+    try:
+        ap = refresh(policy_dir)
+    except StoreUnstable:
+        return None  # _watch_sig untouched → next tick retries
+    except Exception as e:
+        _watch_sig = sig  # log once, not every tick
+        logging.getLogger("sentinel").warning(
+            "policy reload skipped, last-good %s stays live: %s", prev, e)
+        return None
+    _watch_sig = sig
+    if ap.version != prev:
+        logging.getLogger("sentinel").info(
+            "policy reloaded: %s -> %s", prev, ap.version)
+        return ap.version
+    return None
+
+
+async def watch_store(policy_dir: str | Path, interval: float) -> None:
+    """The reload loop both lifespans run until shutdown cancels it.
+    A tick must never kill the loop: maybe_refresh() already contains
+    build failures, and anything stranger (permissions flapping,
+    filesystem oddities) is logged and retried."""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            maybe_refresh(policy_dir)
+        except Exception:
+            logging.getLogger("sentinel").exception("policy watcher tick failed")
 
 
 def structured_to_documents(groups: dict, people: dict, matrix: dict,

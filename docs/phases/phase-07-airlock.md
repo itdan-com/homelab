@@ -13,9 +13,12 @@ the appearance of oversight. See `CLAUDE.md` → "Two flows".
 **Status:** **7.2 CLOSED 2026-08-02** (7.2.1–7.2.6 all done; live on
 the installed units; battery 18/18; owner drove the Access GUI
 through two same-day iterations and accepted it as far as example
-data allows — v3+ iterates against REAL servers). Next: **7.3 — the
-public MCP door + gateway OAuth**, fresh session; first todo is
-broker-process policy activation + reload (see notes); then **7.4
+data allows — v3+ iterates against REAL servers). **7.3 IN
+PROGRESS** (opened 2026-08-02, fresh session — checklist below;
+kickoff decisions: demo client = **Claude Code in WSL2, exploring
+CIMD** with static registration the sanctioned fallback; scope =
+local units + cluster + in-cluster Authentik only, wire demo against
+the echo stand-in). Then **7.4
 deploys the first real MCP server — owner direction: their own
 on-prem GitHub as the first upstream** (GHES host; a second
 `github-homelab` server entry stays a separate matrix column).
@@ -188,6 +191,82 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   "environments" replaces tier/map jargon), **Limits & windows**
   ("Never allow" sentences + window chips). Human level labels
   throughout. Same draft→structured-save gate underneath.
+
+## Phase 7.3 checklist (the public MCP door + gateway OAuth)
+
+Scope fixed at kickoff (owner, 2026-08-02): local units + cluster +
+in-cluster Authentik only — no external SaaS, no real upstreams
+(that is 7.4); the wire demo runs against the in-cluster stand-in
+(echo). Demo client: **Claude Code in WSL2**, exploring **CIMD**
+client identity, static registration the sanctioned fallback
+(ADR-005 D9; DCR stays dead). Auth posture per the 7.2 note: OAuth
+2.1 + PKCE only, discovery via RFC 8414/OIDC, no legacy flows, no
+RFC 8693 at the gateway.
+
+- [x] **7.3.1 Broker-process policy activation + reload** (DONE
+  2026-08-02, code + tests; live rollout rides 7.3.6). The
+  load-bearing 7.2.5 note: the console activates policy in the
+  ADMIN process only; the broker has never loaded the store. Give
+  the broker best-effort startup activation (inactive/broken store =
+  person path denies closed, same as admin) plus a reload path so a
+  console activation reaches the broker without a restart —
+  mechanism decided in-item (mtime/HEAD watch vs SIGHUP vs
+  admin→broker poke), with the invariant stated and tested: **the
+  two processes must never disagree about the active version**
+  beyond a bounded convergence window; every decision row already
+  stamps `policy_version`, so disagreement is observable, and a
+  broken candidate keeps last-good serving in BOTH processes. Code
+  + tests only; rollout rides 7.3.6's install.
+- [ ] **7.3.2 The Authentik client for the door.** Static OAuth 2.1
+  + PKCE client (auth-code flow) in Authentik via blueprint, and the
+  CIMD exploration: observe what Claude Code ACTUALLY sends against
+  an OAuth-guarded MCP endpoint (URL-shaped client_id? metadata
+  document fetch?), verify whether Authentik 2026.5.6 can consume a
+  URL client_id — statically registered with the CIMD URL as the
+  client_id if native fetch is absent — and record the finding
+  honestly (CIMD-shaped vs full CIMD). RFC 8414/OIDC discovery
+  verified against the live Authentik; the redirect-URI story for a
+  loopback CLI client settled here.
+- [ ] **7.3.3 The door itself.** `mcp.lab.local` (local equivalent
+  of `mcp.<domain>`) with real TLS from the lab CA. Topology decided
+  in-item against CLAUDE.md's "on Envoy" line — which listener
+  terminates it (existing Traefik 8443 entry vs the Envoy AI
+  gateway), recorded with reasoning. RFC 9728 protected-resource
+  metadata served at the door so MCP clients discover the
+  authorization server; broker-side JWT validation (issuer,
+  audience, expiry, signature against Authentik's JWKS) so every
+  call knows WHICH PERSON is calling; person-flow ids
+  GATEWAY-MINTED (7.2.1 note — unique by construction, never
+  client-chosen).
+- [ ] **7.3.4 Handshake birthright through the ladder.** The door
+  routes person-calls into `ladder.decide()`: a signed-in person
+  reaches their assigned servers' handshake (`rpc.*`) and
+  birthright tools at ZERO approvals; unassigned servers invisible
+  even to `initialize`; store-unknown person = forbid. Stream-
+  lifetime caps: a long-lived MCP stream cannot outlive policy —
+  re-evaluation cadence/cap decided and tested here.
+- [ ] **7.3.5 The confirm + approve doors.** A borrowable denial
+  already carries the offer (7.2.3); the doors mint the profile
+  grants: `confirm` = the caller self-elevates from their own
+  client, time-boxed, `granted_via=confirm`; `approve` = the
+  request lands as a console card and a passkey holder grants
+  (`granted_via=approve`, `granted_by` = the approver; lab collapse
+  stays named — one enrolled human is requester≈approver until a
+  second passkey enrolls). THE MEASUREMENT: one honest MCP session
+  end-to-end costs at most ONE approval — the 5.5.8
+  six/seven-approvals headline retired on the wire, not just at
+  unit level.
+- [ ] **7.3.6 Install line + battery + demo + close.** Install
+  (restarts + wire probes; carries the two console fixes from
+  `96f9d19`); battery extended to assert the door (discovery
+  documents served, an unauthenticated call refused, a birthright
+  call passing, the one-approval measurement); SETUP.md gains the
+  door section (+ the pending certutil wording fix from backlog).
+  The demo: owner's real Authentik identity enrolled as a principal
+  via the Access GUI, Claude Code pointed at `mcp.lab.local`,
+  sign-in, birthright tool call at zero approvals, one confirm
+  elevation — captured as the demo asset. STATUS + phase-doc
+  close-out.
 
 ## ADR-005 must resolve — blockers from the 2026-07-28 audit
 
@@ -438,3 +517,25 @@ birthright plus Decision 6's profile grants.
   version of "closed" (display) is enough or a lazy close-event
   emitter is wanted. Also: `granted_via` values admin|confirm|approve
   exist in schema now; the confirm/approve DOORS are 7.3.
+- **2026-08-02 (7.3.1):** mechanism decision — a store-signature
+  WATCH in both processes (stat of the four source docs per tick,
+  default 2s via `SENTINEL_POLICY_RELOAD_SECONDS`, 0 disables), not
+  SIGHUP (no privilege path between the units) and not an
+  admin→broker poke (new surface on the mTLS listener, and a poke
+  missed while the broker is down needs a catch-up scan anyway —
+  which IS the watch). The broker's path is **read-only**:
+  `policy.refresh()` rebuilds and swaps in memory, writes no
+  `generated/`, commits nothing — the console remains the store's
+  only author, so git history attribution stays human. Torn reads
+  (a save caught between its four file writes) are excluded by a
+  before/after signature stability check (`StoreUnstable` = skipped
+  tick, retried); the same-process thread race (console save in the
+  threadpool vs watcher in the event loop) is closed by a
+  `loaded_at` guard in the swap. Broker `/healthz` now reports
+  `policy_version` (null = the deny-closed state, visible not
+  silent) — 7.3.6's battery asserts admin == broker on the live
+  wire. Python trap from the code map fixed in `main.py`: the
+  lifespan called `activate()` through a default argument frozen at
+  import; it now passes `policy.POLICY_DIR` at call time. Deploy
+  delta: none (env default applies, unit files unchanged). Suite
+  52/52 (6 new in `tests/test_policy_reload.py`).

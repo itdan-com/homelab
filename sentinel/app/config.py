@@ -94,3 +94,13 @@ FLOW_ACTIVE_MINUTES = int(os.environ.get("SENTINEL_FLOW_ACTIVE_MINUTES", "15"))
 # (it grows its own .git); production is /var/lib/sentinel/policy via
 # the systemd unit — same construction rule as SENTINEL_DB.
 POLICY_DIR = os.environ.get("SENTINEL_POLICY_DIR", "./policy-dev")
+
+# 7.3.1 — how often each process re-checks the store on disk for a
+# version it has not loaded (seconds; 0 disables the watcher, for
+# tests). The console activates policy in the ADMIN process; the
+# BROKER is a separate process whose only shared state with it is the
+# store on disk — so each process watches the store and does a
+# READ-ONLY rebuild when the bytes change. This value is the bound on
+# how long the two processes may disagree about the active version
+# after a console save.
+POLICY_RELOAD_SECONDS = float(os.environ.get("SENTINEL_POLICY_RELOAD_SECONDS", "2"))

@@ -33,6 +33,7 @@ Relying Party ID must be a domain, so `localhost` works and
 `127.0.0.1` does not.
 """
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -49,7 +50,12 @@ from . import __version__
 from . import auth_routes
 from . import policy
 from .actor import console_guard, current_operator, require_operator
-from .config import CONSOLE_ALLOWED_HOSTS, CONSOLE_ORIGIN, FLOW_ACTIVE_MINUTES
+from .config import (
+    CONSOLE_ALLOWED_HOSTS,
+    CONSOLE_ORIGIN,
+    FLOW_ACTIVE_MINUTES,
+    POLICY_RELOAD_SECONDS,
+)
 from .db import SessionLocal, engine
 from .models import (
     AuditEvent,
@@ -139,12 +145,28 @@ async def lifespan(_app: FastAPI):
     # Best-effort policy activation (7.2.2). Failure must NOT stop the
     # console — the console is where a broken store gets fixed — and
     # an inactive store fails the person-path closed, never open.
+    # POLICY_DIR is passed explicitly so it is read at call time, not
+    # frozen as a default argument at import (7.3.1).
     try:
-        policy.activate(actor="startup")
+        policy.activate(policy.POLICY_DIR, actor="startup")
     except Exception as e:  # PolicyError, missing store, no git, …
         import logging
         logging.getLogger("sentinel").warning("policy store not active: %s", e)
+    # 7.3.1: the admin process watches the store too. Console saves
+    # already swap this process's active policy directly; the watcher
+    # covers every OTHER writer (a root hand-edit, tooling, a future
+    # second author) so admin and broker converge on the same bytes no
+    # matter whose hand moved them.
+    task = (asyncio.create_task(
+                policy.watch_store(policy.POLICY_DIR, POLICY_RELOAD_SECONDS))
+            if POLICY_RELOAD_SECONDS > 0 else None)
     yield
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(

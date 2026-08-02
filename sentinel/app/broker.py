@@ -17,12 +17,17 @@ catalog/sentinel-proxy: Envoy's ext_authz filter asking /v1/ext-authz
 about every request.
 """
 
+import asyncio
+import logging
 import re
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from . import policy
+from .config import POLICY_RELOAD_SECONDS
 from .db import SessionLocal, engine
 from .models import AuditEventType, RequestStatus
 from .schemas import (
@@ -44,7 +49,35 @@ from .service import (
     refresh_status,
 )
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """7.3.1: the broker loads the policy store at startup and watches
+    it for console activations — READ-ONLY both times (policy.refresh);
+    the console, in the admin process, is the store's only writer.
+    Failure must not stop the broker: its 5.5 duties (tokens, proxy
+    checks) need no store, and the person path denies closed while
+    nothing is active. POLICY_DIR is passed explicitly so the value is
+    read at call time, not frozen as a default argument at import."""
+    log = logging.getLogger("sentinel")
+    try:
+        ap = policy.refresh(policy.POLICY_DIR)
+        log.info("policy store active: %s", ap.version)
+    except Exception as e:  # PolicyError, missing store, …
+        log.warning("policy store not active: %s", e)
+    task = (asyncio.create_task(
+                policy.watch_store(policy.POLICY_DIR, POLICY_RELOAD_SECONDS))
+            if POLICY_RELOAD_SECONDS > 0 else None)
+    yield
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Sentinel Broker (cluster-facing)",
     version=__version__,
     description="Ask for a capability, poll for the human's answer, "
@@ -57,7 +90,9 @@ def healthz() -> dict:
     from sqlalchemy import text
     with engine.connect() as conn:
         conn.execute(text("SELECT 1"))
-    return {"status": "ok", "listener": "broker", "version": __version__}
+    ap = policy.get_active()
+    return {"status": "ok", "listener": "broker", "version": __version__,
+            "policy_version": ap.version if ap else None}
 
 
 @app.post(
