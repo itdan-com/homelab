@@ -217,7 +217,9 @@ RFC 8693 at the gateway.
   stamps `policy_version`, so disagreement is observable, and a
   broken candidate keeps last-good serving in BOTH processes. Code
   + tests only; rollout rides 7.3.6's install.
-- [ ] **7.3.2 The Authentik client for the door.** Static OAuth 2.1
+- [x] **7.3.2 The Authentik client for the door** (DONE 2026-08-02,
+  LIVE — blueprint synced `08ebd5e`, discovery + jwks + allowlist
+  discrimination verified on the wire). Static OAuth 2.1
   + PKCE client (auth-code flow) in Authentik via blueprint, and the
   CIMD exploration: observe what Claude Code ACTUALLY sends against
   an OAuth-guarded MCP endpoint (URL-shaped client_id? metadata
@@ -539,3 +541,43 @@ birthright plus Decision 6's profile grants.
   import; it now passes `policy.POLICY_DIR` at call time. Deploy
   delta: none (env default applies, unit files unchanged). Suite
   52/52 (6 new in `tests/test_policy_reload.py`).
+- **2026-08-02 (7.3.2) — the CIMD exploration, observed not assumed
+  (probe rig in scratchpad, three AS modes, Claude Code 2.1.220,
+  protocol 2025-11-25 on the wire):** the client's registration
+  preference chain (MCP spec 2026-07-28) is CIMD → DCR →
+  pre-configured → prompt, and the CIMD branch is **gated on the AS
+  advertising `client_id_metadata_document_supported: true`** — with
+  the flag up, the authorize URL carries
+  `client_id=https://claude.ai/oauth/claude-code-client-metadata`
+  (captured via `claude mcp login --no-browser`), S256 PKCE, and an
+  **RFC 8707 `resource=` parameter** naming the MCP endpoint (7.3.3
+  audience note: Authentik won't consume it); with DCR advertised it
+  POSTs RFC 7591 registration (observed); with neither + no static
+  id, headless defers to a user prompt. **Decision: static
+  registration, not CIMD-shaped strings** — Authentik 2026.5.6 will
+  never advertise the flag, so a URL-shaped static client_id would
+  never even be presented by the client; and upstream issue #37747
+  (v2.1.80+ publishes PORTLESS redirect_uris in the CIMD document)
+  would break strict-validating CIMD servers anyway. Redirect story:
+  the callback port is RANDOM per login (observed 3118 → 54491)
+  unless pinned client-side, so the client config pins
+  `oauth.callbackPort: 18789` and the provider allowlist stays
+  `matching_mode: strict` (both loopback spellings; regex allowlists
+  rejected as a foot-gun). Blueprint shape decisions: PUBLIC client
+  (no secret a workstation must keep; PKCE is the defense),
+  code+refresh grants only per-provider (the B5 empty-allowlist
+  lesson doubles as OAuth 2.1 enforcement — the server-wide metadata
+  still ADVERTISES implicit/password globally, recorded honestly;
+  the provider refuses them), **no group policy binding and no
+  roles/groups claim — ADR-005 P1 at the token layer**: Authentik
+  answers WHO, the policy store alone answers WHAT (store-unknown
+  person = valid token, forbid on every call); flagged for owner
+  review, reversible with one policybinding entry. Verified live:
+  discovery at `/application/o/mcp/`, jwks = 1 RS256 key (the
+  broker's 7.3.3 validation anchor), pinned redirect → 302 into
+  login flow, wrong redirect → 400 no-redirect. Open for 7.3.3:
+  refresh-token UX (`offline_access` scope not attached yet — match
+  to observed client behavior when the first real token mints);
+  demo sign-in path is `claude mcp login <name> --no-browser`
+  (v2.1.186+). Full token mint deliberately NOT yet exercised — it
+  needs 7.3.3's door.
