@@ -12,12 +12,20 @@
 # since 2026-07-28. A pet process is not a path: it dies at reboot, it
 # is invisible to `bootstrap.sh`, and nothing in git says it exists.
 #
-# NOTE the backend is the chart's ExternalName alias, so this route
-# never learns Envoy Gateway's hashed data-plane service name.
+# The route lives in the CONTROLLER namespace and targets the
+# data-plane Service directly (named by the same deterministic helper
+# the ExternalName alias uses — no hash is hardcoded). Two k3s Traefik
+# defaults forced this and both are worth knowing: it refuses
+# ExternalName services unless `allowExternalNameServices=true`, and it
+# refuses cross-namespace service references unless
+# `allowCrossNamespace=true`. Rather than loosen either flag globally —
+# they exist to stop an IngressRoute anywhere from pointing traffic
+# anywhere — the route sits next to what it serves.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: {{ include "catalog.fullname" . }}-tls
+  namespace: {{ .Values.service.controllerNamespace }}
   labels:
     {{- include "catalog.labels" . | nindent 4 }}
 spec:
@@ -35,6 +43,7 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: {{ include "catalog.fullname" . }}-door
+  namespace: {{ .Values.service.controllerNamespace }}
   labels:
     {{- include "catalog.labels" . | nindent 4 }}
 spec:
@@ -44,7 +53,7 @@ spec:
     - match: Host(`{{ .Values.doorIngress.host }}`)
       kind: Rule
       services:
-        - name: {{ include "catalog.fullname" . }}
+        - name: {{ include "sentinelproxy.dataplaneName" . }}
           port: {{ .Values.service.port }}
   tls:
     secretName: {{ include "catalog.fullname" . }}-tls

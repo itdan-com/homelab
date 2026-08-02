@@ -114,11 +114,13 @@ policy version that decided it.
 
 ## What is honest about this demo
 
-- **The tools do not do anything yet.** Policy decides, the door
-  forwards — but no real MCP server is deployed, so an allowed call
-  returns "no upstream is configured for this server." That is 7.4's
-  job (the owner's on-prem GitHub), and the door says so plainly
-  rather than pretending.
+- **The tool behind the demo is a stand-in.** The door forwards
+  allowed calls through the same `sentinel-proxy` every in-cluster
+  caller uses — it does not go around the enforcement point — but the
+  server on the other end is the 5.5 mock, not a system anyone
+  cares about. The first real one is 7.4 (the owner's on-prem
+  GitHub). A server with no upstream configured says so plainly
+  instead of pretending the call worked.
 - **One human is both requester and approver here.** The `approve`
   rung files a card for a *different* person; with one enrolled
   passkey that person is you. The mechanism (console grant, window,
