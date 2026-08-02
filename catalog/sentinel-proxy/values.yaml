@@ -96,3 +96,15 @@ upstreams:
 
 nameOverride: ""
 fullnameOverride: ""
+
+# The host-side route to this enforcement point (7.3.6). Sentinel's
+# door runs outside the cluster and forwards ALREADY-AUTHORIZED calls
+# through this proxy — the same one in-cluster callers use, so the
+# "nothing reaches an MCP server unchecked" invariant is unchanged.
+# Replaces a root `kubectl port-forward` that was doing this job
+# undeclared since 2026-07-28.
+doorIngress:
+  enabled: true
+  host: mcp-proxy.lab.local
+  tls:
+    issuer: lab-local-ca

@@ -1,0 +1,51 @@
+{{- if .Values.doorIngress.enabled }}
+# The HOST-side route to the enforcement point (7.3.6).
+#
+# Sentinel's door runs outside the cluster (ADR-004) and must reach MCP
+# servers to forward a call it has already authorized. It goes through
+# the SAME sentinel-proxy every in-cluster caller uses — never around
+# it — so the invariant holds unchanged: no traffic reaches an MCP
+# server without a capability check at the proxy. The door simply
+# arrives from outside, so it needs a route in.
+#
+# This replaces a `kubectl port-forward` that had been running as root
+# since 2026-07-28. A pet process is not a path: it dies at reboot, it
+# is invisible to `bootstrap.sh`, and nothing in git says it exists.
+#
+# NOTE the backend is the chart's ExternalName alias, so this route
+# never learns Envoy Gateway's hashed data-plane service name.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "catalog.fullname" . }}-tls
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "catalog.fullname" . }}-tls
+  dnsNames:
+    - {{ .Values.doorIngress.host }}
+  privateKey:
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ .Values.doorIngress.tls.issuer }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "catalog.fullname" . }}-door
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ .Values.doorIngress.host }}`)
+      kind: Rule
+      services:
+        - name: {{ include "catalog.fullname" . }}
+          port: {{ .Values.service.port }}
+  tls:
+    secretName: {{ include "catalog.fullname" . }}-tls
+{{- end }}

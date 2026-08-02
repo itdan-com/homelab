@@ -67,6 +67,7 @@ from .config import (
 from .db import SessionLocal
 from .models import AuditEventType, Principal
 from .service import (
+    mint_forwarding_token,
     audit,
     create_request,
     get_or_create_principal,
@@ -552,32 +553,88 @@ def _tool_entry(name: str, outcome: str) -> dict:
 
 
 def _call_upstream(server: str, leaf: str, arguments: dict, *,
-                   principal: str, flow_id: str) -> dict:
-    """Forward an ALLOWED call to the server's real upstream. The
-    person's identity and flow travel as headers so the upstream's own
-    logs can be correlated with Sentinel's audit trail — they are
-    context, never authority: the decision was made here."""
+                   principal_id: str, principal_email: str,
+                   tool: str, flow_id: str) -> dict:
+    """Forward an ALLOWED call to the server's real upstream — through
+    the sentinel-proxy, the same enforcement point in-cluster callers
+    use. Not around it: "nothing reaches an MCP server without a
+    capability check" has to stay literally true, or the door becomes a
+    second unguarded entrance to everything the proxy protects.
+
+    So the door mints itself a one-call, 30-second, scope-locked token
+    (service.mint_forwarding_token) and presents it the way the proxy
+    expects. That costs the human nothing — the approval question was
+    answered upstairs by the ladder — while the proxy independently
+    re-checks the kill switch and the scope it derives FROM THE REQUEST
+    ITSELF, which is the property that makes the second check worth
+    making rather than ceremonial."""
     url = MCP_UPSTREAMS.get(server)
     if not url:
         return {"content": [{"type": "text", "text":
                              f"Allowed by policy, but no upstream is "
                              f"configured for '{server}' on this "
                              f"deployment."}], "isError": True}
+    # Identity travels as plain VALUES, never as an ORM object: the
+    # session that loaded it is already closed by the time we get here,
+    # and a detached instance raises the moment anything touches a
+    # lazily-loaded attribute. (It did, on the first live call.)
+    with SessionLocal() as s:
+        try:
+            token = mint_forwarding_token(
+                s, flow_id=flow_id, tool=tool,
+                principal=s.get(Principal, principal_id))
+        except ValueError as e:  # kill switch
+            return {"content": [{"type": "text", "text": str(e)}],
+                    "isError": True}
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": leaf, "arguments": arguments}}
-    with _http() as c:
-        r = c.post(url, json=body, headers={
-            "X-Airlock-Principal": principal, "X-Airlock-Flow": flow_id,
-            "Accept": "application/json"})
+    try:
+        with _http() as c:
+            r = c.post(url, json=body, headers={
+                "X-Sentinel-Token": token, "X-Flow-Id": flow_id,
+                "X-Airlock-Principal": principal_email,
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream"})
+    except httpx.HTTPError as e:
+        return {"content": [{"type": "text", "text":
+                             f"Upstream '{server}' unreachable: {e}"}],
+                "isError": True}
+    if r.status_code == 403:
+        # The proxy refused what the ladder allowed. That is a real
+        # disagreement between two enforcement layers, not a user error
+        # — say so plainly instead of dressing it as a tool failure.
+        return {"content": [{"type": "text", "text":
+                             f"The enforcement proxy refused this call "
+                             f"({r.text[:200]}). Policy allowed it, so "
+                             f"this is a platform fault worth "
+                             f"reporting."}], "isError": True}
     if r.status_code != 200:
         return {"content": [{"type": "text", "text":
                              f"Upstream '{server}' returned "
                              f"HTTP {r.status_code}."}], "isError": True}
-    payload = r.json()
+    payload = _first_json_rpc(r)
     return payload.get("result") or {
         "content": [{"type": "text",
                      "text": json.dumps(payload.get("error", {}))}],
         "isError": True}
+
+
+def _first_json_rpc(r: httpx.Response) -> dict:
+    """MCP servers may answer a POST as JSON or as a one-message SSE
+    stream (`text/event-stream`), and which one is the SERVER's choice,
+    not ours — so handle both rather than assuming."""
+    if "text/event-stream" in r.headers.get("content-type", ""):
+        for line in r.text.splitlines():
+            if line.startswith("data:"):
+                try:
+                    return json.loads(line[5:].strip())
+                except ValueError:
+                    continue
+        return {"error": {"message": "unreadable event stream"}}
+    try:
+        return r.json()
+    except ValueError:
+        return {"error": {"message": r.text[:200]}}
 
 
 def _handle_rpc(msg: dict, claims: dict, flow_id: str) -> dict | None:
@@ -628,6 +685,7 @@ def _handle_rpc(msg: dict, claims: dict, flow_id: str) -> dict | None:
             p = s.get(Principal, claims["sub"])
             if p is None:
                 return _rpc_error(rid, -32002, "Unknown principal.")
+            principal_id, principal_email = p.id, p.email
             # `arguments` is passed as the JSON-RPC params.arguments
             # RECORD itself — the store's resource map (`from:
             # params.arguments.repo`) walks the keys inside it. Wrapping
@@ -659,8 +717,9 @@ def _handle_rpc(msg: dict, claims: dict, flow_id: str) -> dict | None:
             }.get(result.reason, "Not permitted."), data)
         return {"jsonrpc": "2.0", "id": rid,
                 "result": _call_upstream(server, leaf, arguments,
-                                         principal=claims["email"],
-                                         flow_id=flow_id)}
+                                         principal_id=principal_id,
+                                         principal_email=principal_email,
+                                         tool=name, flow_id=flow_id)}
 
     return _rpc_error(rid, -32601, f"Method not supported: {method}")
 

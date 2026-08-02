@@ -422,6 +422,43 @@ def mint_profile_grant(
     return grant, token
 
 
+def mint_forwarding_token(
+    s: Session, *, flow_id: str, tool: str, principal: Principal,
+    ttl_seconds: int = 30,
+) -> str:
+    """A one-call token the DOOR presents to the proxy (7.3.6).
+
+    The door authorizes a person's call with the Cedar ladder and then
+    forwards it into the cluster — through the same sentinel-proxy every
+    in-cluster caller uses, never around it, so "nothing reaches an MCP
+    server without a capability check" stays literally true. The proxy
+    speaks exactly one language: `(flow-id, token, derived scope)`. This
+    mints that, scoped to the ONE tool just decided and living ~30
+    seconds.
+
+    It costs the human nothing and must not: the approval question was
+    already asked and answered upstairs. Two properties keep this from
+    being a bypass — the token is minted only AFTER `ladder.decide()`
+    returned allowed, and it is scope-locked to that single tool, so a
+    leaked one buys a single call it was already entitled to make. The
+    kill switch still wins: `check_capability` re-reads it at the proxy,
+    so a kill engaged in the milliseconds after minting still stops the
+    call."""
+    if kill_state(s).engaged:
+        raise ValueError("kill switch engaged — no new grants")
+    if s.get(Flow, flow_id) is None:
+        s.add(Flow(id=flow_id, agent=f"airlock-door:{principal.email}"))
+    token = TOKEN_PREFIX + secrets.token_urlsafe(32)
+    s.add(CapabilityGrant(
+        flow_id=flow_id, principal_id=principal.id, tool=tool,
+        token_hash=_hash(token), granted_by="airlock-door",
+        granted_via="admin",
+        expires_at=utcnow() + timedelta(seconds=ttl_seconds),
+    ))
+    s.commit()
+    return token
+
+
 def get_or_create_principal(
     s: Session, *, email: str, idp_sub: str | None = None,
     display_name: str | None = None,
