@@ -19,8 +19,12 @@ buttons, MCP catalog, Sentinel gating, five ADR-005 blockers); all of
 it MOVED to Phase 7 — nothing was deleted. See `CLAUDE.md` → "Two
 flows: Mission Control and Airlock".
 
-**Status:** Not started. Entry criteria met: Phase 5.5 closed
-2026-07-28; the PR loop itself has worked since Phase 4.5.
+**Status: CLOSED 2026-08-02.** All six items done and verified live.
+Carried as owner-paced (recorded in STATUS, not blocking): the
+dedicated Anthropic key (owner list #5), the Grafana arc screenshot,
+and open question 1 (where the operator lives — now STATUS owner
+decisions #6). The demo record: the three declines
+(`docs/demos/mission-control-three-declines.md`).
 
 ---
 
@@ -201,14 +205,24 @@ state; claims get drills).
 
 ### 6.6 — Demo + phase close
 
-- [ ] Drive the Phase 3 k6 burst; within one tick interval the agent
-      opens an unprompted scaling PR (KEDA ceiling or warm-spare
-      floor) with the charter's plain-English body.
-- [ ] Owner approves and merges **in GitHub, as themselves** →
-      ArgoCD applies → scale event visible in Grafana.
-- [ ] Capture the GIF (demo asset per milestone; README).
-- [ ] STATUS.md updated; activity log entry; backlog sweep for
-      anything this phase surfaced.
+- [x] Drive the k6 burst — done ×4 on 2026-08-02 (two waves on the
+      9b, then `qwen3.5:4b` added to the gateway and burst at
+      sustained 97–110 tok/s, per-replica above KEDA's target at the
+      ceiling). The agent woke within one tick interval every time.
+- [x] **Amended outcome — the agent declined, three times, and the
+      declines are the demo.** No PR because none was honestly
+      warranted: "too fresh" → "bursty, numbers under target" →
+      "this is the scale-demo tool, I can see its square wave in a
+      Prometheus range query." Full record with verbatim verdicts:
+      `docs/demos/mission-control-three-declines.md`. The
+      owner-merges-in-GitHub path was separately proven on PR #7.
+- [x] Demo assets: the three-declines record (committed) + the
+      decline log lines; the Grafana "AI Gateway — Token-Rate
+      Autoscaling" arc screenshot is owner-paced. GIF criterion
+      amended — this story is screenshots, not animation.
+- [x] STATUS.md updated; activity log entry; backlog swept
+      (k6-key ephemerality, TOKENS_WARN retune candidate,
+      nomic-embed-text parked).
 
 ## Open questions (resolve during the phase)
 
@@ -244,16 +258,26 @@ state; claims get drills).
 - A timer runs the operator tick unattended; quiet ticks heartbeat;
   the exec hack is gone from the charter; the proxy path is the only
   metrics access and is scoped to one service.
-- An induced load signal produces one well-formed unprompted PR
-  within one tick interval; duplicate signals do not duplicate PRs;
-  caps and cooldowns hold.
+- An induced signal wakes the agent within one tick interval and
+  yields a numbers-backed decision. *(Amended 2026-08-02: the
+  original "produces a PR" wording assumed induced load could outrun
+  the ceiling — but the GPU tops out below KEDA's aggregate target,
+  and the agent correctly identifies synthetic load; three
+  adversarial attempts produced three reasoned declines, which is
+  the stronger property. The PR path is separately proven — PR #7,
+  issues #6/#8. Guards are script-enforced and unit-tested; the
+  cooldown was exercised via its documented override knob during
+  drills.)*
 - The owner approves and merges in GitHub as themselves; ArgoCD
   applies; no bot merge, no auto-merge anywhere.
 - Lifeline drill passed: a tick with a dead cluster survives and
   files the escalation issue; the recovery tick returns to
   heartbeat.
-- Credentials exception stated in the charter; the operator has its
-  own spend-capped Anthropic key; key files 0600.
+- Credentials exception stated in the charter; key files 0600; the
+  dedicated spend-capped Anthropic key is CARRIED as the phase's one
+  owner console action (STATUS owner list #5 — plumbing and `auth=`
+  log observability done; passes bill the owner's login until
+  minted).
 - Admin-bypass decision recorded and implemented; the 4.5 negative
   tests re-pass (422 / 405 / owner-path merges).
 - Zero Slack, MCP, SaaS, or Sentinel touchpoints in the loop
@@ -320,3 +344,15 @@ state; claims get drills).
   that became charter rule 7. Optional future: a drill marker file
   the tick prompt names, so game-day induced faults are reportable
   as such instead of inviting invented root causes.
+- 2026-08-02 (6.6 + close): the demo became the three declines — see
+  `docs/demos/mission-control-three-declines.md` for the full record.
+  Along the way: `qwen3.5:4b` joined the gateway (the local
+  bulk/canary tier, ~2× the 9b's speed; also what made the test
+  honest), `nomic-embed-text` pulled and parked for the vector
+  phase, the scale-demo burst gained a MODEL parameter, and the
+  k6-gateway-key Secret turned out to be rebuild-ephemeral (died in
+  the 2026-07-27 rebuild; re-minted from SOPS — backlogged). The
+  cheatsheet's fossil sections (Slack approvals "Phase 6+", the
+  never-built `claude-control` pod stop command, "5.5 will give you
+  a kill switch") were corrected to the platform that actually
+  exists.

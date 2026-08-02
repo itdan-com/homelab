@@ -140,23 +140,28 @@ restart CoreDNS (ask Claude). No cluster recreate needed.
 
 ---
 
-## Slack approval message — how to read a diff (Phase 6+)
+## Operator PRs — how to read a diff (live since Phase 4.5)
 
-When Claude proposes a change, you'll get a Slack message like:
-
-> 🤖 **Proposed:** Scale `openwebui` from 2 → 4 replicas.
-> Reason: 95th-percentile latency exceeded 800ms for 5 min.
-> [View diff](https://github.com/...) — [✅ Approve] [❌ Reject]
+When the operator proposes a change, **GitHub emails you** about a
+new pull request from `itdan-homelab-operator[bot]`. The body always
+leads with a plain-English summary (charter template), the diff
+follows. *(There is no Slack and no ✅ button for infra changes — a
+deliberate 2026-07-28 decision: "changes for the entire infra are too
+big to approve via a slack button, even a misclick." Slack arrives
+with Airlock, Phase 7, for people-facing tools only.)*
 
 **The 30-second decision protocol:**
-1. Click **View diff**. Look at the file path on the left.
-2. Look at the highlighted lines — `+` is added, `-` is removed.
-3. Ask yourself: **does the change match the English summary at the top?**
-   - If yes → ✅
-   - If the diff shows *more* changes than the summary mentions → ❌
-   - If you don't recognize the file path → ❌ (then ask Claude)
-4. If unsure, click ❌. ✅ is irreversible-ish (ArgoCD will apply it
-   within seconds). ❌ is free — Claude can resubmit.
+1. Open the PR. Read the **What & why** paragraph first.
+2. Click **Files changed** — `+` is added, `-` is removed.
+3. Ask yourself: **does the diff match the English summary?**
+   - If yes → Review changes → **Approve**, then **Merge**.
+   - If the diff shows *more* changes than the summary mentions →
+     close it with a comment.
+   - If you don't recognize the file path → close it and ask.
+4. If unsure, close it. Merging applies within ~1 min (ArgoCD);
+   closing is free — the operator treats a closed PR as an answer,
+   not an invitation to retry (cooldown enforced).
+5. Undo is always `git revert` of the merge — ask any session.
 
 **Common safe diffs (✅ usually fine):**
 - Single integer change: `replicas: 2` → `replicas: 4`
@@ -182,23 +187,50 @@ When Claude proposes a change, you'll get a Slack message like:
 
 ## "Claude is doing something I don't like — STOP"
 
-Phase 5.5 will give you a real kill switch. In the meantime, two
-nuclear options:
+Three layers, smallest hammer first:
 
-**Stop the control-plane Claude pod (Phase 6+):**
+**Stop the operator's scheduled ticks** (the continuous agent — it
+runs on the HOST, not in a pod):
 ```
-kubectl scale deployment/claude-control -n platform-control --replicas=0
+systemctl --user stop operator-tick.timer
 ```
+Restart later with `start`. An in-flight pass can only open PRs and
+issues anyway — nothing merges without you.
+
+**Kill all MCP capability grants** (Sentinel, live since Phase 5.5):
+open the Sentinel console (`https://localhost:8400/`, passkey) and
+press the **global kill switch** — every outstanding token dies,
+new requests are refused until you release it.
 
 **Stop the whole cluster:**
 ```
 k3d cluster stop devlab
 ```
-
 Cluster is paused; nothing in it can do anything until `k3d cluster
-start devlab`. State on the persistent volumes is preserved.
+start devlab`. State on the persistent volumes is preserved. (The
+operator survives this on purpose — that's its lifeline — but all it
+can do about it is file an issue.)
 
 ---
+
+## The operator tick (Mission Control, Phase 6)
+
+The platform watches itself every 5 minutes. A deterministic script
+checks seven envelopes (nodes, pods, ArgoCD, KEDA ceiling, token
+rate, doors, API) — green costs zero tokens; a tripped check wakes a
+headless Claude pass that may open at most one PR or issue per
+finding. Guards: 3 open PRs max, 60-min per-finding cooldown, 20
+passes/day, 15-min timeout.
+
+```
+tail -f ~/.config/homelab-operator/observations.log   # watch it live
+systemctl --user list-timers 'operator-tick*'         # is it armed?
+systemctl --user stop|start operator-tick.timer       # pause/resume
+```
+
+Tripwire table + the first-flight test record:
+`docs/demos/mission-control-three-declines.md`. Install/knobs:
+SETUP.md §1.8. Reboot note: the timer runs while WSL is up.
 
 ## Storage / disk space
 
