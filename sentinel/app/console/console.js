@@ -231,9 +231,29 @@ function renderPolicy(store) {
  * these forms — unsaved edits are the operator's.
  */
 
-const LEVELS = ['none', 'read', 'write', 'write-on-request', 'write-on-approval'];
+// Canonical values stay on the wire; humans read consequences.
+const LEVEL_LABEL = {
+  none: 'no access',
+  read: 'read',
+  'write-on-request': 'write — self-approve, timed',
+  'write-on-approval': 'write — needs approval',
+  write: 'write — always',
+};
+// Dropdown order = the owner's ladder; RANK order = permissiveness,
+// for resolving "whichever is higher" across a person's groups.
+const LEVEL_DROPDOWN = ['none', 'read', 'write-on-request',
+                        'write-on-approval', 'write'];
+const LEVEL_RANK = ['none', 'read', 'write-on-approval',
+                    'write-on-request', 'write'];
+const rank = (l) => LEVEL_RANK.indexOf(l || 'none');
+const PEOPLE_CAP = 20;
+
 let draft = null;
 let draftDirty = false;
+let activeTab = 'groups';
+let expandedGroup = null;
+let expandedPerson = null;
+let peopleQuery = '';
 
 function setGuiState(msg) {
   document.getElementById('gui-save-state').textContent = msg;
@@ -267,15 +287,6 @@ function mkSelect(values, current, onchange) {
   s.onchange = () => { onchange(s.value); markDirty(); };
   return s;
 }
-function mkCheck(labelText, checked, onchange) {
-  const lab = el('label', 'check');
-  const c = document.createElement('input');
-  c.type = 'checkbox';
-  c.checked = checked;
-  c.onchange = () => { onchange(c.checked); markDirty(); };
-  lab.append(c, el('span', null, labelText));
-  return lab;
-}
 function mkList(values, onchange, size = 44) {
   const i = document.createElement('input');
   i.size = size;
@@ -292,146 +303,424 @@ const mkX = (fn) => {
   return b;
 };
 
-function buildEditor() {
-  if (!draft) return;
+/* Resolution helpers — the GUI answers questions with EFFECTIVE access
+ * ("whichever is higher", with provenance), the way the policy itself
+ * resolves: permits are additive across a person's group closure, and
+ * hard limits (forbids) trump everything. */
+
+function groupClosure(g) {
+  const out = new Set();
+  let cur = g;
+  while (cur && !out.has(cur) && draft.groups[cur]) {
+    out.add(cur);
+    cur = draft.groups[cur].parent;
+  }
+  return out;
+}
+function personClosure(email) {
+  const out = groupClosure('all-employees');
+  for (const g of ((draft.people[email] || {}).groups || [])) {
+    for (const x of groupClosure(g)) out.add(x);
+  }
+  return out;
+}
+const cellLevel = (g, s) =>
+  ((draft.matrix.grants[g] || {})[s] || {}).level || 'none';
+function effective(closure, s) {
+  let best = { level: 'none', via: null };
+  for (const g of closure) {
+    const l = cellLevel(g, s);
+    if (rank(l) > rank(best.level)) best = { level: l, via: g };
+  }
+  return best;
+}
+const forbidsOn = (s, closure) =>
+  (draft.matrix.forbids || []).filter((r) =>
+    r.server === s && (!r.group || !closure || closure.has(r.group)));
+const membersOf = (g) =>
+  Object.keys(draft.people).filter((e) => personClosure(e).has(g)).sort();
+
+const chip = (text, cls) => el('span', `chip${cls ? ' ' + cls : ''}`, text);
+function levelChip(level, via) {
+  const c = chip(LEVEL_LABEL[level] || level, `lv-${level}`);
+  if (via && via !== 'all-employees') c.append(el('span', 'via', ` via ${via}`));
+  else if (via) c.append(el('span', 'via', ' everyone'));
+  return c;
+}
+const neverChip = (r) => chip(
+  `never ${(r.actions || ['write'])[0]}${r.tier ? ' on ' + r.tier : ''}`, 'never');
+function chipList(box, items, cap = 10) {
+  items.slice(0, cap).forEach((t) => box.append(chip(t)));
+  if (items.length > cap) box.append(chip(`+${items.length - cap} more`, 'muted'));
+  if (!items.length) box.append(el('span', 'ctx', 'nobody'));
+}
+function mkLevelSelect(current, onchange) {
+  const s = el('select');
+  for (const v of LEVEL_DROPDOWN) s.append(opt(v, LEVEL_LABEL[v]));
+  s.value = current;
+  s.onchange = () => { onchange(s.value); markDirty(); buildEditor(); };
+  return s;
+}
+function setLevel(g, s, v) {
+  if (v === 'none') {
+    if (draft.matrix.grants[g]) {
+      delete draft.matrix.grants[g][s];
+      if (!Object.keys(draft.matrix.grants[g]).length) {
+        delete draft.matrix.grants[g];
+      }
+    }
+  } else {
+    (draft.matrix.grants[g] ||= {})[s] =
+      { ...((draft.matrix.grants[g] || {})[s] || {}), level: v };
+  }
+}
+function adderRow(pane, inputs, label, fn) {
+  const row = el('div', 'acts adder');
+  const els = inputs.map(([ph, size]) => {
+    const i = document.createElement('input');
+    i.placeholder = ph; i.size = size; i.autocomplete = 'off';
+    return i;
+  });
+  const b = el('button', 'ghost', label);
+  b.onclick = () => { fn(...els.map((i) => i.value.trim())); };
+  row.append(...els, b);
+  pane.append(row);
+}
+
+/* --- lens 1: Groups — click one, see members + what it grants ------------ */
+
+function buildGroupsPane() {
+  const pane = document.getElementById('tab-groups');
+  pane.replaceChildren();
   const groups = Object.keys(draft.groups).sort();
   const servers = Object.keys(draft.servers).sort();
-
-  // The matrix, clickable: a level dropdown per (group, server) cell.
-  const me = document.getElementById('matrix-editor');
-  me.replaceChildren();
-  const table = el('table');
-  const head = el('tr');
-  head.append(el('th', null, 'group \\ server'));
-  for (const s of servers) head.append(el('th', null, s));
-  table.append(head);
   for (const g of groups) {
-    const tr = el('tr');
-    tr.append(el('th', null, g));
-    for (const s of servers) {
-      const cell = el('td');
-      const current = ((draft.matrix.grants[g] || {})[s] || {}).level || 'none';
-      cell.append(mkSelect(LEVELS, current, (v) => {
-        if (v === 'none') {
-          if (draft.matrix.grants[g]) {
-            delete draft.matrix.grants[g][s];
-            if (!Object.keys(draft.matrix.grants[g]).length) {
-              delete draft.matrix.grants[g];
-            }
-          }
-        } else {
-          (draft.matrix.grants[g] ||= {})[s] =
-            { ...((draft.matrix.grants[g] || {})[s] || {}), level: v };
+    const card = el('div', 'card' + (expandedGroup === g ? ' open' : ''));
+    const head = el('div', 'cardhead');
+    head.append(el('span', 'id', g));
+    const mem = membersOf(g);
+    head.append(el('span', 'ctx',
+      `${mem.length} member${mem.length === 1 ? '' : 's'}`));
+    if (draft.groups[g].parent) {
+      head.append(el('span', 'ctx', `inherits ${draft.groups[g].parent}`));
+    }
+    head.onclick = () => {
+      expandedGroup = expandedGroup === g ? null : g;
+      buildEditor();
+    };
+    card.append(head);
+
+    if (expandedGroup === g) {
+      const body = el('div', 'cardbody');
+      const mrow = el('div', 'prow');
+      mrow.append(el('span', 'ctx', 'members:'));
+      const mbox = el('span', 'chips');
+      chipList(mbox, mem);
+      mrow.append(mbox);
+      body.append(mrow);
+
+      if (g === 'all-employees') {
+        body.append(el('div', 'ctx', 'the birthright base — every person, always'));
+      } else {
+        const prow = el('div', 'prow');
+        prow.append(el('span', 'ctx', 'parent group:'));
+        prow.append(mkSelect(['—', ...groups.filter((x) => x !== g)],
+          draft.groups[g].parent || '—', (v) => {
+            draft.groups[g].parent = v === '—' ? null : v;
+            buildEditor();
+          }));
+        prow.append(mkX(() => {
+          delete draft.groups[g];
+          if (expandedGroup === g) expandedGroup = null;
+        }));
+        body.append(prow);
+      }
+
+      body.append(el('div', 'ctx sep', 'access this group grants:'));
+      const closure = groupClosure(g);
+      for (const s of servers) {
+        const row = el('div', 'prow');
+        row.append(el('span', 'id', s));
+        row.append(mkLevelSelect(cellLevel(g, s), (v) => setLevel(g, s, v)));
+        const eff = effective(closure, s);
+        if (eff.via && eff.via !== g && rank(eff.level) > rank(cellLevel(g, s))) {
+          row.append(chip(`${LEVEL_LABEL[eff.level]} inherited via ${eff.via}`, 'muted'));
         }
-      }));
-      tr.append(cell);
+        for (const r of forbidsOn(s, closure)) row.append(neverChip(r));
+        body.append(row);
+      }
+      card.append(body);
     }
-    table.append(tr);
+    pane.append(card);
   }
-  me.append(table);
-
-  const wi = document.getElementById('windows-input');
-  wi.value = (draft.matrix.defaults.windows || []).join(', ');
-  wi.onchange = () => {
-    draft.matrix.defaults.windows = wi.value.split(',')
-      .map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n));
+  adderRow(pane, [['new group name', 18]], 'Add group', (name) => {
+    if (!name) return;
+    draft.groups[name] ||= { parent: null };
+    expandedGroup = name;
     markDirty();
+    buildEditor();
+  });
+}
+
+/* --- lens 2: People — search, capped list, effective access ------------- */
+
+function buildPeoplePane() {
+  const pane = document.getElementById('tab-people');
+  pane.replaceChildren();
+  const srow = el('div', 'prow');
+  const search = document.createElement('input');
+  search.placeholder = 'search people…';
+  search.size = 28;
+  search.value = peopleQuery;
+  const listBox = el('div');
+  search.oninput = () => {
+    peopleQuery = search.value;
+    buildPeopleList(listBox);
   };
+  srow.append(search);
+  pane.append(srow, listBox);
+  buildPeopleList(listBox);
+  adderRow(pane, [['email', 24], ['display name', 14]], 'Add person',
+    (email, name) => {
+      email = email.toLowerCase();
+      if (!email) return;
+      draft.people[email] = {
+        ...(name ? { display_name: name } : {}), groups: [] };
+      expandedPerson = email;
+      markDirty();
+      buildEditor();
+    });
+}
 
-  // People: email · name · group membership as checkboxes.
-  const pe = document.getElementById('people-editor');
-  pe.replaceChildren();
-  for (const email of Object.keys(draft.people).sort()) {
+function buildPeopleList(listBox) {
+  listBox.replaceChildren();
+  const q = peopleQuery.trim().toLowerCase();
+  const all = Object.keys(draft.people).sort().filter((e) =>
+    !q || e.includes(q) ||
+    ((draft.people[e].display_name || '').toLowerCase().includes(q)));
+  const shown = all.slice(0, PEOPLE_CAP);
+  if (all.length > PEOPLE_CAP) {
+    listBox.append(el('div', 'ctx',
+      `showing ${shown.length} of ${all.length} — search to narrow`));
+  }
+  const servers = Object.keys(draft.servers).sort();
+  const groups = Object.keys(draft.groups).sort();
+  for (const email of shown) {
     const p = draft.people[email];
-    const row = el('div', 'prow');
-    row.append(el('span', 'id', email));
-    if (p.display_name) row.append(el('span', 't', p.display_name));
-    for (const g of groups) {
-      row.append(mkCheck(g, (p.groups || []).includes(g), (on) => {
-        const set = new Set(p.groups || []);
-        if (on) set.add(g); else set.delete(g);
-        p.groups = [...set].sort();
+    const card = el('div', 'card' + (expandedPerson === email ? ' open' : ''));
+    const head = el('div', 'cardhead');
+    head.append(el('span', 'id', email));
+    if (p.display_name) head.append(el('span', 't', p.display_name));
+    const gbox = el('span', 'chips');
+    chipList(gbox, p.groups || [], 6);
+    head.append(gbox);
+    head.onclick = () => {
+      expandedPerson = expandedPerson === email ? null : email;
+      buildEditor();
+    };
+    card.append(head);
+
+    if (expandedPerson === email) {
+      const body = el('div', 'cardbody');
+      const grow = el('div', 'prow');
+      grow.append(el('span', 'ctx', 'groups:'));
+      for (const g of (p.groups || [])) {
+        const c = chip(g);
+        const x = el('button', 'ghost x', '✕');
+        x.onclick = () => {
+          p.groups = (p.groups || []).filter((y) => y !== g);
+          markDirty();
+          buildEditor();
+        };
+        c.append(x);
+        grow.append(c);
+      }
+      const addable = groups.filter((g) =>
+        g !== 'all-employees' && !(p.groups || []).includes(g));
+      if (addable.length) {
+        grow.append(mkSelect(['add to group…', ...addable],
+          'add to group…', (v) => {
+            if (v === 'add to group…') return;
+            p.groups = [...(p.groups || []), v].sort();
+            buildEditor();
+          }));
+      }
+      grow.append(mkX(() => {
+        delete draft.people[email];
+        if (expandedPerson === email) expandedPerson = null;
       }));
-    }
-    row.append(mkX(() => delete draft.people[email]));
-    pe.append(row);
-  }
-  if (!Object.keys(draft.people).length) {
-    pe.append(el('p', 'empty', 'Nobody yet — add the first person below.'));
-  }
+      body.append(grow);
 
-  // Groups: name · parent · remove (all-employees is load-bearing).
-  const ge = document.getElementById('groups-editor');
-  ge.replaceChildren();
-  for (const name of groups) {
-    const row = el('div', 'prow');
-    row.append(el('span', 'id', name));
-    if (name === 'all-employees') {
-      row.append(el('span', 'ctx', 'birthright base — everyone, always'));
+      body.append(el('div', 'ctx sep', 'can, right now (resolved):'));
+      const closure = personClosure(email);
+      let any = false;
+      for (const s of servers) {
+        const eff = effective(closure, s);
+        const nevers = forbidsOn(s, closure);
+        if (eff.level === 'none' && !nevers.length) continue;
+        any = true;
+        const row = el('div', 'prow');
+        row.append(el('span', 'id', s));
+        if (eff.level !== 'none') row.append(levelChip(eff.level, eff.via));
+        nevers.forEach((r) => row.append(neverChip(r)));
+        body.append(row);
+      }
+      if (!any) {
+        body.append(el('div', 'ctx',
+          'no access anywhere yet — add a group above'));
+      }
+      card.append(body);
+    }
+    listBox.append(card);
+  }
+  if (!shown.length) listBox.append(el('p', 'empty', 'no people match'));
+}
+
+/* --- lens 3: Servers — tools, environments, and who can reach it --------- */
+
+function buildServersPane() {
+  const pane = document.getElementById('tab-servers');
+  pane.replaceChildren();
+  const servers = Object.keys(draft.servers).sort();
+  for (const name of servers) {
+    const spec = draft.servers[name];
+    const card = el('div', 'card open');
+    const head = el('div', 'cardhead noclick');
+    head.append(el('span', 'id', name));
+    head.append(mkX(() => delete draft.servers[name]));
+    card.append(head);
+    const body = el('div', 'cardbody');
+
+    const who = el('div', 'prow');
+    who.append(el('span', 'ctx', 'who can reach it:'));
+    const byLevel = {};
+    for (const email of Object.keys(draft.people)) {
+      const eff = effective(personClosure(email), name);
+      if (eff.level !== 'none') (byLevel[eff.level] ||= []).push(email);
+    }
+    let anyone = false;
+    for (const lvl of [...LEVEL_RANK].reverse()) {
+      const ppl = byLevel[lvl];
+      if (!ppl) continue;
+      anyone = true;
+      const c = chip(`${LEVEL_LABEL[lvl]}: ${ppl.slice(0, 3).join(', ')}` +
+                     (ppl.length > 3 ? ` +${ppl.length - 3}` : ''), `lv-${lvl}`);
+      who.append(c);
+    }
+    if (!anyone) who.append(el('span', 'ctx', 'nobody — assign it in Groups'));
+    body.append(who);
+
+    const r1 = el('div', 'prow');
+    r1.append(el('span', 'ctx', 'read tools:'),
+              mkList(spec.read, (v) => { spec.read = v; }));
+    const r2 = el('div', 'prow');
+    r2.append(el('span', 'ctx', 'write tools:'),
+              mkList(spec.write, (v) => { spec.write = v; }));
+    body.append(r1, r2);
+
+    if (spec.resource) {
+      const tiers = Object.keys((spec.resource || {}).tiers || {});
+      body.append(el('div', 'ctx',
+        `environments: ${tiers.join(', ') || '—'} — rules can treat these ` +
+        'differently (e.g. "never write on prod"). The mapping itself is ' +
+        'per-server config, editable in Advanced.'));
     } else {
-      row.append(el('span', 'ctx', 'parent:'));
-      row.append(mkSelect(['—', ...groups.filter((g) => g !== name)],
-        draft.groups[name].parent || '—',
-        (v) => { draft.groups[name].parent = v === '—' ? null : v; }));
-      row.append(mkX(() => delete draft.groups[name]));
+      body.append(el('div', 'ctx',
+        'no environments configured — every call on this server is treated ' +
+        'the same (fine for simple servers).'));
     }
-    ge.append(row);
+    card.append(body);
+    pane.append(card);
   }
+  adderRow(pane, [['new server name', 18]], 'Add server', (name) => {
+    if (!name) return;
+    draft.servers[name] ||= { read: ['rpc.*'], write: [] };
+    markDirty();
+    buildEditor();
+  });
+}
 
-  // Forbids: "no <action> on <server> tier <t>" as dropdowns.
-  const fe = document.getElementById('forbids-editor');
-  fe.replaceChildren();
-  draft.matrix.forbids.forEach((rule, i) => {
+/* --- lens 4: Limits & windows -------------------------------------------- */
+
+function buildLimitsPane() {
+  const pane = document.getElementById('tab-limits');
+  pane.replaceChildren();
+  const servers = Object.keys(draft.servers).sort();
+
+  pane.append(el('div', 'ctx',
+    'Never allow — hard limits no window, approval, or grant can cross. ' +
+    'These beat everything above them.'));
+  const fbox = el('div');
+  (draft.matrix.forbids || []).forEach((rule, i) => {
     const row = el('div', 'prow');
-    row.append(el('span', 'ctx', 'no'));
+    row.append(el('span', 'ctx', 'never'));
     row.append(mkSelect(['write', 'read'], (rule.actions || ['write'])[0],
       (v) => { rule.actions = [v]; }));
     row.append(el('span', 'ctx', 'on'));
     row.append(mkSelect(servers, rule.server, (v) => { rule.server = v; }));
-    row.append(el('span', 'ctx', 'tier'));
+    row.append(el('span', 'ctx', 'environment'));
     const t = document.createElement('input');
     t.size = 10;
     t.value = rule.tier || '';
-    t.placeholder = 'any tier';
+    t.placeholder = 'any';
     t.onchange = () => {
       if (t.value.trim()) rule.tier = t.value.trim(); else delete rule.tier;
       markDirty();
     };
     row.append(t);
     row.append(mkX(() => draft.matrix.forbids.splice(i, 1)));
-    fe.append(row);
+    fbox.append(row);
   });
-  const addF = el('button', 'ghost', 'Add forbid');
+  pane.append(fbox);
+  const addF = el('button', 'ghost', 'Add hard limit');
   addF.onclick = () => {
     if (!servers.length || !draft) return;
     draft.matrix.forbids.push({ server: servers[0], actions: ['write'] });
     markDirty();
     buildEditor();
   };
-  fe.append(addF);
+  pane.append(addF);
 
-  // Servers: the read/write tool classes, editable in place.
-  const se = document.getElementById('servers-editor');
-  se.replaceChildren();
-  for (const name of servers) {
-    const spec = draft.servers[name];
-    const box = el('div', 'srow');
-    const h = el('div', 'prow');
-    h.append(el('span', 'id', name));
-    if (spec.resource) {
-      h.append(el('span', 'ctx',
-        `tiers: ${Object.keys((spec.resource || {}).tiers || {}).join(', ') || '—'}`
-        + ' — edit the map in Advanced'));
-    }
-    h.append(mkX(() => delete draft.servers[name]));
-    box.append(h);
-    const r1 = el('div', 'prow');
-    r1.append(el('span', 'ctx', 'read:'), mkList(spec.read, (v) => { spec.read = v; }));
-    const r2 = el('div', 'prow');
-    r2.append(el('span', 'ctx', 'write:'), mkList(spec.write, (v) => { spec.write = v; }));
-    box.append(r1, r2);
-    se.append(box);
-  }
+  pane.append(el('div', 'ctx sep',
+    'Borrow windows — the durations offered when someone self-approves ' +
+    'timed write access.'));
+  const wrow = el('div', 'prow');
+  (draft.matrix.defaults.windows || []).forEach((w, i) => {
+    const c = chip(w >= 60 ? `${w / 60} h` : `${w} min`);
+    const x = el('button', 'ghost x', '✕');
+    x.onclick = () => {
+      draft.matrix.defaults.windows.splice(i, 1);
+      markDirty();
+      buildEditor();
+    };
+    c.append(x);
+    wrow.append(c);
+  });
+  const wi = document.createElement('input');
+  wi.type = 'number';
+  wi.min = '1';
+  wi.placeholder = 'minutes';
+  wi.style.width = '6rem';
+  const addW = el('button', 'ghost', 'Add window');
+  addW.onclick = () => {
+    const n = parseInt(wi.value, 10);
+    if (!Number.isFinite(n) || n <= 0) return;
+    const ws = draft.matrix.defaults.windows;
+    if (!ws.includes(n)) ws.push(n);
+    ws.sort((a, b) => a - b);
+    markDirty();
+    buildEditor();
+  };
+  wrow.append(wi, addW);
+  pane.append(wrow);
+}
+
+function buildEditor() {
+  if (!draft) return;
+  buildGroupsPane();
+  buildPeoplePane();
+  buildServersPane();
+  buildLimitsPane();
 }
 
 function renderGuiErrors(errs) {
@@ -440,32 +729,16 @@ function renderGuiErrors(errs) {
   for (const e of errs || []) box.append(el('div', null, `✗ ${e}`));
 }
 
-document.getElementById('add-person').onclick = () => {
-  const email = document.getElementById('add-person-email').value.trim().toLowerCase();
-  const name = document.getElementById('add-person-name').value.trim();
-  if (!email || !draft) return;
-  draft.people[email] = { ...(name ? { display_name: name } : {}), groups: [] };
-  document.getElementById('add-person-email').value = '';
-  document.getElementById('add-person-name').value = '';
-  markDirty();
-  buildEditor();
-};
-document.getElementById('add-group').onclick = () => {
-  const name = document.getElementById('add-group-name').value.trim();
-  if (!name || !draft) return;
-  draft.groups[name] ||= { parent: null };
-  document.getElementById('add-group-name').value = '';
-  markDirty();
-  buildEditor();
-};
-document.getElementById('add-server').onclick = () => {
-  const name = document.getElementById('add-server-name').value.trim();
-  if (!name || !draft) return;
-  // rpc.* by default: an assigned server should at least handshake.
-  draft.servers[name] ||= { read: ['rpc.*'], write: [] };
-  document.getElementById('add-server-name').value = '';
-  markDirty();
-  buildEditor();
+document.getElementById('access-tabs').onclick = (ev) => {
+  const b = ev.target.closest('button.tab');
+  if (!b) return;
+  activeTab = b.dataset.tab;
+  for (const t of document.querySelectorAll('#access-tabs .tab')) {
+    t.classList.toggle('on', t === b);
+  }
+  for (const p of document.querySelectorAll('.tabpane')) {
+    p.classList.toggle('hidden', p.id !== `tab-${activeTab}`);
+  }
 };
 document.getElementById('gui-save').onclick = async () => {
   if (!draft) return;

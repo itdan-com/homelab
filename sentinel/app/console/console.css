@@ -210,3 +210,25 @@ button.x { padding: 0 .45rem; margin-left: auto; }
 .adder { margin: .3rem 0 .9rem; }
 h3.sub { margin: 1rem 0 .3rem; font-size: .9rem; }
 h3.sub .ctx { font-weight: normal; font-size: .74rem; opacity: .7; margin-left: .5rem; }
+
+/* --- v2 lenses: tabs, cards, chips (7.2.6 iteration 2) ------------------- */
+.tabs { display: flex; gap: .4rem; margin: .6rem 0 .4rem; }
+.tabs .tab { opacity: .55; border-bottom: 2px solid transparent; border-radius: 0; }
+.tabs .tab.on { opacity: 1; font-weight: 600; border-bottom-color: currentColor; }
+.card { border: 1px solid rgba(128,128,128,.3); border-radius: 6px; margin: .35rem 0; }
+.cardhead { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap;
+  padding: .4rem .6rem; cursor: pointer; }
+.cardhead.noclick { cursor: default; }
+.card.open > .cardhead { border-bottom: 1px solid rgba(128,128,128,.2); }
+.cardbody { padding: .35rem .6rem .6rem; }
+.chip { display: inline-flex; align-items: center; gap: .2rem;
+  border: 1px solid rgba(128,128,128,.45); border-radius: 999px;
+  padding: .05rem .55rem; font-size: .74rem; margin: .1rem .15rem; }
+.chip.lv-write, .chip.lv-write-on-approval { font-weight: 600; }
+.chip.lv-write-on-request, .chip.lv-write-on-approval { font-style: italic; }
+.chip.never { border-style: dashed; opacity: .85; }
+.chip.muted { opacity: .55; border-style: dashed; }
+.chip .via { opacity: .6; font-size: .66rem; font-style: normal; font-weight: 400; }
+.chip button.x { padding: 0 .2rem; font-size: .7rem; margin-left: .1rem; }
+.ctx.sep { margin-top: .6rem; display: block; }
+.chips { display: inline; }

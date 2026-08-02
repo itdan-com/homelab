@@ -87,38 +87,16 @@
       <div id="policy-status" class="ctx"></div>
 
       <div id="gui-editor" class="hidden">
-        <h3 class="sub">Access matrix
-          <span class="ctx">who may do what, where — every write level implies read</span></h3>
-        <div id="matrix-editor"></div>
-        <div class="acts"><label class="ctx">elevation windows (minutes):&nbsp;
-          <input id="windows-input" size="14"></label></div>
-
-        <h3 class="sub">People</h3>
-        <div id="people-editor"></div>
-        <div class="acts adder">
-          <input id="add-person-email" placeholder="email" size="24" autocomplete="off">
-          <input id="add-person-name" placeholder="display name" size="14" autocomplete="off">
-          <button id="add-person" class="ghost">Add person</button>
+        <div class="tabs" id="access-tabs">
+          <button data-tab="groups" class="tab on">Groups</button>
+          <button data-tab="people" class="tab">People</button>
+          <button data-tab="servers" class="tab">Servers &amp; tools</button>
+          <button data-tab="limits" class="tab">Limits &amp; windows</button>
         </div>
-
-        <h3 class="sub">Groups</h3>
-        <div id="groups-editor"></div>
-        <div class="acts adder">
-          <input id="add-group-name" placeholder="group name" size="18" autocomplete="off">
-          <button id="add-group" class="ghost">Add group</button>
-        </div>
-
-        <h3 class="sub">Forbids
-          <span class="ctx">no button, ever — trumps every level and every window</span></h3>
-        <div id="forbids-editor"></div>
-
-        <h3 class="sub">Servers &amp; tools
-          <span class="ctx">read/write classes; tiers &amp; resource maps live in Advanced</span></h3>
-        <div id="servers-editor"></div>
-        <div class="acts adder">
-          <input id="add-server-name" placeholder="server name" size="18" autocomplete="off">
-          <button id="add-server" class="ghost">Add server</button>
-        </div>
+        <div id="tab-groups" class="tabpane"></div>
+        <div id="tab-people" class="tabpane hidden"></div>
+        <div id="tab-servers" class="tabpane hidden"></div>
+        <div id="tab-limits" class="tabpane hidden"></div>
 
         <div class="acts">
           <button id="gui-save" class="grant">Save &amp; activate</button>
