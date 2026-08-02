@@ -27,6 +27,7 @@ from .models import (
     CapabilityRequest,
     Flow,
     KillState,
+    Principal,
     RequestStatus,
     utcnow,
 )
@@ -44,9 +45,13 @@ def audit(
     tool: str | None = None,
     actor: str | None = None,
     details: dict | None = None,
+    principal: str | None = None,
+    resource: str | None = None,
+    policy_version: str | None = None,
 ) -> None:
     s.add(AuditEvent(event_type=event_type, flow_id=flow_id, tool=tool,
-                     actor=actor, details=details))
+                     actor=actor, details=details, principal=principal,
+                     resource=resource, policy_version=policy_version))
 
 
 # --- kill switch --------------------------------------------------------------
@@ -237,6 +242,16 @@ def deny_request(
 
 # --- the hot path -------------------------------------------------------------
 
+def _grant_covers(grant: CapabilityGrant, tool: str) -> bool:
+    """Single-tool grants match exactly; profile grants (7.2.1) match
+    membership in the tool-set SNAPSHOT taken at mint time. The live
+    policy store is deliberately not consulted here — a profile edit
+    after mint must never widen a grant already in the wild."""
+    if grant.tools_json:
+        return tool in grant.tools_json
+    return grant.tool == tool
+
+
 def check_capability(
     s: Session, token: str, tool: str, flow_id: str
 ) -> tuple[bool, str, CapabilityGrant | None]:
@@ -256,7 +271,13 @@ def check_capability(
     reason = None
     if grant is None:
         reason = "unknown-token"
-    elif grant.tool != tool or grant.flow_id != flow_id:
+    elif grant.flow_id is None:
+        # Principal-bound profile grants carry no flow binding; their
+        # door — the 7.3 gateway path that authenticates the PERSON —
+        # does not exist yet. On this flow-header path they are out of
+        # scope by definition: deny closed, never "not yet checked".
+        reason = "scope-mismatch"
+    elif grant.flow_id != flow_id or not _grant_covers(grant, tool):
         reason = "scope-mismatch"
     elif grant.revoked_at is not None:
         reason = "revoked"
@@ -271,6 +292,141 @@ def check_capability(
         return False, reason, None
 
     audit(s, AuditEventType.USE, flow_id=flow_id, tool=tool,
-          details={"grant_id": grant.id})
+          principal=grant.principal.email if grant.principal_id else None,
+          details={"grant_id": grant.id,
+                   **({"profile": grant.profile} if grant.profile else {})})
     s.commit()
     return True, "ok", grant
+
+
+# --- revocation & profiles (7.2.1, ADR-005) -----------------------------------
+
+def revoke_grant(
+    s: Session, grant: CapabilityGrant, by: str, reason: str | None = None,
+    cause: str = "manual",
+) -> CapabilityGrant:
+    """Per-grant revoke — ADR-004 debt 4's middle ground: between "wait
+    for expiry" and "kill everything" there was nothing, which made the
+    kill switch the only tool and therefore one operators hesitate to
+    use. Revoking a dead grant is a ValueError, not a no-op — an
+    operator reaching for this button deserves to know it did nothing."""
+    now = utcnow()
+    if grant.revoked_at is not None:
+        raise ValueError("grant already revoked")
+    if now >= grant.expires_at:
+        raise ValueError("grant already expired")
+    grant.revoked_at = now
+    audit(s, AuditEventType.REVOCATION, flow_id=grant.flow_id, tool=grant.tool,
+          actor=by,
+          principal=grant.principal.email if grant.principal_id else None,
+          details={"cause": cause, "grant_id": grant.id, "reason": reason,
+                   **({"profile": grant.profile} if grant.profile else {})})
+    s.commit()
+    return grant
+
+
+def revoke_flow(s: Session, flow_id: str, by: str, reason: str | None = None) -> int:
+    """Revoke every live grant of one flow (ADR-004 debt 4). Returns
+    the count; zero is a valid answer, not an error — "make sure this
+    flow holds nothing" is a legitimate wish for a flow that already
+    holds nothing."""
+    now = utcnow()
+    live = s.scalars(
+        select(CapabilityGrant).where(
+            CapabilityGrant.flow_id == flow_id,
+            CapabilityGrant.revoked_at.is_(None),
+            CapabilityGrant.expires_at > now,
+        )
+    ).all()
+    for g in live:
+        g.revoked_at = now
+        audit(s, AuditEventType.REVOCATION, flow_id=flow_id, tool=g.tool,
+              actor=by, details={"cause": "flow-revoke", "grant_id": g.id,
+                                 "reason": reason})
+    s.commit()
+    return len(live)
+
+
+def mint_profile_grant(
+    s: Session, *, profile: str, tools: list[str], window_minutes: int,
+    granted_by: str, granted_via: str, principal: Principal | None = None,
+    flow_id: str | None = None,
+) -> tuple[CapabilityGrant, str]:
+    """The elevation primitive (ADR-005 Decision 6): a SET of tools for
+    a WINDOW, hung on a person. `tools` is SNAPSHOTTED into the grant —
+    a policy-store edit after mint changes nothing for grants already
+    in the wild.
+
+    Returns (grant, plaintext token). The confirm/approve doors (7.3)
+    deliver the token over the caller's own authenticated channel, so
+    there is no claim-once poll dance on this path; the API layer that
+    calls this must never log the token."""
+    if kill_state(s).engaged:
+        raise ValueError("kill switch engaged — no new grants")
+    if not tools:
+        raise ValueError("profile grant needs a non-empty tool set")
+    token = TOKEN_PREFIX + secrets.token_urlsafe(32)
+    grant = CapabilityGrant(
+        flow_id=flow_id,
+        principal_id=principal.id if principal else None,
+        tool=f"profile:{profile}", profile=profile, tools_json=list(tools),
+        granted_via=granted_via, token_hash=_hash(token),
+        expires_at=utcnow() + timedelta(minutes=window_minutes),
+        granted_by=granted_by,
+    )
+    s.add(grant)
+    s.flush()
+    audit(s, AuditEventType.GRANT, flow_id=flow_id, tool=f"profile:{profile}",
+          actor=granted_by,
+          principal=principal.email if principal else None,
+          details={"grant_id": grant.id, "profile": profile,
+                   "tools": list(tools), "window_minutes": window_minutes,
+                   "via": granted_via})
+    s.commit()
+    return grant, token
+
+
+def get_or_create_principal(
+    s: Session, *, email: str, idp_sub: str | None = None,
+    display_name: str | None = None,
+) -> Principal:
+    """Identity-ledger upsert with TOFU subject pinning (ADR-005 D2).
+
+    First sight creates the row (audited — no state without a paper
+    trail). The first token that carries an IdP `sub` pins it; any
+    later token with the same email and a DIFFERENT sub is refused and
+    audited as an anomaly — the cheap defense against an IdP re-issuing
+    an address to a new hire. Disabled principals are refused the same
+    way: the ledger answers "who", and a disabled who is still a no."""
+    email = email.strip().lower()
+    p = s.scalars(select(Principal).where(Principal.email == email)).first()
+    now = utcnow()
+    if p is None:
+        p = Principal(email=email, idp_sub=idp_sub,
+                      display_name=display_name, last_seen_at=now)
+        s.add(p)
+        s.flush()
+        audit(s, AuditEventType.CREDENTIAL_ADDED, principal=email,
+              details={"kind": "principal", "sub_pinned": idp_sub is not None})
+        s.commit()
+        return p
+    if p.disabled_at is not None:
+        audit(s, AuditEventType.AUTH_FAILURE, principal=email,
+              details={"anomaly": "principal-disabled"})
+        s.commit()
+        raise ValueError("principal-disabled")
+    if idp_sub is not None:
+        if p.idp_sub is None:
+            p.idp_sub = idp_sub
+            audit(s, AuditEventType.CREDENTIAL_ADDED, principal=email,
+                  details={"kind": "principal-sub-pin"})
+        elif p.idp_sub != idp_sub:
+            audit(s, AuditEventType.AUTH_FAILURE, principal=email,
+                  details={"anomaly": "idp-sub-mismatch"})
+            s.commit()
+            raise ValueError("idp-sub-mismatch")
+    if display_name and p.display_name != display_name:
+        p.display_name = display_name
+    p.last_seen_at = now
+    s.commit()
+    return p

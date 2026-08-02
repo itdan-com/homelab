@@ -41,6 +41,32 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
+class Principal(Base):
+    """A PERSON, as Airlock knows one (7.2.1, ADR-005 Decision 2).
+
+    This is the runtime identity LEDGER, not the authorization source:
+    WHO a principal is (email, the TOFU-pinned IdP subject) lives here;
+    what their groups entitle lives in the policy store the console
+    edits (ADR-005 Decision 5). The DB never answers "may they" — only
+    "who was it". Rows are created on first authenticated contact and
+    never deleted (they anchor grants and audit rows); offboarding is
+    `disabled_at`, and entitlement removal is a policy-store edit."""
+
+    __tablename__ = "principals"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(128))
+    # Pinned on first sight (trust-on-first-use). A later token carrying
+    # the same email with a DIFFERENT subject is a named anomaly and a
+    # refusal, not a silent re-bind — the cheap defense against an IdP
+    # re-issuing an address to a new hire (ADR-005 Decision 2).
+    idp_sub: Mapped[str | None] = mapped_column(String(255), unique=True)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class Flow(Base):
     """One Claude task. Created at first /capability-request for an
     unseen flow-id; `ended_at` closes it (flows end, rows never delete —
@@ -56,30 +82,56 @@ class Flow(Base):
     # classes (it's the table registry) — the COLUMN keeps the phase
     # doc's name.
     meta: Mapped[dict | None] = mapped_column("metadata", JSON)
+    # 7.2.1 (ADR-004 debt 1): whose task this is. NULL = the
+    # pre-multi-user domain — in-cluster agent callers behind mTLS,
+    # where the flow-id namespace is effectively single-tenant.
+    # Person-flows (7.3's gateway door) always carry a principal, and
+    # their flow ids are GATEWAY-MINTED — which is what retires the
+    # "two users' flow-1 collide" debt without re-keying this table:
+    # client-chosen ids only ever existed in the single-tenant domain.
+    principal_id: Mapped[str | None] = mapped_column(
+        ForeignKey("principals.id"), index=True
+    )
 
     grants: Mapped[list["CapabilityGrant"]] = relationship(back_populates="flow")
 
 
 class CapabilityGrant(Base):
-    """A human's yes: one tool, one flow, one expiry. Scope-locked by
-    construction — /capability-check matches tool AND flow_id AND
-    token hash, so a token can never be replayed across flows or
-    tools."""
+    """A yes: one tool — or, since 7.2.1, a PROFILE (a named tool-set
+    snapshot) — for one window. Scope-locked by construction:
+    /capability-check matches token hash AND flow AND tool coverage,
+    so a token can never be replayed across flows or outside its set.
+
+    Profile grants (ADR-005 Decision 6): `profile` names the set,
+    `tools_json` SNAPSHOTS the member tools at mint time — a later
+    policy-store edit must not retroactively widen a live grant —
+    and `tool` holds the sentinel value `profile:<name>` (kept NOT
+    NULL so nothing downstream learns a new None case). `granted_via`
+    records the door: admin (console card), confirm (self-elevation),
+    approve (a different human) — the ADR-005 carve, visible per row."""
 
     __tablename__ = "capability_grants"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
-    flow_id: Mapped[str] = mapped_column(
-        ForeignKey("flows.id"), index=True
-    )  # real FK: grants exist only for registered flows
+    # NULL for principal-bound profile grants (their door is 7.3);
+    # every per-flow grant sets it, and the check path denies a
+    # flow-less grant outright until the person-door exists.
+    flow_id: Mapped[str | None] = mapped_column(ForeignKey("flows.id"), index=True)
+    principal_id: Mapped[str | None] = mapped_column(
+        ForeignKey("principals.id"), index=True
+    )
     tool: Mapped[str] = mapped_column(String(128))
+    profile: Mapped[str | None] = mapped_column(String(64))
+    tools_json: Mapped[list | None] = mapped_column(JSON)
+    granted_via: Mapped[str] = mapped_column(String(16), default="admin")
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     granted_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     granted_by: Mapped[str] = mapped_column(String(128))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    flow: Mapped[Flow] = relationship(back_populates="grants")
+    flow: Mapped[Flow | None] = relationship(back_populates="grants")
+    principal: Mapped[Principal | None] = relationship()
 
 
 class RequestStatus(StrEnum):
@@ -139,6 +191,14 @@ class CapabilityRequest(Base):
     # clicked Grant took the token. Nullable only because rows predating
     # 5.5.5 have none (all long resolved).
     claim_nonce_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    # 7.2.1: elevation requests (the Airlock doors, 7.3) name a PROFILE
+    # and a WINDOW instead of a single tool; the person asking rides
+    # principal_id. All nullable — agent-flow requests predate them.
+    principal_id: Mapped[str | None] = mapped_column(
+        ForeignKey("principals.id"), index=True
+    )
+    profile: Mapped[str | None] = mapped_column(String(64))
+    window_minutes: Mapped[int | None] = mapped_column()
 
     flow: Mapped[Flow] = relationship()
     grant: Mapped["CapabilityGrant | None"] = relationship()
@@ -209,6 +269,14 @@ class AuditEvent(Base):
     tool: Mapped[str | None] = mapped_column(String(128))
     actor: Mapped[str | None] = mapped_column(String(128))
     details: Mapped[dict | None] = mapped_column(JSON)
+    # 7.2.1 (ADR-005 Decision 3): who / on what / under which policy.
+    # Plain strings like everything else here — the audit log records
+    # garbage too, so no FKs. `principal` is the email as presented;
+    # `resource` arrives with the Cedar work (7.2.3); `policy_version`
+    # stamps the policy-store version that decided the row.
+    principal: Mapped[str | None] = mapped_column(String(254), index=True)
+    resource: Mapped[str | None] = mapped_column(String(255))
+    policy_version: Mapped[str | None] = mapped_column(String(64))
 
 
 # --- human auth (5.5.6) -------------------------------------------------------

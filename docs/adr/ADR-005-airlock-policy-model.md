@@ -1,11 +1,13 @@
 # ADR-005: Airlock's policy model — Cedar, identity, resources, and the elevation gate
 
-**Status:** **Proposed** 2026-08-02 (Phase 7.1); **amended twice same
-day on owner review** — (1) policy authoring moved from human PRs to
-the Sentinel console (Decision 5), git demoted from authoring surface
-to automatic memory; (2) the access matrix gained its high-risk rung,
-`write-on-approval`, riding 5.5's console grant flow (Decisions 5/6).
-Needs owner acceptance before 7.2 (schema + policy engine) begins.
+**Status:** **ACCEPTED** by the owner 2026-08-02 (same day as
+Proposed; amended twice during their review first — (1) policy
+authoring moved from human PRs to the Sentinel console, git demoted
+from authoring surface to automatic memory (Decision 5); (2) the
+access matrix gained its high-risk rung, `write-on-approval`, riding
+5.5's console grant flow (Decisions 5/6)). Acceptance covers the
+ADR-004 amendment (the carve); ADR-004's own status is a separate,
+still-open owner item. Binding for Phase 7.2 onward.
 **Owner input (2026-08-02):** the elevation model in their words —
 person → group → birthright; elevation is a *request that is
 auto-approved because the group already entitles it*, time-boxed

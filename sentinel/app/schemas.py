@@ -179,6 +179,45 @@ class AuditEventOut(SentinelModel):
     details: dict | None
 
 
+# --- grants & revocation (7.2.1, ADR-004 debt 4) ------------------------------
+
+class RevokeIn(AdminAction):
+    reason: str | None = Field(
+        default=None, max_length=512,
+        description="Optional; lands verbatim in the audit row.")
+
+
+class GrantRow(SentinelModel):
+    grant_id: str
+    flow_id: str | None = Field(
+        default=None, description="Absent for principal-bound profile grants.")
+    principal: str | None = Field(
+        default=None, description="Email, when the grant is person-bound (7.2+).")
+    tool: str = Field(description="The tool, or `profile:<name>` for a set.")
+    profile: str | None = None
+    tools: list[str] | None = Field(
+        default=None,
+        description="The tool-set SNAPSHOT for profile grants — what this "
+                    "grant covers, regardless of later policy edits.")
+    granted_at: datetime
+    expires_at: datetime
+    granted_by: str
+    granted_via: str = Field(description="admin | confirm | approve — which door.")
+    revoked_at: datetime | None = None
+    live: bool = Field(description="Neither revoked nor expired right now.")
+
+
+class GrantRevokeOut(SentinelModel):
+    grant_id: str
+    revoked_at: datetime
+
+
+class FlowRevokeOut(SentinelModel):
+    flow_id: str
+    grants_revoked: int = Field(
+        description="Zero is success — the flow now provably holds nothing.")
+
+
 class FlowOut(SentinelModel):
     id: str
     agent: str

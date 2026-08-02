@@ -62,11 +62,15 @@ from .schemas import (
     AuditEventOut,
     DenyIn,
     FlowOut,
+    FlowRevokeOut,
     GrantIn,
     GrantOut,
+    GrantRevokeOut,
+    GrantRow,
     KillIn,
     KillStatus,
     PendingRequest,
+    RevokeIn,
 )
 from .service import (
     deny_request,
@@ -75,6 +79,8 @@ from .service import (
     kill_state,
     refresh_status,
     release_kill,
+    revoke_flow,
+    revoke_grant,
 )
 
 CONSOLE_DIR = Path(__file__).parent / "console"
@@ -371,3 +377,84 @@ def flows(active: bool = Query(
                 continue
             out.append(row)
         return out
+
+
+# --- grants & revocation (7.2.1, ADR-004 debt 4) ------------------------------
+
+@app.get(
+    "/v1/grants",
+    response_model=list[GrantRow],
+    response_model_exclude_none=True,
+    tags=["record"],
+    summary="Grants, newest first — the revocation surface reads this",
+    dependencies=[Depends(require_operator)],
+)
+def grants(
+    live: bool = Query(default=False,
+                       description="Only grants neither revoked nor expired."),
+    flow_id: str | None = Query(default=None, description="Filter to one flow."),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    now = utcnow()
+    with SessionLocal() as s:
+        q = select(CapabilityGrant).order_by(
+            CapabilityGrant.granted_at.desc()).limit(limit)
+        if flow_id:
+            q = q.where(CapabilityGrant.flow_id == flow_id)
+        if live:
+            q = q.where(CapabilityGrant.revoked_at.is_(None),
+                        CapabilityGrant.expires_at > now)
+        return [
+            GrantRow(
+                grant_id=g.id, flow_id=g.flow_id,
+                principal=g.principal.email if g.principal_id else None,
+                tool=g.tool, profile=g.profile, tools=g.tools_json,
+                granted_at=g.granted_at, expires_at=g.expires_at,
+                granted_by=g.granted_by, granted_via=g.granted_via,
+                revoked_at=g.revoked_at,
+                live=g.revoked_at is None and g.expires_at > now,
+            )
+            for g in s.scalars(q).all()
+        ]
+
+
+@app.post(
+    "/v1/grants/{grant_id}/revoke",
+    response_model=GrantRevokeOut,
+    tags=["decisions"],
+    summary="Revoke ONE grant — the middle ground the kill switch never had",
+    dependencies=[Depends(console_guard)],
+    responses={409: {"description": "Grant already revoked or expired."}},
+)
+def revoke_one(grant_id: str, body: RevokeIn,
+               operator: str = Depends(current_operator)):
+    """ADR-004 debt 4: "stop that one thing" no longer requires nuking
+    every flow on the platform. The token's next check answers 403
+    `revoked`; nothing else is touched."""
+    with SessionLocal() as s:
+        g = s.get(CapabilityGrant, grant_id)
+        if g is None:
+            raise HTTPException(status_code=404, detail="unknown grant_id")
+        try:
+            revoke_grant(s, g, by=operator, reason=body.reason)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return GrantRevokeOut(grant_id=g.id, revoked_at=g.revoked_at)
+
+
+@app.post(
+    "/v1/flows/{flow_id}/revoke",
+    response_model=FlowRevokeOut,
+    tags=["decisions"],
+    summary="Revoke every live grant of one flow",
+    dependencies=[Depends(console_guard)],
+)
+def revoke_whole_flow(flow_id: str, body: RevokeIn,
+                      operator: str = Depends(current_operator)):
+    """Zero revoked is a success ("this flow now provably holds
+    nothing"); 404 only for a flow Sentinel has never seen at all."""
+    with SessionLocal() as s:
+        if s.get(Flow, flow_id) is None:
+            raise HTTPException(status_code=404, detail="unknown flow_id")
+        n = revoke_flow(s, flow_id, by=operator, reason=body.reason)
+        return FlowRevokeOut(flow_id=flow_id, grants_revoked=n)

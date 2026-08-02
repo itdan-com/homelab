@@ -56,6 +56,38 @@ decisions.
 5. **7.5 — The Slack MCP server.** Socket Mode (below). This is also
    where `#claude-audit` / `#claude-alerts` become real channels.
 
+## Phase 7.2 checklist (capability profiles + multi-user Sentinel)
+
+Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
+
+- [x] **7.2.1 Schema — the person arrives** (DONE 2026-08-02).
+  Migration `86c82f996509`, proven up→down→up: `principals` identity
+  ledger (email-keyed, TOFU `idp_sub` pin — mismatch refused +
+  audited; `disabled_at` offboarding), nullable `principal_id` on
+  flows/requests/grants (ADR-004 debt 1 attribution — the "flow-1
+  collides" half retired by design: person-flow ids are gateway-minted
+  in 7.3), profile grants (`profile` + `tools_json` SNAPSHOT +
+  `granted_via` admin|confirm|approve, `flow_id` now nullable with
+  flow-less grants DENY-CLOSED on today's path until 7.3's door),
+  audit `principal`/`resource`/`policy_version`, per-grant +
+  per-flow revoke (ADR-004 debt 4: service + `/v1/grants` list +
+  revoke endpoints, 409 on double-revoke). Suite 21/21 (8 new).
+- [ ] **7.2.2 Policy store + generator.** `/var/lib/sentinel/policy/`
+  (entity store, access matrix `none/read/write/write-on-request/
+  write-on-approval`, resource maps); matrix→Cedar generation
+  (`cedarpy` 4.8.7 pinned); validate→activate atomically,
+  last-good-stays-live; auto-commit each version to local git history.
+- [ ] **7.2.3 The ladder into `check_capability`.** Baseline /
+  elevated / approved context evaluations; forbid rules trump;
+  `policy_version` stamped on decision rows.
+- [ ] **7.2.4 Console Access screen.** Groups / people / matrix
+  editor; save = validate→activate→audit(diff); version list +
+  revert-to-N; revoke buttons on the grants panel.
+- [ ] **7.2.5 Proof battery + live install.** Golden matrix→Cedar
+  tests; the one-approval-per-honest-session demo (5.5.8 measured
+  six); `sudo scripts/install-systemd.sh` re-run to roll the live
+  units + migration (owner action, same as 5.5.7).
+
 ## ADR-005 must resolve — blockers from the 2026-07-28 audit
 
 Recorded before the re-cut as five. **Original #1 — "no identity can
@@ -263,3 +295,16 @@ birthright plus Decision 6's profile grants.
   Generator mapping stated in Decision 5; lab collapse (one human =
   requester ≈ approver until a second passkey enrolls) named
   honestly in Decision 6.
+- **2026-08-02 (7.2.1):** ADR-004 debt 1's "two users' flow-1
+  collide" is retired WITHOUT re-keying `flows`: under accepted
+  ADR-005, person-grants hang on the PRINCIPAL (profile × window),
+  and 7.3's gateway mints person-flow ids itself (unique by
+  construction) — client-chosen ids only ever existed in the
+  single-tenant mTLS domain. Attribution columns are what had to
+  land before rows accumulate, and did.
+- **2026-08-02 (7.2.1):** deliberately deferred: an elevation-CLOSE
+  audit event at window expiry (open is the GRANT row; expiry is
+  lazy, nothing sweeps). Decide at 7.2.4 whether the console's
+  version of "closed" (display) is enough or a lazy close-event
+  emitter is wanted. Also: `granted_via` values admin|confirm|approve
+  exist in schema now; the confirm/approve DOORS are 7.3.
