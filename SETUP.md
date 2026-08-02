@@ -213,9 +213,17 @@ random host port per cluster create. Nothing manual to do.
 ### 1.6 Sentinel — the capability broker (installs OUTSIDE the cluster)
 
 Sentinel holds the kill switch, so it deliberately does not live in the
-cluster it polices (`docs/adr/ADR-004-*`). It installs as two systemd
-services on the host. Prerequisite on Ubuntu: `sudo apt install
-python3.12-venv`.
+cluster it polices (`docs/adr/ADR-004-*`). It installs as **three**
+systemd services on the host — one per population it faces, so they
+fail independently:
+
+| unit | who reaches it | how |
+|---|---|---|
+| `sentinel-broker` | the cluster (pods, the Envoy proxy) | mTLS on Sentinel's own CA |
+| `sentinel-admin` | you, the operator | loopback + passkey; holds the kill switch |
+| `sentinel-door` | **people** with MCP clients (7.3) | TLS + company sign-in |
+
+Prerequisite on Ubuntu: `sudo apt install python3.12-venv`.
 
 ```bash
 cd sentinel
@@ -223,11 +231,27 @@ cd sentinel
 sudo ./scripts/install-systemd.sh           # everything else
 ```
 
-The second command deploys both services, trusts Sentinel's CA for your
-Windows user (so the console is a valid https origin in Edge and Chrome
-with nothing to import), and prints **one link** with an enrollment code
-in it. Open the link, register the authenticator you want to approve
-with, and the setup is finished.
+The second command deploys all three services, trusts Sentinel's CA for
+your Windows user (so the console is a valid https origin in Edge and
+Chrome with nothing to import), and prints **one link** with an
+enrollment code in it. Open the link, register the authenticator you
+want to approve with, and the setup is finished.
+
+Before it finishes it **probes the wire** — not the unit state. It
+proves the console answers https, the broker answers mTLS, the door
+answers https and publishes MCP discovery, an unauthenticated MCP call
+is refused with a pointer to sign-in, and the broker and door agree on
+the same active policy version. Any of those failing stops the install
+with the journal command to run. (`Active: running` once told the truth
+for five days while the console served plain http — hence probes.)
+
+> **If the browser says `ERR_CERT_AUTHORITY_INVALID`,** the automatic CA
+> trust did not run. It needs Windows interop, which is absent from
+> root's PATH under `sudo` — the installer falls back to
+> `/mnt/c/Windows/System32/certutil.exe` and warns loudly when even that
+> is unreachable, in which case import `/etc/sentinel/certs/ca.crt` by
+> hand (double-click it in Explorer → Install → Current User → Trusted
+> Root). **Restart the browser afterwards**; it caches the old verdict.
 
 > **Which browser.** Edge and Chrome use the Windows certificate store,
 > so they work immediately. **Firefox keeps its own store** and will not
@@ -250,6 +274,58 @@ hot-swapped underneath a running service. The same script is what
 cloud-init runs on a droplet; nothing in it is specific to this
 machine except the broker address, which it detects and writes to
 `/etc/sentinel/sentinel.env`.
+
+### 1.6b Airlock — pointing an MCP client at the door (Phase 7.3)
+
+The door is one address that fronts every MCP server. A person signs in
+with the company identity and immediately has the tools their role
+should have; consequential tools are **borrowed** for a window rather
+than held.
+
+**Two things must be true before a single tool appears**, and the second
+one surprises everyone once:
+
+1. You have a company account (Authentik) — the door federates sign-in
+   there.
+2. **Your email exists in the policy store.** Signing in proves *who*
+   you are; the policy store alone decides *what* you may do, so a
+   perfectly valid sign-in for someone the store has never heard of
+   lists **zero** tools. Add yourself on the console: **Access →
+   People → add**, with a group (`engineering` in the example store),
+   then Save & activate.
+
+Point a client at it — Claude Code, as a worked example:
+
+```bash
+claude mcp add --transport http airlock https://localhost:8402/mcp
+claude mcp login airlock          # opens the company sign-in
+```
+
+The door speaks OAuth 2.1 with PKCE and **CIMD** client identity (the
+MCP spec's replacement for dynamic registration). **Dynamic client
+registration is refused permanently** — there is no registration
+endpoint at all — so a client that cannot present a CIMD document needs
+its `client_id` in `SENTINEL_DOOR_STATIC_CLIENTS`.
+
+> **Certificate trust for the client, not just the browser.** The door
+> uses Sentinel's CA. Browsers on Windows already trust it after §1.6;
+> a Node-based CLI keeps its own trust store, so if sign-in fails with a
+> certificate error, run the client with
+> `NODE_EXTRA_CA_CERTS=/etc/sentinel/certs/ca.crt`. In cloud this
+> disappears: `mcp.<domain>` gets a publicly-trusted certificate, and
+> asking a workforce to install a root CA is how you train people to
+> click through certificate warnings.
+
+**When a tool needs elevation**, the refusal comes back with a one-time
+link. Open it, pick a window (30 / 60 / 120 minutes), confirm — and the
+tool works for that window, for you, recorded, closing by itself. High-
+risk tools instead file a request on the Sentinel console for a
+*different* person holding a passkey.
+
+> **Why a browser link and not an `elevate` tool.** A tool is callable
+> by the model. A model that can elevate itself is exactly the hole this
+> architecture exists to close, so the confirmation happens where the
+> model cannot reach: behind your company sign-in, as a click by you.
 
 ### 1.7 After a reboot: the platform is manually started
 
