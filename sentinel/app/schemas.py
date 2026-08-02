@@ -179,6 +179,43 @@ class AuditEventOut(SentinelModel):
     details: dict | None
 
 
+class PolicyStoreOut(SentinelModel):
+    active: bool
+    version: str | None = None
+    loaded_at: datetime | None = None
+    documents: dict[str, str] = Field(
+        description="Raw editor texts from disk — which is always "
+                    "last-good-or-better; a rejected save never lands.")
+    groups: dict = Field(default_factory=dict)
+    people: dict = Field(default_factory=dict)
+    matrix: dict = Field(default_factory=dict)
+    servers: list[str] = Field(default_factory=list)
+
+
+class PolicyStoreIn(AdminAction):
+    entities: str = Field(max_length=200_000)
+    matrix: str = Field(max_length=200_000)
+    servers: str = Field(max_length=200_000)
+    overlay: str = Field(default="", max_length=200_000)
+
+
+class PolicyActivateOut(SentinelModel):
+    version: str
+    previous_version: str | None = None
+
+
+class PolicyHistoryRow(SentinelModel):
+    version: str
+    actor: str
+    ts: str
+    current: bool = False
+
+
+class PolicyRevertIn(AdminAction):
+    version: str = Field(pattern=r"^[0-9a-f]{12}$",
+                         description="A version from /v1/policy/history.")
+
+
 class PolicyStatusOut(SentinelModel):
     active: bool = Field(description="False = no policy store activated; "
                                      "the person-path denies closed.")

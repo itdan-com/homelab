@@ -43,6 +43,7 @@ import hashlib
 import json
 import re
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -391,6 +392,85 @@ def activate(policy_dir: str | Path = POLICY_DIR, *,
                                servers=servers, groups=groups, people=people,
                                loaded_at=utcnow())
     return _active
+
+
+# --- console store management (7.2.4) -----------------------------------------
+
+_DOCS = {"entities": "entities.yaml", "matrix": "matrix.yaml",
+         "servers": "servers.yaml", "overlay": "overlay.cedar"}
+
+
+def store_documents(policy_dir: str | Path = POLICY_DIR) -> dict[str, str]:
+    """Raw document texts for the editors — from DISK, which is always
+    last-good-or-better (see save_and_activate). Missing files read as
+    empty so a fresh install's console shows editable blanks, not a 500."""
+    d = Path(policy_dir)
+    return {key: (d / name).read_text() if (d / name).exists() else ""
+            for key, name in _DOCS.items()}
+
+
+def save_and_activate(policy_dir: str | Path, docs: dict[str, str], *,
+                      actor: str) -> ActivePolicy:
+    """The console's save. The candidate is validated in a THROWAWAY
+    directory first — semantic checks, generation, Cedar validation —
+    and only a candidate that fully passes is written to the real
+    store and activated. A rejected save therefore never touches disk:
+    the store on disk stays last-good, so a broker restart mid-mistake
+    re-activates the good version instead of failing closed on a
+    half-saved one."""
+    with tempfile.TemporaryDirectory() as td:
+        t = Path(td)
+        for key, name in _DOCS.items():
+            (t / name).write_text(docs.get(key, ""))
+        groups, people, matrix, _servers, overlay, _ = load_store(t)
+        policies, _entities = generate(groups, people, matrix, overlay)
+        result = validate_policies(policies, _SCHEMA)
+        if not result.validation_passed:
+            raise PolicyError([f"cedar: {e}" for e in result.errors] or
+                              ["cedar: validation failed"])
+    d = Path(policy_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    for key, name in _DOCS.items():
+        (d / name).write_text(docs.get(key, ""))
+    return activate(d, actor=actor)
+
+
+_SUBJECT = re.compile(r"^policy ([0-9a-f]{12}) by (.+)$")
+
+
+def history(policy_dir: str | Path = POLICY_DIR) -> list[dict]:
+    """Activated versions, newest first, from the store's own git —
+    the memory the console renders and revert_to() restores from."""
+    d = Path(policy_dir)
+    if not (d / ".git").exists():
+        return []
+    r = _git(d, "log", "--format=%H%x1f%s%x1f%aI")
+    rows = []
+    for line in r.stdout.splitlines():
+        sha, _, rest = line.partition("\x1f")
+        subject, _, ts = rest.partition("\x1f")
+        m = _SUBJECT.match(subject)
+        if m:
+            rows.append({"sha": sha, "version": m.group(1),
+                         "actor": m.group(2), "ts": ts})
+    return rows
+
+
+def revert_to(policy_dir: str | Path, version: str, *,
+              actor: str) -> ActivePolicy:
+    """Restore version N — forward, never rewriting: the old sources
+    are checked out into the working tree and re-activated, which
+    (content-hash versioning) yields the SAME version id as a NEW
+    commit on top of history. The audit row and the git log both say
+    a restore happened; nothing is erased."""
+    d = Path(policy_dir)
+    target = next((row for row in history(d) if row["version"] == version), None)
+    if target is None:
+        raise PolicyError([f"unknown policy version {version!r}"])
+    r = _git(d, "checkout", target["sha"], "--", ".")
+    if r.returncode != 0:
+        raise PolicyError([f"restore failed: {r.stderr.strip()}"])
+    return activate(d, actor=actor)
 
 
 # --- helpers for the ladder + doors (consumed from 7.2.3 on) ------------------

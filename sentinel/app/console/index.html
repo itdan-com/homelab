@@ -82,6 +82,38 @@
       <p id="pending-empty" class="empty">Nothing is asking right now.</p>
     </section>
 
+    <section class="panel wide" id="access-panel">
+      <h2>Access <span id="policy-version" class="count">—</span></h2>
+      <div id="policy-status" class="ctx"></div>
+      <div id="matrix-view"></div>
+      <div id="people-view"></div>
+      <details id="editors">
+        <summary>Edit the store — validate-then-activate; a rejected save changes nothing</summary>
+        <label for="ta-entities">entities.yaml — people &amp; groups</label>
+        <textarea id="ta-entities" spellcheck="false"></textarea>
+        <label for="ta-matrix">matrix.yaml — who may do what, where</label>
+        <textarea id="ta-matrix" spellcheck="false"></textarea>
+        <label for="ta-servers">servers.yaml — tool classes &amp; tiers</label>
+        <textarea id="ta-servers" spellcheck="false"></textarea>
+        <label for="ta-overlay">overlay.cedar — escape hatch (expected empty)</label>
+        <textarea id="ta-overlay" spellcheck="false" class="short"></textarea>
+        <div class="acts">
+          <button id="policy-save" class="grant">Save &amp; activate</button>
+          <button id="policy-reload" class="ghost">Reload from disk</button>
+          <span id="policy-save-state" class="ctx"></span>
+        </div>
+        <div id="policy-errors" class="errors"></div>
+      </details>
+      <h2 class="sub">History</h2>
+      <div id="policy-history"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Borrowed right now <span id="grant-count" class="count">0</span></h2>
+      <div id="grants"></div>
+      <p id="grants-empty" class="empty">No live grants.</p>
+    </section>
+
     <section class="panel">
       <h2>Active flows <span id="flow-count" class="count">0</span></h2>
       <div id="flows"></div>

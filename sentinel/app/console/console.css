@@ -159,3 +159,27 @@ button.linkish {
   text-decoration: underline; font-size: 13px;
 }
 header #logout { margin-left: 8px; }
+
+/* --- access panel (7.2.4) ------------------------------------------------ */
+#matrix-view table { border-collapse: collapse; margin: .5rem 0; width: 100%; }
+#matrix-view th, #matrix-view td {
+  border: 1px solid rgba(128,128,128,.35); padding: .25rem .55rem;
+  text-align: left; font-size: .82rem;
+}
+#matrix-view td.lv-none { opacity: .35; }
+#matrix-view td.lv-write-on-request { font-style: italic; }
+#matrix-view td.lv-write-on-approval { font-weight: 600; }
+#editors { margin-top: .6rem; }
+#editors summary { cursor: pointer; font-size: .85rem; opacity: .85; }
+#editors label { display: block; font-size: .72rem; opacity: .75; margin-top: .5rem; }
+#editors textarea {
+  width: 100%; min-height: 9rem; box-sizing: border-box;
+  font-family: ui-monospace, monospace; font-size: .78rem;
+  background: inherit; color: inherit;
+  border: 1px solid rgba(128,128,128,.35); border-radius: 4px;
+  padding: .4rem;
+}
+#editors textarea.short { min-height: 3.5rem; }
+.errors { font-size: .82rem; white-space: pre-wrap; margin-top: .4rem; color: #e5484d; }
+h2.sub { margin-top: 1rem; font-size: .95rem; }
+#policy-history button, #grants button { margin-left: auto; }

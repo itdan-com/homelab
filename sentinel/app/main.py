@@ -53,12 +53,14 @@ from .config import CONSOLE_ALLOWED_HOSTS, CONSOLE_ORIGIN, FLOW_ACTIVE_MINUTES
 from .db import SessionLocal, engine
 from .models import (
     AuditEvent,
+    AuditEventType,
     CapabilityGrant,
     CapabilityRequest,
     Flow,
     RequestStatus,
     utcnow,
 )
+from .policy import PolicyError
 from .schemas import (
     AuditEventOut,
     DenyIn,
@@ -71,10 +73,16 @@ from .schemas import (
     KillIn,
     KillStatus,
     PendingRequest,
+    PolicyActivateOut,
+    PolicyHistoryRow,
+    PolicyRevertIn,
     PolicyStatusOut,
+    PolicyStoreIn,
+    PolicyStoreOut,
     RevokeIn,
 )
 from .service import (
+    audit,
     deny_request,
     engage_kill,
     grant_request,
@@ -410,6 +418,110 @@ def policy_status():
         servers=sorted(ap.servers),
         matrix_groups=sorted(ap.matrix.get("grants") or {}),
     )
+
+
+# --- the policy store: the Access screen's API (7.2.4, ADR-005 D5) ------------
+
+def _audit_policy_change(operator: str, details: dict,
+                         version: str | None = None) -> None:
+    with SessionLocal() as s:
+        audit(s, AuditEventType.POLICY_CHANGE, actor=operator,
+              policy_version=version, details=details)
+        s.commit()
+
+
+@app.get(
+    "/v1/policy/store",
+    response_model=PolicyStoreOut,
+    response_model_exclude_none=True,
+    tags=["access"],
+    summary="The store: editor texts + the parsed view the grid renders",
+    dependencies=[Depends(require_operator)],
+)
+def policy_store():
+    """Documents come from DISK (always last-good-or-better); the
+    parsed fields come from the ACTIVE policy — when nothing is
+    active, the editors still work, because editing is how a broken
+    store gets fixed."""
+    docs = policy.store_documents(policy.POLICY_DIR)
+    ap = policy.get_active()
+    if ap is None:
+        return PolicyStoreOut(active=False, documents=docs)
+    return PolicyStoreOut(
+        active=True, version=ap.version, loaded_at=ap.loaded_at,
+        documents=docs, groups=ap.groups, people=ap.people,
+        matrix=ap.matrix, servers=sorted(ap.servers),
+    )
+
+
+@app.put(
+    "/v1/policy/store",
+    response_model=PolicyActivateOut,
+    response_model_exclude_none=True,
+    tags=["access"],
+    summary="Save & activate — validate first, reject without touching disk",
+    dependencies=[Depends(console_guard)],
+    responses={422: {"description": "Rejected — every error listed; the "
+                                    "store on disk is untouched and "
+                                    "last-good keeps serving."}},
+)
+def policy_save(body: PolicyStoreIn, operator: str = Depends(current_operator)):
+    prev = policy.get_active().version if policy.get_active() else None
+    try:
+        ap = policy.save_and_activate(policy.POLICY_DIR, body.model_dump(),
+                                      actor=operator)
+    except PolicyError as e:
+        # Rejections are audited on purpose: a stream of them is
+        # somebody probing the policy surface.
+        _audit_policy_change(operator, {"result": "rejected",
+                                        "errors": e.errors[:20]})
+        raise HTTPException(status_code=422, detail=e.errors)
+    _audit_policy_change(operator, {"result": "activated",
+                                    "version": ap.version,
+                                    "previous_version": prev}, ap.version)
+    return PolicyActivateOut(version=ap.version, previous_version=prev)
+
+
+@app.get(
+    "/v1/policy/history",
+    response_model=list[PolicyHistoryRow],
+    tags=["access"],
+    summary="Activated versions, newest first (the store's own git)",
+    dependencies=[Depends(require_operator)],
+)
+def policy_history():
+    ap = policy.get_active()
+    current = ap.version if ap else None
+    return [PolicyHistoryRow(version=r["version"], actor=r["actor"],
+                             ts=r["ts"], current=r["version"] == current)
+            for r in policy.history(policy.POLICY_DIR)]
+
+
+@app.post(
+    "/v1/policy/revert",
+    response_model=PolicyActivateOut,
+    response_model_exclude_none=True,
+    tags=["access"],
+    summary="Restore version N — forward, nothing rewritten",
+    dependencies=[Depends(console_guard)],
+    responses={422: {"description": "Unknown version, or the restored "
+                                    "store no longer validates."}},
+)
+def policy_revert(body: PolicyRevertIn,
+                  operator: str = Depends(current_operator)):
+    prev = policy.get_active().version if policy.get_active() else None
+    try:
+        ap = policy.revert_to(policy.POLICY_DIR, body.version, actor=operator)
+    except PolicyError as e:
+        _audit_policy_change(operator, {"result": "rejected",
+                                        "revert_to": body.version,
+                                        "errors": e.errors[:20]})
+        raise HTTPException(status_code=422, detail=e.errors)
+    _audit_policy_change(operator, {"result": "activated",
+                                    "version": ap.version,
+                                    "previous_version": prev,
+                                    "revert_to": body.version}, ap.version)
+    return PolicyActivateOut(version=ap.version, previous_version=prev)
 
 
 # --- grants & revocation (7.2.1, ADR-004 debt 4) ------------------------------

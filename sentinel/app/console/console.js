@@ -30,7 +30,11 @@ async function api(path, opts = {}) {
   });
   if (!res.ok && opts.method) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `${res.status} ${res.statusText}`);
+    const err = new Error(
+      Array.isArray(body.detail) ? `${body.detail.length} problem(s)`
+        : (body.detail || `${res.status} ${res.statusText}`));
+    err.detail = body.detail;   // the full error list, for panels that render it
+    throw err;
   }
   if (!res.ok) throw new Error(`${res.status}`);
   return res.status === 204 ? null : res.json();
@@ -201,16 +205,173 @@ document.getElementById('release-btn').onclick = async () => {
   refresh();
 };
 
+/* --- access: the policy store (7.2.4, ADR-005 D5) -----------------------
+ * The matrix the owner described, rendered and editable. Same two rules
+ * as everything else here: textContent only (group names and emails are
+ * operator-typed, but the page that holds the kill switch takes no
+ * markup from anyone), and never overwrite the operator's unsaved edits
+ * — editors populate only on boot, explicit reload, and after a save.
+ */
+
+function renderPolicy(store) {
+  document.getElementById('policy-version').textContent =
+    store.active ? store.version : 'INACTIVE';
+  document.getElementById('policy-status').textContent = store.active
+    ? `version ${store.version} · ${store.servers.length} servers · ` +
+      `${Object.keys(store.people).length} people · activated ${ago(store.loaded_at)}`
+    : 'NO ACTIVE POLICY — the person path denies closed until a store activates.';
+
+  const mv = document.getElementById('matrix-view');
+  mv.replaceChildren();
+  if (!store.active) return;
+
+  const grants = store.matrix.grants || {};
+  const table = el('table');
+  const head = el('tr');
+  head.append(el('th', null, 'group \\ server'));
+  for (const s of store.servers) head.append(el('th', null, s));
+  table.append(head);
+  for (const g of Object.keys(grants).sort()) {
+    const tr = el('tr');
+    tr.append(el('th', null, g));
+    for (const s of store.servers) {
+      const level = ((grants[g] || {})[s] || {}).level || '—';
+      tr.append(el('td', level === '—' ? 'lv-none' : `lv-${level}`, level));
+    }
+    table.append(tr);
+  }
+  mv.append(table);
+
+  const pv = document.getElementById('people-view');
+  pv.replaceChildren();
+  for (const email of Object.keys(store.people).sort()) {
+    const row = el('div', 'row');
+    row.append(el('span', 'id', email));
+    row.append(el('span', 'tail',
+      (store.people[email].groups || []).join(', ') || 'all-employees only'));
+    pv.append(row);
+  }
+}
+
+function populateEditors(docs) {
+  for (const key of ['entities', 'matrix', 'servers', 'overlay']) {
+    document.getElementById(`ta-${key}`).value = docs[key] || '';
+  }
+}
+
+function renderPolicyErrors(errs) {
+  const box = document.getElementById('policy-errors');
+  box.replaceChildren();
+  for (const e of errs || []) box.append(el('div', null, `✗ ${e}`));
+}
+
+function renderHistory(rows) {
+  const box = document.getElementById('policy-history');
+  box.replaceChildren();
+  for (const r of rows.slice(0, 15)) {
+    const row = el('div', 'row');
+    row.append(el('code', 'id', r.version), el('span', 't', r.actor),
+               el('span', 'tail', ago(r.ts)));
+    if (r.current) {
+      row.append(el('span', 'live', 'active'));
+    } else {
+      const b = el('button', 'ghost', 'Restore');
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          await api('/v1/policy/revert', {
+            method: 'POST', body: JSON.stringify({ version: r.version }),
+          });
+          await loadAccess(true);
+          refresh();
+        } catch (e) {
+          renderPolicyErrors(e.detail || [e.message]);
+          b.disabled = false;
+        }
+      };
+      row.append(b);
+    }
+    box.append(row);
+  }
+}
+
+async function loadAccess(populate) {
+  const [store, hist] = await Promise.all([
+    api('/v1/policy/store'), api('/v1/policy/history'),
+  ]);
+  renderPolicy(store);
+  renderHistory(hist);
+  if (populate) populateEditors(store.documents);
+}
+
+document.getElementById('policy-save').onclick = async () => {
+  const state = document.getElementById('policy-save-state');
+  state.textContent = 'validating…';
+  renderPolicyErrors([]);
+  try {
+    const out = await api('/v1/policy/store', {
+      method: 'PUT',
+      body: JSON.stringify({
+        entities: document.getElementById('ta-entities').value,
+        matrix: document.getElementById('ta-matrix').value,
+        servers: document.getElementById('ta-servers').value,
+        overlay: document.getElementById('ta-overlay').value,
+      }),
+    });
+    state.textContent = `activated ${out.version}`;
+    await loadAccess(true);
+    refresh();
+  } catch (e) {
+    state.textContent = 'rejected — nothing changed';
+    renderPolicyErrors(e.detail || [e.message]);
+  }
+};
+
+document.getElementById('policy-reload').onclick = () =>
+  loadAccess(true).catch(() => {});
+
+/* --- live grants: the revocation panel (7.2.1) --------------------------- */
+
+function renderGrants(rows) {
+  const box = document.getElementById('grants');
+  box.replaceChildren();
+  document.getElementById('grant-count').textContent = rows.length;
+  document.getElementById('grants-empty').classList.toggle('hidden', rows.length > 0);
+  for (const g of rows) {
+    const row = el('div', 'row');
+    row.append(el('span', 'id', g.profile ? `${g.profile}` : g.tool));
+    row.append(el('span', 't', g.principal || (g.flow_id ? `flow ${g.flow_id}` : '—')));
+    row.append(el('span', 'tail',
+      `${g.granted_via} · by ${g.granted_by} · ${until(g.expires_at)}`));
+    const b = el('button', 'deny', 'Revoke');
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        await api(`/v1/grants/${g.grant_id}/revoke`, {
+          method: 'POST',
+          body: JSON.stringify({ reason: 'revoked at the console' }),
+        });
+      } catch (e) { /* row refreshes to truth either way */ }
+      refresh();
+    };
+    row.append(b);
+    box.append(row);
+  }
+}
+
 /* --- the poll ----------------------------------------------------------- */
+
+let accessTick = 0;
 
 async function refresh() {
   const link = document.getElementById('link');
   try {
-    const [kill, pending, flows, audit] = await Promise.all([
+    const [kill, pending, flows, audit, grants] = await Promise.all([
       api('/v1/kill'),
       api('/v1/capability-requests'),
       api('/v1/flows?active=true'),
       api('/v1/audit-events?limit=50'),
+      api('/v1/grants?live=true&limit=100'),
     ]);
     const byFlow = {};
     for (const e of audit) (byFlow[e.flow_id] ||= []).push(e);
@@ -219,6 +380,10 @@ async function refresh() {
     renderPending(pending, byFlow);
     renderFlows(flows);
     renderAudit(audit);
+    renderGrants(grants);
+    // Policy data changes rarely; poll it gently and NEVER touch the
+    // editors from the timer (unsaved edits are the operator's).
+    if (accessTick++ % 8 === 0) loadAccess(false).catch(() => {});
 
     link.className = 'link live';
     link.textContent = `live · ${new Date().toLocaleTimeString()}`;
@@ -396,6 +561,7 @@ async function boot() {
   }
   gateError('');
   await refresh();
+  await loadAccess(true).catch(() => {});
   if (!pollTimer) pollTimer = setInterval(refresh, POLL_MS);
 }
 

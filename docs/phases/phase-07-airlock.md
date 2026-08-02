@@ -109,9 +109,26 @@ Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.
   even to `initialize`, kill beats policy, store-unknown person =
   forbid regardless of DB. Suite 42/42 (9 new). No HTTP route yet —
   that is 7.3's door, by design.
-- [ ] **7.2.4 Console Access screen.** Groups / people / matrix
-  editor; save = validate→activate→audit(diff); version list +
-  revert-to-N; revoke buttons on the grants panel.
+- [x] **7.2.4 Console Access screen** (DONE 2026-08-02). New
+  `policy_change` audit type (migration `f41d02a9c8b3` — fourth
+  hand-widened CHECK; rejections audited on purpose: a stream of them
+  is somebody probing the policy surface). Store API on the admin
+  listener: GET store (editor texts from disk + parsed view), **PUT
+  save-and-activate with the load-bearing property that a rejected
+  save never touches disk** (candidate validated in a throwaway dir
+  first — tested), GET history (the store's git), POST revert
+  (forward restore; content-hash brings the SAME version id back as a
+  NEW commit — tested: 3 commits, nothing rewritten). Console UI:
+  rendered matrix grid + people list, four textarea editors with
+  every-error display, Save & Activate / Reload, history rows with
+  Restore buttons, and a "Borrowed right now" panel with per-grant
+  **Revoke** buttons; editors never repopulate from the poll (unsaved
+  edits are the operator's). Suite 45/45; JS syntax verified (node in
+  a throwaway container — no node on host). **Deferred as polish:** a
+  clickable cell editor (dropdown grid) — textareas + rendered grid +
+  full validation loop is the MVP; **owner has not yet SEEN the
+  screen** — browser look rides 7.2.5's install (same note 5.5.5
+  carried).
 - [ ] **7.2.5 Proof battery + live install.** Golden matrix→Cedar
   tests; the one-approval-per-honest-session demo (5.5.8 measured
   six); `sudo scripts/install-systemd.sh` re-run to roll the live
@@ -339,6 +356,20 @@ birthright plus Decision 6's profile grants.
   live. Also: `profile_tools` may return `rpc.*` prefix entries in a
   grant snapshot, so `_grant_covers` needs prefix awareness when
   7.2.3 wires profiles to the checker (recorded so it isn't missed).
+- **2026-08-02 (owner question, noted for 7.3 — auth compatibility
+  posture):** the door speaks what MCP clients speak and nothing
+  more: **OAuth 2.1 + PKCE** (auth-code flow) via Authentik,
+  discovery via RFC 8414/OIDC, client registration static or CIMD
+  (DCR deprecated upstream — not chased). **Legacy OAuth 2.0 flows
+  (implicit, password) are deliberately unsupported** — OAuth 2.1
+  removed them, no MCP client needs them, supporting them is pure
+  attack surface. **"STS"/token exchange (RFC 8693) is exactly the
+  ID-JAG/XAA wire** — ADR-005 D9: not built in Phase 7, arrives with
+  the external-IdP move; cloud-specific STS (AWS AssumeRole etc.)
+  would be a layer-1 upstream-credential concern of a specific MCP
+  server, never a gateway feature. Any MCP server slots in via
+  catalog chart + `servers.yaml` classification, each bringing its
+  own layer-1 credential shape (PAT, xoxb, OAuth, …).
 - **2026-08-02 (7.2.1):** deliberately deferred: an elevation-CLOSE
   audit event at window expiry (open is the GRANT row; expiry is
   lazy, nothing sweeps). Decide at 7.2.4 whether the console's

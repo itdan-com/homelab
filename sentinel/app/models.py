@@ -243,6 +243,13 @@ class AuditEventType(StrEnum):
     # and a grant that was never claimed looks identical to one that
     # was, which is the wrong thing to be unsure about after an incident.
     CLAIM = "claim"
+    # 7.2.4: a policy-store activation attempt — result `activated` or
+    # `rejected` in details. Rejections are recorded on purpose: a
+    # stream of rejected saves is somebody probing the policy surface,
+    # and that is exactly what the record exists to show. The DIFF is
+    # deliberately not in the row — the store's own git history holds
+    # it, keyed by the versions this row names.
+    POLICY_CHANGE = "policy_change"
 
 
 class AuditEvent(Base):
