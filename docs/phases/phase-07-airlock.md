@@ -236,11 +236,23 @@ source of the token changes. That is the concrete shape of ADR-005
 D9'''s XAA line, and upstream closed #2224 saying they will support
 XAA/ID-JAG when the spec does.
 
-**Open decision for the build:** GitHub'''s maintainers note the shared
-HTTP process was never hardened for many-user use (#471), and stdio'''s
-supported multi-user shape is process-per-user (#132). "One Deployment
-for everyone" vs "one pod per elevated session" is a real 7.4
-decision, not a detail.
+**Scalability — correction (I overstated a caveat).** An upstream
+note that the shared HTTP process "was never hardened for many-user
+use" is about isolation nuance, not throughput, and it does not apply
+to us: the server runs `Stateless: true` with a fresh MCP server per
+request, holds no credential, and **GitHub runs this same codebase for
+their own hosted service at scale**. So it scales the ordinary way —
+`replicas` plus the existing KEDA pattern — and "one pod per elevated
+session" is not a decision this phase needs to make. Raised, checked,
+withdrawn.
+
+**Self-hosted vs GitHub-hosted is ONE CONFIG LINE, by construction.**
+The door reaches an upstream by URL (`SENTINEL_MCP_UPSTREAMS`). Point
+it at the in-cluster Service and the catalog chart serves the traffic;
+point it at GitHub's hosted endpoint and theirs does. Either way the
+same policy gate, the same audit log, the same elevation model sit in
+front — because none of that lives in the MCP server. An adopter
+picks a deployment style; they do not pick a different platform.
 
 ## Phase 7.2 checklist (capability profiles + multi-user Sentinel)
 
