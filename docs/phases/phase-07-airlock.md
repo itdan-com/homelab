@@ -303,7 +303,30 @@ RFC 8693 at the gateway.
   requester ≈ approver until a second passkey enrolls; the mechanism
   (console grant + window + `granted_by`) is enforced regardless.
 - [~] **7.3.6 Install line + battery + demo + close** (builder half
-  DONE 2026-08-02; owner half = one pasted line + the demo).
+  DONE; **LIVE 2026-08-02** — installed, owner signed in from real
+  Claude Code, tools listed, a real call got a policy verdict.
+  Remaining: the confirm-elevation click, then close). **Five bugs
+  the live path found that nothing else could**, each fixed with the
+  guard that would have caught it: (1) `python-multipart` unpinned —
+  the dev venv had it, a clean install did not, and the door
+  crash-looped; installer now import-checks the DEPLOYED venv before
+  systemd runs; (2) the cluster-CA adoption ran `kubectl` as **root
+  under sudo**, where HOME is reset and there is no kubeconfig, so
+  the door fell back to the system trust store and failed every
+  sign-in with `CERTIFICATE_VERIFY_FAILED` — now runs as `$SUDO_USER`,
+  fails loudly for a private issuer, and a new wire probe reaches the
+  IdP the same way the door does; (3) the door had **no index page**,
+  so the first human to visit the address people are *given* got a
+  bare 404 — it now explains itself; (4) `ca.crt` sat in the 0700
+  key directory, so the first real client could not verify the door
+  (`EACCES`) — the CA **certificate** is public by construction and
+  is now published at `/etc/sentinel/ca.crt`; (5) **the sign-in
+  redirect was the one IdP url a BROWSER follows and the only one
+  missing the transport rewrite** — Authentik advertises the default
+  port, the lab serves 8443, so the first sign-in died `connection
+  refused` while every probe stayed green (regression test added).
+  Pattern worth keeping: every one of these passed unit tests and the
+  rehearsal; only a real human on a real client found them.
   Delivered: a **door leaf** in `mint-certs.sh` (SAN `mcp.lab.local`
   + loopback; cloud swaps in a publicly-trusted cert); the installer
   installs/enables/**restarts** the third unit, writes the door +
