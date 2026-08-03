@@ -38,6 +38,7 @@ static credential stays a one-liner.
 """
 
 import json
+import os
 import logging
 import threading
 import time
@@ -162,3 +163,96 @@ def forget(server: str | None = None) -> None:
     that should take effect now rather than at the next refresh."""
     with _lock:
         _cache.clear() if server is None else _cache.pop(server, None)
+
+
+# --- console management (7.4) -------------------------------------------------
+#
+# Credentials are pasted into the console, not edited on a host over
+# SSH. Same gate as every other console write — a passkey holder, an
+# audit row — and the same reasoning as the policy store: this is
+# operational data the operator owns, not the unit's own configuration.
+
+def _key_fingerprint(pem: str) -> str:
+    """A short, non-secret identifier for a private key, so the console
+    can show WHICH key is installed without ever showing the key."""
+    import hashlib
+    from cryptography.hazmat.primitives import serialization as _ser
+    k = _ser.load_pem_private_key(pem.encode(), password=None)
+    pub = k.public_key().public_bytes(
+        _ser.Encoding.DER, _ser.PublicFormat.SubjectPublicKeyInfo)
+    return hashlib.sha256(pub).hexdigest()[:16]
+
+
+def describe(path: str) -> list[dict]:
+    """What the console shows: which servers have a credential, of what
+    kind, and enough identity to recognise it — never the secret."""
+    out = []
+    for server, entry in sorted(_load(path).items()):
+        if isinstance(entry, str) or entry.get("token"):
+            out.append({"server": server, "kind": "token", "detail": "static token"})
+            continue
+        detail = f"App {entry.get('app_id', '?')}"
+        if entry.get("installation_id"):
+            detail += f", installation {entry['installation_id']}"
+        if entry.get("key_fingerprint"):
+            detail += f", key {entry['key_fingerprint']}"
+        cached = _cache.get(server)
+        if cached:
+            mins = int((cached[1] - time.time()) / 60)
+            detail += f" · token valid {mins} more minutes"
+        out.append({"server": server, "kind": "app", "detail": detail})
+    return out
+
+
+def save(path: str, server: str, entry: dict) -> dict:
+    """Validate then write. A private key that does not parse is
+    rejected HERE, with a message, rather than becoming a 500 at the
+    first tool call an hour later."""
+    if not server or not server.replace("-", "").replace("_", "").isalnum():
+        raise UpstreamAuthError("server name must be alphanumeric")
+    doc = _load(path)
+    if entry.get("token"):
+        doc[server] = {"token": entry["token"].strip()}
+    elif entry.get("private_key"):
+        pem = entry["private_key"].strip() + "\n"
+        if not entry.get("app_id", "").strip().isdigit():
+            raise UpstreamAuthError("App ID must be the number GitHub shows")
+        try:
+            fp = _key_fingerprint(pem)
+        except Exception as e:
+            raise UpstreamAuthError(f"that private key could not be read: {e}")
+        key_path = Path(path).with_name(f"{server}-app-key.pem")
+        # 0600 before any bytes are written — a key file that was
+        # briefly world-readable was briefly compromised.
+        fd = os.open(str(key_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(pem)
+        doc[server] = {"app_id": entry["app_id"].strip(),
+                       "private_key_file": str(key_path),
+                       "key_fingerprint": fp}
+        if entry.get("installation_id", "").strip():
+            doc[server]["installation_id"] = entry["installation_id"].strip()
+    else:
+        raise UpstreamAuthError("provide either a token, or an App ID and key")
+
+    tmp = Path(path).with_suffix(".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(doc, f, indent=1)
+    tmp.replace(path)          # atomic: never a half-written credential file
+    forget(server)             # a new credential takes effect on the next call
+    return doc[server]
+
+
+def remove(path: str, server: str) -> bool:
+    doc = _load(path)
+    if server not in doc:
+        return False
+    doc.pop(server)
+    tmp = Path(path).with_suffix(".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(doc, f, indent=1)
+    tmp.replace(path)
+    forget(server)
+    return True

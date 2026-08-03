@@ -178,8 +178,17 @@ DOOR_STATIC_CLIENTS = [c.strip() for c in
 # holds NO credential, so compromising it steals nothing. Format is
 # {"<server>": "<token>"} in a root-owned file the service can read but
 # not write.
+# Lives in the STATE dir, service-owned — like the policy store, and for
+# the same reason. The "a trust anchor must not rewrite its own config"
+# rule is about the UNIT's configuration (/etc/sentinel/sentinel.env,
+# root-owned): what Sentinel is and how it binds. Upstream credentials
+# are operational data the operator manages day to day, and putting them
+# where only root could write them meant the console could not offer the
+# one thing an operator actually wants — paste it and hit save. Same
+# gate as every other console write: a passkey, and an audit row.
 MCP_UPSTREAM_TOKENS_FILE = os.environ.get(
-    "SENTINEL_MCP_UPSTREAM_TOKENS", "/etc/sentinel/upstream-tokens.json")
+    "SENTINEL_MCP_UPSTREAM_TOKENS",
+    os.path.join(os.path.dirname(DB_PATH) or ".", "upstream-credentials.json"))
 
 
 def upstream_token(server: str) -> str | None:

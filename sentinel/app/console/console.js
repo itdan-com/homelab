@@ -729,6 +729,130 @@ function buildEditor() {
   buildPeoplePane();
   buildServersPane();
   buildLimitsPane();
+  buildCredsPane();
+}
+
+/* --- lens 5: Connections — the credential each MCP server uses ---------
+ *
+ * This exists because pasting a credential should not require shell
+ * access to a host. The owner asked for it twice; the second time was
+ * after being handed `sudo nano`, which is exactly the friction this
+ * console exists to remove.
+ *
+ * The secret is write-only from here: the page can install or replace
+ * one, and can never read one back. What it shows instead is enough to
+ * recognise WHICH credential is installed — the App id, a fingerprint
+ * of the key, and how long the current short-lived token has left.
+ */
+async function buildCredsPane() {
+  const pane = document.getElementById('tab-creds');
+  if (!pane) return;
+  pane.replaceChildren();
+
+  const intro = document.createElement('p');
+  intro.className = 'hint';
+  intro.textContent = 'How this platform authenticates to each tool it '
+    + 'fronts. Credentials live here, never in the cluster — the servers '
+    + 'themselves hold nothing, so compromising one steals no key.';
+  pane.appendChild(intro);
+
+  const list = document.createElement('div');
+  pane.appendChild(list);
+
+  async function refresh() {
+    list.replaceChildren();
+    let rows = [];
+    try {
+      const r = await api('/v1/upstream-credentials');
+      rows = (r && r.servers) || [];
+    } catch (e) { /* shown as empty below */ }
+    if (!rows.length) {
+      const none = document.createElement('p');
+      none.className = 'hint';
+      none.textContent = 'No connections configured yet. A server without '
+        + 'one is still governed by policy — it simply cannot be called.';
+      list.appendChild(none);
+    }
+    rows.forEach((row) => {
+      const line = document.createElement('div');
+      line.className = 'row';
+      const name = document.createElement('strong');
+      name.textContent = row.server;
+      const detail = document.createElement('span');
+      detail.className = 'hint';
+      detail.textContent = ' — ' + row.detail;
+      const del = document.createElement('button');
+      del.textContent = 'Remove';
+      del.className = 'deny';
+      del.onclick = async () => {
+        await api('/v1/upstream-credentials/' + encodeURIComponent(row.server),
+                  { method: 'DELETE' });
+        refresh();
+      };
+      line.append(name, detail, del);
+      list.appendChild(line);
+    });
+  }
+
+  const form = document.createElement('form');
+  form.className = 'card';
+  const h = document.createElement('h3');
+  h.textContent = 'Connect a tool';
+  form.appendChild(h);
+
+  const server = document.createElement('input');
+  server.placeholder = 'server name (e.g. github)';
+  server.size = 20;
+  const appId = document.createElement('input');
+  appId.placeholder = 'GitHub App ID (numbers only)';
+  appId.size = 24;
+  const install = document.createElement('input');
+  install.placeholder = 'installation ID (optional)';
+  install.size = 24;
+  const key = document.createElement('textarea');
+  key.placeholder = '-----BEGIN RSA PRIVATE KEY-----\n…paste the .pem GitHub '
+    + 'gave you…';
+  key.rows = 6;
+  key.style.width = '100%';
+  const token = document.createElement('input');
+  token.placeholder = 'or a plain token (Slack xoxb-…, etc.)';
+  token.size = 40;
+
+  const why = document.createElement('p');
+  why.className = 'hint';
+  why.textContent = 'Use a GitHub App rather than a personal token: its key '
+    + 'does not expire, and this console mints a fresh one-hour credential '
+    + 'whenever a call needs one. Nothing to rotate by hand.';
+
+  const save = document.createElement('button');
+  save.textContent = 'Save connection';
+  save.className = 'grant';
+  const status = document.createElement('span');
+  status.className = 'hint';
+
+  save.onclick = async (ev) => {
+    ev.preventDefault();
+    status.textContent = 'saving…';
+    try {
+      await api('/v1/upstream-credentials/' + encodeURIComponent(server.value.trim()),
+                { method: 'PUT',
+                  body: JSON.stringify({
+                    app_id: appId.value, installation_id: install.value,
+                    private_key: key.value, token: token.value }) });
+      status.textContent = 'saved — it takes effect on the next call';
+      key.value = ''; token.value = '';   // never leave a secret on screen
+      refresh();
+    } catch (e) {
+      status.textContent = String((e && e.message) || e);
+    }
+  };
+
+  [server, appId, install, key, token, why, save, status].forEach((el) => {
+    form.appendChild(el);
+    if (el.tagName === 'INPUT') form.appendChild(document.createElement('br'));
+  });
+  pane.appendChild(form);
+  refresh();
 }
 
 function renderGuiErrors(errs) {

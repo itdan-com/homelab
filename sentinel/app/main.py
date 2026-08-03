@@ -421,6 +421,70 @@ def flows(active: bool = Query(
 
 
 @app.get(
+    "/v1/upstream-credentials",
+    tags=["record"],
+    summary="Which MCP servers have a credential, and of what kind",
+    dependencies=[Depends(require_operator)],
+)
+def upstream_credentials():
+    """Never returns a secret — only enough to recognise which key is
+    installed (App id, key fingerprint) and how long the current
+    short-lived token has left."""
+    from . import upstream_auth
+    from .config import MCP_UPSTREAM_TOKENS_FILE
+    try:
+        return {"servers": upstream_auth.describe(MCP_UPSTREAM_TOKENS_FILE)}
+    except upstream_auth.UpstreamAuthError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put(
+    "/v1/upstream-credentials/{server}",
+    tags=["decisions"],
+    summary="Install or replace an MCP server's upstream credential",
+    dependencies=[Depends(console_guard)],
+)
+def save_upstream_credential(server: str, body: dict,
+                             operator: str = Depends(current_operator)):
+    """Paste-and-save, so a credential never requires shell access to
+    the host. Passkey-gated and audited like every other console write;
+    the secret itself is never echoed back and never logged."""
+    from . import upstream_auth
+    from .config import MCP_UPSTREAM_TOKENS_FILE
+    try:
+        entry = upstream_auth.save(MCP_UPSTREAM_TOKENS_FILE, server, body)
+    except upstream_auth.UpstreamAuthError as e:
+        _audit_policy_change(operator, {"action": "upstream-credential-rejected",
+                                        "server": server, "error": str(e)})
+        raise HTTPException(status_code=422, detail=str(e))
+    _audit_policy_change(operator, {
+        "action": "upstream-credential-saved", "server": server,
+        "kind": "app" if entry.get("app_id") else "token",
+        "app_id": entry.get("app_id"),
+        "key_fingerprint": entry.get("key_fingerprint")})
+    return {"server": server, "saved": True,
+            "kind": "app" if entry.get("app_id") else "token"}
+
+
+@app.delete(
+    "/v1/upstream-credentials/{server}",
+    tags=["decisions"],
+    summary="Remove an MCP server's upstream credential",
+    dependencies=[Depends(console_guard)],
+)
+def delete_upstream_credential(server: str,
+                               operator: str = Depends(current_operator)):
+    from . import upstream_auth
+    from .config import MCP_UPSTREAM_TOKENS_FILE
+    removed = upstream_auth.remove(MCP_UPSTREAM_TOKENS_FILE, server)
+    if not removed:
+        raise HTTPException(status_code=404, detail="no credential for that server")
+    _audit_policy_change(operator, {"action": "upstream-credential-removed",
+                                    "server": server})
+    return {"server": server, "removed": True}
+
+
+@app.get(
     "/v1/policy/status",
     response_model=PolicyStatusOut,
     response_model_exclude_none=True,

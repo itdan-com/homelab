@@ -369,35 +369,27 @@ job.
 > so the audit trail can still tell the platform's actions from a
 > person's.
 
-**Step 2 — hand the key to Sentinel** (not to the cluster, and not to
-git):
+**Step 2 — paste it into the console.** Open
+`https://localhost:8400/`, sign in, and go to **Access → Connections →
+Connect a tool**:
 
-```bash
-sudo install -m 0640 -o root -g sentinel ~/Downloads/<the-app>.private-key.pem \
-  /etc/sentinel/airlock-github-app.pem
-sudo install -m 0640 -o root -g sentinel /dev/null /etc/sentinel/upstream-tokens.json
-sudo nano /etc/sentinel/upstream-tokens.json
-```
+| Field | Value |
+|---|---|
+| server name | `github` |
+| GitHub App ID | the number from the App page |
+| installation ID | leave blank unless the App is installed in more than one place |
+| private key | open the downloaded `.pem` in a text editor and paste the whole thing |
 
-Paste, with your App ID:
+**Save connection.** That is the entire credential setup — no SSH, no
+`sudo`, no file paths. The key is stored 0600 by the service, the page
+can never read it back, and the change is audited like every other
+console write.
 
-```json
-{ "github": { "app_id": "1234567",
-              "private_key_file": "/etc/sentinel/airlock-github-app.pem" } }
-```
-
-Save. Root owns both files; the service can read them and cannot
-rewrite them. Sentinel discovers the installation automatically when
-the App is installed in exactly one place; with more than one, add
-`"installation_id": "..."` rather than letting anything guess.
-
-> **Why the credential lives here and not in the cluster.** GitHub's
-> server has no static-token mode over HTTP: every request must carry
-> its own credential. So it belongs to whoever authorizes the call —
-> Sentinel — and the workload holds **nothing**. Compromising the MCP
-> server pod steals no credential, because there isn't one in it. This
-> is also how GitHub runs their own hosted server: same code, with an
-> auth proxy in front supplying the token.
+> **Why the console and not a file.** Pasting a credential should not
+> require shell access to a host. What the screen shows afterwards is
+> enough to recognise *which* key is installed — App id, key
+> fingerprint, and how long the current short-lived token has left —
+> and never the secret itself.
 
 **Rotation** is not a chore: installation tokens are minted on demand
 and refreshed before they expire. The only long-lived secret is the
