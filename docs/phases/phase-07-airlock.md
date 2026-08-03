@@ -461,6 +461,62 @@ rich enough to reconstruct an elevation window — and, where the
 upstream tool supports it, reverse it (universal undo is not a
 thing; scope honestly).
 
+## How a company actually makes Airlock the only path (owner question, 2026-08-02)
+
+Asked at the first live sign-in: *"how is this locking down a
+corporate MCP server list? the company would have to disallow local
+MCP servers? … if I bought Claude Enterprise I could force all users
+to only have access to airlock?"* The answer is layered, and the
+strongest layer is not the one people reach for first.
+
+**Airlock does not — and cannot — stop someone running their own MCP
+server.** It governs what happens when a call arrives at it. Client
+lockdown is an endpoint-management problem, not a gateway problem, and
+treating the gateway as if it solved that is how architectures acquire
+imaginary controls.
+
+What actually makes Airlock the only path, in order of strength:
+
+1. **Credential monopoly at the resource (the real control).** A
+   personal MCP server pointed at the company's GitHub is harmless if
+   it has nothing to authenticate with. That means: no personal PATs
+   on company systems (SSO + SCIM, PAT creation disabled or
+   org-restricted), machine credentials issued only to the Airlock
+   deployment, and — where supported — IP allowlists naming the
+   gateway. This is layer 1 of the three-layer rule already in
+   CLAUDE.md, applied organisationally instead of per-server. It is
+   the only layer that survives an unmanaged laptop.
+2. **Network egress control.** If reaching `api.github.com` or a
+   Snowflake endpoint from a corporate network requires the proxy, and
+   the proxy only permits the gateway, an unsanctioned MCP server has
+   no route. Defeated by a phone hotspot, so it is a speed bump on
+   managed networks, not a boundary.
+3. **Client-side managed policy.** Admin-deployed settings that pin
+   which MCP servers a client may use (see the enterprise-controls
+   note below). Genuine defense in depth on managed devices; it
+   governs the client, so it is only as strong as device management.
+4. **Making the sanctioned path the easy one.** Birthright
+   entitlements at zero approvals and `confirm` elevation that beats
+   an IT ticket. Shadow IT is usually a friction symptom: people route
+   around gates that cost more than the work. This is the layer this
+   whole phase exists to build, and it is why the seven-approvals
+   finding mattered.
+
+**The honest limit, stated so nobody oversells it:** an engineer with
+their own laptop and their own credential to a system can always
+bypass any gateway. What Airlock buys is that every *sanctioned*
+action is entitled, time-boxed, and recorded — and that the
+unsanctioned path requires deliberately obtaining a credential the
+company can refuse to issue. That is an administrative and credential
+boundary with technical enforcement, not technical omnipotence.
+
+**Product consequence for the open-source story:** "deploy Airlock"
+is not a complete answer to MCP governance, and the README should not
+imply it is. The complete answer is "deploy Airlock *and* stop issuing
+direct credentials to the systems behind it" — which is a policy
+change most compliance-driven buyers are already trying to make and
+lack a usable alternative for. That framing is the product.
+
 ## Exit criteria (firmed by ADR-005, 2026-08-02)
 
 Unchanged in substance from the sketch, now grounded: "the agent
