@@ -149,8 +149,19 @@ fi
 # the door to fall back to the system trust store, which is correct in
 # cloud where the IdP has a real certificate.
 if [[ ! -f "$CERT_DIR/lab-ca.crt" ]] && command -v kubectl >/dev/null 2>&1; then
-  if kubectl -n cert-manager get secret lab-local-ca -o jsonpath='{.data.tls\.crt}' \
-       2>/dev/null | base64 -d > "$CERT_DIR/lab-ca.crt.tmp" \
+  # As the INVOKING user, not root: `sudo` resets HOME, so root's
+  # kubectl has no kubeconfig and this detection silently found
+  # nothing — the door then fell back to the system trust store and
+  # died with CERTIFICATE_VERIFY_FAILED against the lab IdP (observed
+  # 2026-08-02; same trap as the 5.5.8 smoke run).
+  if [[ -n "${SUDO_USER:-}" ]]; then
+    KUBE_AS=(runuser -u "$SUDO_USER" -- kubectl)
+  else
+    KUBE_AS=(kubectl)
+  fi
+  if "${KUBE_AS[@]}" -n cert-manager get secret lab-local-ca \
+       -o jsonpath='{.data.tls\.crt}' 2>/dev/null \
+       | base64 -d > "$CERT_DIR/lab-ca.crt.tmp" \
      && [[ -s "$CERT_DIR/lab-ca.crt.tmp" ]]; then
     mv "$CERT_DIR/lab-ca.crt.tmp" "$CERT_DIR/lab-ca.crt"
     chown "$SVC_USER:$SVC_USER" "$CERT_DIR/lab-ca.crt"
@@ -160,7 +171,22 @@ if [[ ! -f "$CERT_DIR/lab-ca.crt" ]] && command -v kubectl >/dev/null 2>&1; then
     rm -f "$CERT_DIR/lab-ca.crt.tmp"
   fi
 fi
-[[ -f "$OIDC_CA_BUNDLE" ]] || OIDC_CA_BUNDLE=""
+if [[ ! -f "$OIDC_CA_BUNDLE" ]]; then
+  OIDC_CA_BUNDLE=""
+  # Loud, not silent. Falling back to the system trust store is correct
+  # in cloud (a real certificate) and fatal in a lab (a private CA), so
+  # say which one this is rather than letting sign-in fail later with a
+  # TLS error nobody can trace back to this line.
+  case "$OIDC_ISSUER" in
+    *.lab.local*|*localhost*|*.internal*)
+      echo "!! could not adopt the cluster CA, and the IdP issuer" >&2
+      echo "   ($OIDC_ISSUER) looks private — sign-in through the door" >&2
+      echo "   WILL fail TLS verification. Fix: make sure kubectl works" >&2
+      echo "   for \$SUDO_USER, or set SENTINEL_OIDC_CA_BUNDLE to the" >&2
+      echo "   CA that signed the IdP's certificate, then re-run." >&2 ;;
+    *) echo "== IdP verification uses the system trust store" ;;
+  esac
+fi
 
 ENV_FILE="$ETC_DIR/sentinel.env"
 if [[ -f "$ENV_FILE" ]]; then
@@ -304,8 +330,25 @@ DOOR_401=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST \
 [[ "$DOOR_401" == "401" ]] || {
   echo "!! unauthenticated MCP call returned '${DOOR_401}', expected 401" >&2
   exit 1; }
+# Can the door actually REACH the identity provider? Everything above
+# passes with a door that will fail every sign-in: the federation leg
+# is the one hop no health check touches. Probed the way the door does
+# it — same URL, same CA bundle — so a TLS or DNS problem surfaces here
+# instead of as a 500 the first time a human tries to log in (which is
+# exactly how it was found, 2026-08-02).
+IDP_URL="${OIDC_HTTP_BASE%/}/application/o/$(basename "${OIDC_ISSUER%/}")/.well-known/openid-configuration"
+IDP_OK=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+  ${OIDC_CA_BUNDLE:+--cacert "$OIDC_CA_BUNDLE"} "$IDP_URL" || true)
+if [[ "$IDP_OK" != "200" ]]; then
+  echo "!! the door cannot verify/reach the identity provider (got '${IDP_OK}')" >&2
+  echo "   URL:  $IDP_URL" >&2
+  echo "   CA:   ${OIDC_CA_BUNDLE:-<system trust store>}" >&2
+  echo "   Sign-in through the door would fail. Fix the CA or the" >&2
+  echo "   address above, then re-run this script." >&2
+  exit 1
+fi
 echo "== wire probes: admin https 200, broker mTLS 200, door https 200 " \
-     "(discovery ok, unauthenticated call refused)"
+     "(discovery ok, unauthenticated call refused), IdP reachable"
 # The two POLICY CONSUMERS must agree on the active version. They are
 # separate processes sharing only the store on disk (7.3.1), so a
 # silent disagreement means two different answers to the same question.
