@@ -326,6 +326,27 @@ def test_approval_never_reaches_a_forbidden_tier(c):
         _revoke_all(HR_HEAD)
 
 
+def test_the_doors_own_forwarding_token_is_not_authority(c):
+    """The sharpest regression in this phase. After an allowed call the
+    door mints itself a 30-second single-tool token so the proxy will
+    carry the call (7.3.6). It is hung on the same principal and names
+    the same tool, so until this fix it satisfied the ladder's approve
+    rung — one approved call permitted the same tool for 30 more
+    seconds, and every call inside that window renewed it. An approval
+    that extends itself is exactly the self-granting hole the whole
+    design exists to close."""
+    from app.service import mint_forwarding_token
+    with SessionLocal() as s:
+        p = get_or_create_principal(s, email=HR_HEAD)
+        mint_forwarding_token(s, flow_id="person-regression", principal=p,
+                              tool="hr-platform.update_record")
+    body = _call(c, HR_HEAD, "hr-platform.update_record",
+                 {"database": "hr_staging"}).json()
+    assert "error" in body, "a machine-issued forwarding token granted authority"
+    assert body["error"]["data"]["outcome"] == "approve"
+    assert body["error"]["data"]["reason"] == "approval-required"
+
+
 # --- the measurement ----------------------------------------------------------
 
 def test_an_honest_session_costs_at_most_one_approval(c):

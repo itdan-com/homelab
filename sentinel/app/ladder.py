@@ -195,7 +195,18 @@ def decide(s: Session, *, principal: Principal, tool: str,
             CapabilityGrant.revoked_at.is_(None),
             CapabilityGrant.expires_at > now,
         )).all()
-        covering = [g for g in live if _grant_covers(g, tool)]
+        # PROFILE grants only. The person path's elevation primitive is
+        # the profile grant (ADR-005 D6); every other grant row on this
+        # principal is plumbing, and plumbing must never read as
+        # authority. Specifically, the door mints itself a 30-second
+        # single-tool token to carry an ALREADY-DECIDED call through the
+        # proxy (7.3.6) — it names the exact tool and, being
+        # machine-issued, was indistinguishable from a human grant here.
+        # That made one approved call silently permit the same tool for
+        # the next 30 seconds, renewed by every call inside the window:
+        # an approval that extends itself is the self-granting hole this
+        # architecture exists to close. Found live 2026-08-02.
+        covering = [g for g in live if g.profile and _grant_covers(g, tool)]
         if outcome == "approve":
             covering = [g for g in covering if g.granted_via in _HUMAN_ISSUED]
         if not covering:
