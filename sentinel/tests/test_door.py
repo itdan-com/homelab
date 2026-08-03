@@ -192,6 +192,20 @@ def test_authorize_redirects_to_the_idp_with_its_own_pkce(c, cimd_ok, monkeypatc
     assert door._pending[sid]["verifier"] not in r.headers["location"]
 
 
+def test_the_browser_is_sent_to_an_address_it_can_actually_reach(
+        c, cimd_ok, monkeypatch):
+    """The sign-in redirect is the ONE IdP url a browser follows, so it
+    must carry the transport rewrite. Skipping it sent people to the
+    IdP's advertised default port while the lab serves 8443 —
+    `connection refused`, with the door itself perfectly healthy."""
+    monkeypatch.setattr(door, "OIDC_HTTP_BASE", "https://idp.test:8443")
+    monkeypatch.setattr(door, "oidc_config", lambda: {
+        "authorization_endpoint": "https://idp.test/application/o/authorize/",
+        "token_endpoint": "https://idp.test/token", "jwks_uri": "https://idp.test/jwks"})
+    r = _authorize(c)
+    assert urlparse(r.headers["location"]).netloc == "idp.test:8443"
+
+
 # --- the full dance -----------------------------------------------------------
 
 @pytest.fixture

@@ -376,9 +376,21 @@ def authorize(request: Request):
 def _upstream_login(sid: str) -> str:
     """Hand the human to the IdP, with the door's OWN PKCE verifier —
     never the client's. The door proves possession to Authentik; the
-    client proves possession to the door. Two independent legs."""
+    client proves possession to the door. Two independent legs.
+
+    The authorize URL is transport-rewritten like every other endpoint,
+    and this one is the reason the rewrite cannot be skipped: it is the
+    only IdP URL a BROWSER is sent to. Authentik advertises its
+    endpoints on the default port, the lab serves it on 8443, and
+    handing the raw discovery value to a browser produced exactly one
+    symptom — `connection refused` on port 443, with the door itself
+    perfectly healthy (observed 2026-08-02, first human sign-in).
+
+    If a deployment ever has an IdP whose public address differs from
+    the door's route to it, that needs its own setting; here and in
+    cloud the two are the same."""
     challenge = _b64u(hashlib.sha256(_pending[sid]["verifier"].encode()).digest())
-    return oidc_config()["authorization_endpoint"] + "?" + urlencode({
+    return _transport_url(oidc_config()["authorization_endpoint"]) + "?" + urlencode({
         "response_type": "code", "client_id": OIDC_CLIENT_ID,
         "redirect_uri": f"{DOOR_ORIGIN}/callback",
         "scope": "openid email profile", "state": sid,
