@@ -613,7 +613,11 @@ def _call_upstream(server: str, leaf: str, arguments: dict, *,
     re-checks the kill switch and the scope it derives FROM THE REQUEST
     ITSELF, which is the property that makes the second check worth
     making rather than ceremonial."""
-    url = MCP_UPSTREAMS.get(server)
+    # The connection's own address wins; the env map stays as the
+    # deployment-level fallback so existing installs are unaffected.
+    from .config import MCP_UPSTREAM_TOKENS_FILE
+    from .upstream_auth import upstream_url
+    url = upstream_url(server, MCP_UPSTREAM_TOKENS_FILE) or MCP_UPSTREAMS.get(server)
     if not url:
         return {"content": [{"type": "text", "text":
                              f"Allowed by policy, but no upstream is "

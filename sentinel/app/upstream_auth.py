@@ -189,9 +189,13 @@ def describe(path: str) -> list[dict]:
     out = []
     for server, entry in sorted(_load(path).items()):
         if isinstance(entry, str) or entry.get("token"):
-            out.append({"server": server, "kind": "token", "detail": "static token"})
+            where = entry.get("url", "") if isinstance(entry, dict) else ""
+            out.append({"server": server, "kind": "token",
+                        "detail": (f"{where} · " if where else "") + "static token"})
             continue
         detail = f"App {entry.get('app_id', '?')}"
+        if entry.get("url"):
+            detail = f"{entry['url']} · " + detail
         if entry.get("installation_id"):
             detail += f", installation {entry['installation_id']}"
         if entry.get("key_fingerprint"):
@@ -211,6 +215,9 @@ def save(path: str, server: str, entry: dict) -> dict:
     if not server or not server.replace("-", "").replace("_", "").isalnum():
         raise UpstreamAuthError("server name must be alphanumeric")
     doc = _load(path)
+    url = (entry.get("url") or "").strip()
+    if url and not url.startswith("https://") and not url.startswith("http://"):
+        raise UpstreamAuthError("the address must be a URL")
     if entry.get("token"):
         doc[server] = {"token": entry["token"].strip()}
     elif entry.get("private_key"):
@@ -234,6 +241,13 @@ def save(path: str, server: str, entry: dict) -> dict:
             doc[server]["installation_id"] = entry["installation_id"].strip()
     else:
         raise UpstreamAuthError("provide either a token, or an App ID and key")
+    # WHERE the server is lives beside HOW we authenticate to it, so
+    # choosing GitHub-hosted over self-hosted is a field on this form
+    # rather than an env file on a host. Policy is unaffected either
+    # way: the gate, the audit log and the elevation windows sit in
+    # front of the address, not behind it.
+    if url:
+        doc[server]["url"] = url
 
     tmp = Path(path).with_suffix(".tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -256,3 +270,11 @@ def remove(path: str, server: str) -> bool:
     tmp.replace(path)
     forget(server)
     return True
+
+
+def upstream_url(server: str, path: str) -> str | None:
+    """Where this server lives, if the connection says. Falls back to
+    the deployment's static config, so an existing install keeps
+    working unchanged."""
+    entry = _load(path).get(server)
+    return entry.get("url") if isinstance(entry, dict) else None

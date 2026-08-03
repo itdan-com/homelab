@@ -809,6 +809,26 @@ async function buildCredsPane() {
   const install = document.createElement('input');
   install.placeholder = 'installation ID (optional)';
   install.size = 24;
+  // WHERE the tool lives belongs next to HOW we authenticate to it —
+  // otherwise choosing GitHub's hosted server over the one this
+  // platform runs would mean editing a file on a host (owner
+  // feedback: the first version of this screen "doesn't even account
+  // for the remote github mcp server").
+  const where = document.createElement('select');
+  [['', 'runs on this platform (recommended)'],
+   ['https://api.githubcopilot.com/mcp/', "GitHub's hosted server"],
+   ['custom', 'another address…']].forEach(([v, label]) => {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    where.appendChild(o);
+  });
+  const customUrl = document.createElement('input');
+  customUrl.placeholder = 'https://…';
+  customUrl.size = 40;
+  customUrl.style.display = 'none';
+  where.onchange = () => {
+    customUrl.style.display = where.value === 'custom' ? '' : 'none';
+  };
   const key = document.createElement('textarea');
   key.placeholder = '-----BEGIN RSA PRIVATE KEY-----\n…paste the .pem GitHub '
     + 'gave you…';
@@ -838,7 +858,9 @@ async function buildCredsPane() {
                 { method: 'PUT',
                   body: JSON.stringify({
                     app_id: appId.value, installation_id: install.value,
-                    private_key: key.value, token: token.value }) });
+                    private_key: key.value, token: token.value,
+                    url: where.value === 'custom' ? customUrl.value
+                      : where.value }) });
       status.textContent = 'saved — it takes effect on the next call';
       key.value = ''; token.value = '';   // never leave a secret on screen
       refresh();
@@ -847,9 +869,12 @@ async function buildCredsPane() {
     }
   };
 
-  [server, appId, install, key, token, why, save, status].forEach((el) => {
+  [server, appId, install, where, customUrl, key, token, why, save,
+   status].forEach((el) => {
     form.appendChild(el);
-    if (el.tagName === 'INPUT') form.appendChild(document.createElement('br'));
+    if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
+      form.appendChild(document.createElement('br'));
+    }
   });
   pane.appendChild(form);
   refresh();
