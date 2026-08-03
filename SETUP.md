@@ -311,7 +311,7 @@ its `client_id` in `SENTINEL_DOOR_STATIC_CLIENTS`.
 > uses Sentinel's CA. Browsers on Windows already trust it after §1.6;
 > a Node-based CLI keeps its own trust store, so if sign-in fails with a
 > certificate error, run the client with
-> `NODE_EXTRA_CA_CERTS=/etc/sentinel/certs/ca.crt`. In cloud this
+> `NODE_EXTRA_CA_CERTS=/etc/sentinel/ca.crt`. In cloud this
 > disappears: `mcp.<domain>` gets a publicly-trusted certificate, and
 > asking a workforce to install a root CA is how you train people to
 > click through certificate warnings.

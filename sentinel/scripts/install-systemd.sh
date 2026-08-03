@@ -188,6 +188,15 @@ if [[ ! -f "$OIDC_CA_BUNDLE" ]]; then
   esac
 fi
 
+# Publish the CA CERTIFICATE (not the key) where clients can read it.
+# $CERT_DIR is 0700/service-user because it holds private keys, which
+# also made the public trust anchor unreadable — so a person's MCP
+# client could not verify the door and NODE_EXTRA_CA_CERTS failed with
+# EACCES (observed 2026-08-02, first real client connection). A CA
+# certificate is public by construction: every client that must trust
+# this door needs it, and publishing it grants nothing.
+install -m 0644 -o root -g root "$CERT_DIR/ca.crt" "$ETC_DIR/ca.crt"
+
 ENV_FILE="$ETC_DIR/sentinel.env"
 if [[ -f "$ENV_FILE" ]]; then
   cp -a "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"   # never clobber config unbacked

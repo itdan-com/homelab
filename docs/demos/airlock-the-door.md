@@ -78,7 +78,7 @@ it** — the machine-readable version of "you need to sign in first."
 ### 2. Sign in from a real MCP client
 
 ```bash
-export NODE_EXTRA_CA_CERTS=/etc/sentinel/certs/ca.crt
+export NODE_EXTRA_CA_CERTS=/etc/sentinel/ca.crt
 claude mcp add --transport http airlock https://localhost:8402/mcp
 claude mcp login airlock
 ```
