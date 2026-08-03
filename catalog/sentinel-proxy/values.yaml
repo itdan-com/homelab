@@ -93,6 +93,15 @@ upstreams:
     namespace: sandbox
     service: echo
     port: 80
+  # The first REAL upstream (7.4). `github` is also the SERVER half of
+  # every capability scope the broker enforces for it —
+  # github.create_pull_request, github.rpc.tools.list, and so on — and
+  # it must match the server name in the policy store's servers.yaml or
+  # the two disagree about what is being authorized.
+  - name: github
+    namespace: mcp-servers
+    service: github-mcp
+    port: 80
 
 nameOverride: ""
 fullnameOverride: ""

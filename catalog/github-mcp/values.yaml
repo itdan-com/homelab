@@ -1,0 +1,109 @@
+# values.yaml — GitHub's official MCP server (Phase 7.4).
+#
+# The credential model, which is the load-bearing part of this chart:
+#
+#   The TOKEN decides what is POSSIBLE. Cedar decides WHO does it.
+#
+# This server has no server-side repository allowlist (upstream issue
+# #1685), so the token's own scope IS the repo boundary — layer 1 of
+# CLAUDE.md's three layers. Scope it to the blast radius you are willing
+# to have at all, and let the policy store govern everything inside it:
+# grant Contents + Pull requests and withhold Administration, and
+# repository deletion is not "forbidden by policy", it is IMPOSSIBLE —
+# and stays impossible even if Sentinel is wholly compromised. That is
+# `forbid` implemented in physics rather than in software.
+#
+# The token may span every repo in the org; which repo a given person
+# may touch, at which tier, is what the access matrix and servers.yaml
+# resource map already answer. That is what makes this scale to 500
+# repos without minting 500 credentials.
+
+catalog:
+  tier: dev
+  # It holds a credential to source control and reaches the internet.
+  # Neither is true of anything else in the sandbox, and the label is
+  # what a reviewer sorts by.
+  dataClass: confidential
+
+image:
+  repository: ghcr.io/github/github-mcp-server
+  # tag falls back to Chart.appVersion (pinned there, deliberately).
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+github:
+  # Empty = github.com. A company's self-hosted GitHub Enterprise Server
+  # sets its API base here (e.g. https://github.acme.internal/api/v3) —
+  # the ONLY difference between the SaaS and on-prem deployments.
+  host: ""
+  # LAYER 2 of the three: the server's own toolset allowlist. Even a
+  # token that could do more, and a Sentinel grant that permitted more,
+  # cannot exercise a toolset this server did not enable. `context` is
+  # required by the server for identity resolution.
+  toolsets:
+    - context
+    - repos
+    - pull_requests
+  # Belt to the toolset's braces. Leave true until a write path is
+  # deliberately opened: the negative test 7.1 flagged is that this flag
+  # had a real bypass in http mode before v1.0, so it is defence in
+  # depth, never the only defence.
+  readOnly: false
+
+# The token lands here from SOPS (secrets.enc.yaml). It is NEVER in
+# values.yaml in plaintext, and the Deployment reads it from a Secret
+# rather than an env literal so it does not appear in `kubectl get
+# deploy -o yaml`.
+auth:
+  # Set in catalog/github-mcp/secrets.enc.yaml as auth.token
+  token: ""
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+service:
+  type: ClusterIP
+  port: 80
+  portName: http
+  targetPort: 8080
+
+# NO ingress, deliberately: an MCP server has no business having a door
+# of its own. The sentinel-proxy is the only way in, and the
+# NetworkPolicy is what makes that true rather than customary.
+networkPolicy:
+  enabled: true
+  proxyNamespace: envoy-gateway-system
+  gatewayName: sentinel-proxy
+  gatewayNamespace: mcp-servers
+  egress:
+    enabled: true
+    dnsNamespace: kube-system
+    # Unlike every other MCP workload so far, this one MUST reach the
+    # internet — that is its whole job. Egress is therefore open on 443
+    # rather than closed, and the honest note is that a CIDR-based
+    # policy cannot pin "GitHub only" (their address space is large and
+    # changes). If that matters in a given deployment, the answer is an
+    # egress proxy with an FQDN allowlist, not a longer CIDR list.
+    httpsToInternet: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}

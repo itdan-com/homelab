@@ -642,6 +642,21 @@ def _call_upstream(server: str, leaf: str, arguments: dict, *,
         return {"content": [{"type": "text", "text":
                              f"Upstream '{server}' unreachable: {e}"}],
                 "isError": True}
+    # Record the EFFECT, not just the decision (7.6 item 1). Until now
+    # a permitted call that the upstream rejected and one that created
+    # a pull request looked identical in the audit log. Status, latency
+    # and the upstream's own object id are enough to reconstruct what
+    # happened; the PAYLOAD is deliberately not stored — PR bodies and
+    # file contents are a privacy and retention liability, and the
+    # upstream keeps its own content log.
+    with SessionLocal() as s:
+        audit(s, AuditEventType.USE, flow_id=flow_id, tool=tool,
+              principal=principal_email,
+              details={"source": "door-upstream", "server": server,
+                       "http_status": r.status_code,
+                       "ms": int(r.elapsed.total_seconds() * 1000)})
+        s.commit()
+
     if r.status_code == 403:
         # The proxy refused what the ladder allowed. That is a real
         # disagreement between two enforcement layers, not a user error

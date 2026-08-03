@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "catalog.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "catalog.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ include "catalog.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          # Native Streamable HTTP mode (v1.8.0+). The alternative,
+          # stdio, is what GitHub App auth requires — and is why this
+          # chart uses a token instead (7.1 finding): a Deployment
+          # fronted by an HTTP proxy cannot speak stdio.
+          args:
+            - "http"
+            - "--host=0.0.0.0"
+            - "--port={{ .Values.service.targetPort }}"
+            {{- if .Values.github.toolsets }}
+            - "--toolsets={{ join "," .Values.github.toolsets }}"
+            {{- end }}
+            {{- if .Values.github.readOnly }}
+            - "--read-only"
+            {{- end }}
+          env:
+            # From a Secret, never a literal: an env value written into
+            # the Deployment is readable by anyone with `get deploy`,
+            # which is a much wider circle than `get secret`.
+            - name: GITHUB_PERSONAL_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "catalog.fullname" . }}
+                  key: token
+            {{- with .Values.github.host }}
+            - name: GITHUB_HOST
+              value: {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: {{ .Values.service.portName }}
+              containerPort: {{ .Values.service.targetPort }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # readOnlyRootFilesystem is on, so anything that wants to
+            # write needs an explicit, empty, non-persistent home.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

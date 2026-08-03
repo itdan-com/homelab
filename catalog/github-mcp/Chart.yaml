@@ -1,0 +1,28 @@
+apiVersion: v2
+name: github-mcp
+description: >-
+  GitHub's official MCP server (Streamable HTTP), deployed as an ordinary
+  catalog workload behind the Sentinel proxy — the first REAL tool the
+  workforce reaches through Airlock (Phase 7.4). It ships WITH the stack:
+  adopting it is dropping this chart in catalog/ and pasting one token,
+  not standing up separate infrastructure.
+
+  Which GitHub it talks to is a values line (github.com by default; a
+  company's self-hosted GHES sets `github.host`), which is the only
+  difference between the SaaS and on-prem deployments.
+type: application
+version: 0.1.0
+# Pinned deliberately — a rolling tag on a workload holding a credential
+# to your source control is a supply-chain decision made by accident.
+# Bump it in a reviewed PR like any other dependency.
+appVersion: "v1.8.0"
+
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  # The label that says "front me with the Sentinel proxy". It must tell
+  # the truth: a workload that IS fronted but claims otherwise would be
+  # skipped by the very admission check meant to protect it (ADR-004
+  # debt 5).
+  catalog.homelab/exposes-mcp: "true"

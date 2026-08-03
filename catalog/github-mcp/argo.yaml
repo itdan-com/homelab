@@ -1,0 +1,5 @@
+# GitOps self-declaration (see catalog/argocd ApplicationSet).
+name: github-mcp
+namespace: mcp-servers
+# Carries a credential: the ApplicationSet decrypts secrets.enc.yaml.
+secrets: "true"
