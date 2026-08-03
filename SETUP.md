@@ -327,6 +327,67 @@ risk tools instead file a request on the Sentinel console for a
 > architecture exists to close, so the confirmation happens where the
 > model cannot reach: behind your company sign-in, as a click by you.
 
+### 1.6c Adding the GitHub tools (Phase 7.4)
+
+The GitHub MCP server ships with the platform as a catalog chart —
+GitHub's official image, unmodified. You supply one token; everything
+else is already wired.
+
+**Step 1 — mint a fine-grained token.** Go to
+[github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new):
+
+| Field | Value |
+|---|---|
+| Token name | `airlock-mcp` |
+| Resource owner | your org or account |
+| Expiration | 90 days (rotate; see below) |
+| Repository access | *Only select repositories* → the ones this platform may touch |
+| Repository permissions | **Contents: Read and write** · **Pull requests: Read and write** |
+| Everything else | leave alone — and **do not** grant *Administration* |
+
+That last row is the important one. This server has no repository
+allowlist of its own, so **the token's scope is the boundary**.
+Withholding *Administration* means repository deletion is not
+"forbidden by policy" — it is impossible, and stays impossible even if
+Sentinel itself is compromised. Grant only what should *ever* be
+possible through this path; who may do what *within* it is the access
+policy's job, not the token's.
+
+**Step 2 — put it on the Sentinel host** (not in the cluster, and not
+in git):
+
+```bash
+sudo install -m 0640 -o root -g sentinel /dev/null /etc/sentinel/upstream-tokens.json
+sudo nano /etc/sentinel/upstream-tokens.json
+```
+
+Paste exactly this, with your token:
+
+```json
+{ "github": "github_pat_YOUR_TOKEN_HERE" }
+```
+
+Save. Root owns the file; the service can read it and cannot rewrite
+it. **Edit it, never `echo` it** — a token echoed into a shell lands in
+your history.
+
+> **Why the token lives here and not in the cluster.** GitHub's server
+> has no static-token mode over HTTP: every request must carry its own
+> credential. So the credential belongs to whoever authorizes the call
+> — Sentinel — and the workload holds **nothing**. Compromising the MCP
+> server pod steals no credential, because there isn't one in it. This
+> is also how GitHub runs their own hosted server: same code, with an
+> auth proxy in front supplying the token.
+
+**Rotation** is editing that one file and restarting the door
+(`sudo systemctl restart sentinel-door`) — no chart change, no redeploy,
+no secret to re-encrypt.
+
+**Using GitHub's hosted server instead of self-hosting** is one line:
+point `SENTINEL_MCP_UPSTREAMS` at their endpoint rather than the
+in-cluster Service. The policy gate, audit log and elevation windows sit
+in front either way, because none of that lives in the MCP server.
+
 ### 1.7 After a reboot: the platform is manually started
 
 **Known and accepted** (owner decision, 2026-07-27). Windows does not
