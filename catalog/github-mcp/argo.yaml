@@ -2,4 +2,4 @@
 name: github-mcp
 namespace: mcp-servers
 # Carries a credential: the ApplicationSet decrypts secrets.enc.yaml.
-secrets: "true"
+secrets: "false"   # holds NO credential — Sentinel injects it per request (7.4)

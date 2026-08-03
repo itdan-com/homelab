@@ -57,6 +57,7 @@ from .config import (
     DOOR_STATIC_CLIENTS,
     DOOR_TOKEN_TTL_MINUTES,
     MCP_UPSTREAMS,
+    upstream_token,
     OIDC_CA_BUNDLE,
     OIDC_CLIENT_ID,
     OIDC_CLIENT_SECRET,
@@ -631,13 +632,28 @@ def _call_upstream(server: str, leaf: str, arguments: dict, *,
                     "isError": True}
     body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": leaf, "arguments": arguments}}
+    headers = {
+        "X-Sentinel-Token": token, "X-Flow-Id": flow_id,
+        "X-Airlock-Principal": principal_email,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        # LAYER 2, and in http mode it is not belt-and-braces: GitHub's
+        # server reads `X-MCP-Toolsets` / `X-MCP-Readonly` /
+        # `X-MCP-Exclude-Tools` from the REQUEST, so a caller could
+        # widen its own toolset by sending them. We set them explicitly
+        # on every forward so a client-supplied value can never survive;
+        # the server's CLI flags remain the ceiling this cannot exceed.
+        "X-MCP-Toolsets": "", "X-MCP-Readonly": "", "X-MCP-Exclude-Tools": "",
+    }
+    # The upstream credential is injected HERE, by the component that
+    # just authorized the call — the workload holds none. A compromised
+    # MCP server pod therefore has nothing to steal.
+    upstream_secret = upstream_token(server)
+    if upstream_secret:
+        headers["Authorization"] = f"Bearer {upstream_secret}"
     try:
         with _http() as c:
-            r = c.post(url, json=body, headers={
-                "X-Sentinel-Token": token, "X-Flow-Id": flow_id,
-                "X-Airlock-Principal": principal_email,
-                "Content-Type": "application/json",
-                "Accept": "application/json, text/event-stream"})
+            r = c.post(url, json=body, headers=headers)
     except httpx.HTTPError as e:
         return {"content": [{"type": "text", "text":
                              f"Upstream '{server}' unreachable: {e}"}],

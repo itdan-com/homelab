@@ -6,7 +6,7 @@
 #
 # This server has no server-side repository allowlist (upstream issue
 # #1685), so the token's own scope IS the repo boundary — layer 1 of
-# CLAUDE.md's three layers. Scope it to the blast radius you are willing
+# CLAUDE.md's three layers. The token lives in SENTINEL, not here. Scope it to the blast radius you are willing
 # to have at all, and let the policy store govern everything inside it:
 # grant Contents + Pull requests and withhold Administration, and
 # repository deletion is not "forbidden by policy", it is IMPOSSIBLE —
@@ -38,10 +38,13 @@ github:
   # sets its API base here (e.g. https://github.acme.internal/api/v3) —
   # the ONLY difference between the SaaS and on-prem deployments.
   host: ""
-  # LAYER 2 of the three: the server's own toolset allowlist. Even a
-  # token that could do more, and a Sentinel grant that permitted more,
-  # cannot exercise a toolset this server did not enable. `context` is
-  # required by the server for identity resolution.
+  # LAYER 2, and load-bearing rather than belt-and-braces: in http mode
+  # this server reads X-MCP-Toolsets / X-MCP-Readonly /
+  # X-MCP-Exclude-Tools from the REQUEST, so a caller could otherwise
+  # widen its own toolset by sending a header. These CLI flags are the
+  # server-side CEILING a request cannot exceed, and Sentinel's door
+  # additionally overwrites those headers on every forward. Two
+  # independent places, because one of them is client-influenced.
   toolsets:
     - context
     - repos
@@ -52,13 +55,12 @@ github:
   # depth, never the only defence.
   readOnly: false
 
-# The token lands here from SOPS (secrets.enc.yaml). It is NEVER in
-# values.yaml in plaintext, and the Deployment reads it from a Secret
-# rather than an env literal so it does not appear in `kubectl get
-# deploy -o yaml`.
-auth:
-  # Set in catalog/github-mcp/secrets.enc.yaml as auth.token
-  token: ""
+# NO auth block, and no Secret in this chart — deliberately. The server
+# has no static-token mode in http (see the Deployment comment); the
+# credential is injected per request by Sentinel's door, which lives in
+# a different trust domain and is the thing that just authorized the
+# call. Adopters put the token in Sentinel's
+# /etc/sentinel/upstream-tokens.json, never in the cluster.
 
 resources:
   requests:

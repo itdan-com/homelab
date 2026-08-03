@@ -185,6 +185,63 @@ decisions.
    upstream appears; (2) and (3) are their own small session, before
    any second person uses Airlock in anger.
 
+## 7.4 credential model — REVERSED by verification (2026-08-02)
+
+The owner asked the right question — *"if I give you a PAT, does it
+enable an entire workforce to use my token? that seems like an
+oversight for self-hosted"* — and verifying it against the shipped
+binary (not the docs) inverted the design:
+
+**GitHub's MCP server has NO static token in http mode.** Its HTTP
+`ServerConfig` has no token field; `GITHUB_PERSONAL_ACCESS_TOKEN` in
+the environment is silently ignored; every request without an
+`Authorization` header gets a 401. **Per-request credentials are the
+only mechanism** (since v0.31.0). GitHub's own changelog claims a
+static fallback — it is wrong, upstream issue #2946 reports the same,
+and every secondary source repeats the error. The first chart was
+built on that false premise and would have 401'd every call.
+
+Consequences, all improvements:
+
+- **The workload holds no credential at all.** Not a mounted secret —
+  none. Compromising the MCP server pod steals nothing. Sentinel's
+  door injects the credential on the call it just authorized.
+- **This is GitHub's own architecture.** Their hosted server runs the
+  same codebase behind an auth reverse proxy that supplies the
+  token (maintainer, #471) — structurally identical to the Sentinel
+  proxy. Independent validation of the shape.
+- **App auth is stdio-only BY DESIGN, and the reasoning is ours:** a
+  network-reachable server with a server-wide app identity would let
+  any client that reaches the port act as the app (PR #2797). They
+  refused the ambient-authority shape for the same reason we do.
+- **A live security finding:** in http mode `X-MCP-Toolsets`,
+  `X-MCP-Readonly` and `X-MCP-Exclude-Tools` are read **from the
+  request**, so a caller could widen its own toolset. The door now
+  overwrites all three on every forward, and the CLI flags stay the
+  server-side ceiling — two places, because one is client-influenced.
+
+**What remains true and must be said plainly:** with one shared token,
+GitHub's audit log attributes every action to the token owner. There
+is no "on behalf of" header — the header inventory is closed, and
+maintainers say the auth layer *"should eventually convey 'on behalf
+of' but we aren'''t quite there yet"* (#2201). So **Sentinel's audit log
+is the only record of which human was behind a call**, which CLAUDE.md
+already asserts and now has an external reason for.
+
+**Named upgrade path, now known to be reachable:** the server accepts
+`ghu_` user-to-server tokens over HTTP. So Sentinel brokering a
+per-person GitHub token gives real per-user attribution at GitHub
+without touching this chart — the door already injects; only the
+source of the token changes. That is the concrete shape of ADR-005
+D9'''s XAA line, and upstream closed #2224 saying they will support
+XAA/ID-JAG when the spec does.
+
+**Open decision for the build:** GitHub'''s maintainers note the shared
+HTTP process was never hardened for many-user use (#471), and stdio'''s
+supported multi-user shape is process-per-user (#132). "One Deployment
+for everyone" vs "one pod per elevated session" is a real 7.4
+decision, not a detail.
+
 ## Phase 7.2 checklist (capability profiles + multi-user Sentinel)
 
 Scope fixed by ADR-005 (Accepted 2026-08-02) → Consequences.

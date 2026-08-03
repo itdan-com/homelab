@@ -36,15 +36,19 @@ spec:
             {{- if .Values.github.readOnly }}
             - "--read-only"
             {{- end }}
+          # NO CREDENTIAL. Not "a secret mounted carefully" — none at
+          # all. In http mode this server has no static token (verified
+          # against the shipped v1.8.0 binary: its ServerConfig has no
+          # token field, and GITHUB_PERSONAL_ACCESS_TOKEN in the
+          # environment is silently ignored while every request without
+          # an Authorization header gets a 401). Every call carries a
+          # per-request credential, injected by Sentinel's door — the
+          # component that just authorized it.
+          #
+          # The consequence is the best security property in this
+          # chart: compromising this pod steals NOTHING. There is no
+          # token in its environment, its filesystem, or its Secrets.
           env:
-            # From a Secret, never a literal: an env value written into
-            # the Deployment is readable by anyone with `get deploy`,
-            # which is a much wider circle than `get secret`.
-            - name: GITHUB_PERSONAL_ACCESS_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "catalog.fullname" . }}
-                  key: token
             {{- with .Values.github.host }}
             - name: GITHUB_HOST
               value: {{ . | quote }}

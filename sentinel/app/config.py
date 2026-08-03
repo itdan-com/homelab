@@ -165,6 +165,34 @@ DOOR_STATIC_CLIENTS = [c.strip() for c in
 # traffic to an attacker's host; the two authorities stay separate.
 # A server with no upstream here is decidable but not callable, which
 # is the honest state until 7.4 deploys the first real one.
+# Upstream CREDENTIALS, kept in Sentinel's trust domain rather than in
+# the workload (7.4). GitHub's MCP server in http mode has no static
+# token at all — verified against the shipped v1.8.0 binary, whose
+# ServerConfig has no token field and which 401s every request lacking
+# an `Authorization` header (GitHub's own changelog claims a static
+# fallback; it does not exist, and upstream issue #2946 reports the
+# same). Every caller must present a per-request credential, so the
+# credential belongs to whoever authorizes the call — us.
+#
+# The security consequence is a genuine improvement: the MCP server pod
+# holds NO credential, so compromising it steals nothing. Format is
+# {"<server>": "<token>"} in a root-owned file the service can read but
+# not write.
+MCP_UPSTREAM_TOKENS_FILE = os.environ.get(
+    "SENTINEL_MCP_UPSTREAM_TOKENS", "/etc/sentinel/upstream-tokens.json")
+
+
+def upstream_token(server: str) -> str | None:
+    """Read at call time, not import time: rotating a credential should
+    be editing one file, never restarting the trust anchor."""
+    import json as _json
+    try:
+        with open(MCP_UPSTREAM_TOKENS_FILE) as f:
+            return (_json.load(f) or {}).get(server) or None
+    except (OSError, ValueError):
+        return None
+
+
 MCP_UPSTREAMS = {
     k.strip(): v.strip() for k, _, v in
     (part.partition("=") for part in
