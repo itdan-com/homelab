@@ -246,6 +246,42 @@ their own hosted service at scale**. So it scales the ordinary way —
 session" is not a decision this phase needs to make. Raised, checked,
 withdrawn.
 
+**Credential rotation — what production orgs actually do, and it is
+already half-built here (owner, 2026-08-02: *"we have to do this every
+90 days for a production org? wtf?"*).** Fine-grained PATs expire, and
+a human re-pasting a token every 90 days is not an operating model —
+it is an outage with a calendar invite. Production answer: **a GitHub
+App**. The App's private key does not expire; *installation tokens*
+are minted from it on demand and live one hour. Nobody rotates
+anything by hand, ever.
+
+And it works with this server: App-token *minting* is stdio-only, but
+*consuming* an already-minted token over HTTP is fully supported —
+including `ghs_` installation tokens. So **Sentinel mints, the door
+injects**, and the MCP server neither knows nor cares. The repo
+already does this exact dance for Mission Control:
+`ops/operator/bin/gh-app-token.sh` signs a 9-minute JWT with the App
+key and exchanges it for a 1-hour installation token. Airlock needs
+its own App (never Mission Control's — attribution must stay
+separable), the same ~40 lines moved into Sentinel, and a small cache
+that refreshes before expiry.
+
+Consequence: **the 90-day rotation problem disappears entirely**, the
+long-lived secret becomes one private key held by the trust anchor,
+and every call upstream carries a credential that dies within the
+hour. Sequenced as 7.4's second half; a PAT is fine for proving the
+chain first because swapping the source of the token changes nothing
+else.
+
+**And the console should be where credentials go (same owner note:
+*"couldn't I just put in the access token somewhere and hit apply?"*).**
+Editing JSON on a host over SSH is exactly the friction the Access
+screen exists to remove. The Servers lens — flagged at the 7.2 close
+as "abstract against example data" and deliberately deferred until a
+real server existed — is now that screen: paste a credential, pick
+self-hosted or GitHub-hosted, save. Passkey-gated and audited like
+every other console write.
+
 **Self-hosted vs GitHub-hosted is ONE CONFIG LINE, by construction.**
 The door reaches an upstream by URL (`SENTINEL_MCP_UPSTREAMS`). Point
 it at the in-cluster Service and the catalog chart serves the traffic;
