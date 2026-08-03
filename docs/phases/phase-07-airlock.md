@@ -101,6 +101,44 @@ decisions.
    door → ladder → forwarding token → sentinel-proxy → this chart →
    GitHub. Nothing above it changes; that is the point of having
    built the gate first.
+
+   **Why not reuse Mission Control's GitHub App (owner asked, and it
+   is the right question).** Two independent reasons. *Technical:* the
+   official server supports App server-to-server auth in **stdio mode
+   only** (7.1 finding) — in http mode, which is what a
+   catalog-deployed Deployment needs, the credential is a PAT.
+   *Architectural, and the one that would still apply if the technical
+   constraint changed:* the operator's App key is **Mission Control's identity**,
+   held outside the cluster on the workstation. Putting it inside an
+   in-cluster workload would (a) hand a compromised pod the identity
+   that opens PRs on this repo, and (b) **collapse attribution** —
+   every PR would read as "the operator", whether the platform
+   proposed it or a person did through Airlock. Two flows that a human
+   must be able to tell apart in the audit log need two identities.
+
+   **"Scope the credential to everything and let Cedar limit repos and
+   deletes" — the correction that makes it work.** Cedar only governs
+   calls that come *through* the gate. A credential broad enough to do
+   anything means anything that gets hold of it — a compromised pod, a
+   bug in the proxy, a NetworkPolicy mistake — has full power on a
+   path Cedar never sees. That is the single-layer failure the
+   three-layer rule exists to prevent. The resolution is a division of
+   labour, not a choice between them:
+
+   > **The credential decides what is POSSIBLE. Cedar decides who does
+   > it.** Scope the token to the blast radius you are willing to have
+   > *at all*, then let policy govern everything inside it.
+
+   Concretely for GitHub: grant Contents + Pull requests and **do not
+   grant Administration** — then repository deletion is not forbidden
+   by policy, it is *impossible*, and stays impossible even if
+   Sentinel is wholly compromised. That is CLAUDE.md's `forbid` ("no
+   button, ever") implemented in physics rather than in software, and
+   it is strictly stronger. Meanwhile the token may cover **all** the
+   org's repos — which is what makes this scale to 500 repos without
+   minting 500 credentials — because *which* repo a given person may
+   touch, at which tier, is exactly the question the matrix and
+   `servers.yaml` resource map already answer.
 5. **7.5 — The Slack MCP server.** Socket Mode (below). This is also
    where `#claude-audit` / `#claude-alerts` become real channels.
 
