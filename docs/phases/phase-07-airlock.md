@@ -491,10 +491,36 @@ What actually makes Airlock the only path, in order of strength:
    the proxy only permits the gateway, an unsanctioned MCP server has
    no route. Defeated by a phone hotspot, so it is a speed bump on
    managed networks, not a boundary.
-3. **Client-side managed policy.** Admin-deployed settings that pin
-   which MCP servers a client may use (see the enterprise-controls
-   note below). Genuine defense in depth on managed devices; it
-   governs the client, so it is only as strong as device management.
+3. **Client-side managed policy — and for Claude Code this is real,
+   not aspirational** (verified against current docs, 2026-08-02).
+   A `managed-mcp.json` deployed at an OS-protected path takes
+   **exclusive control**: users cannot add, modify or use any other
+   MCP server, `claude mcp add` refuses outright, plugin-provided
+   servers are blocked, and claude.ai connectors are suppressed
+   unless explicitly re-enabled. Paths: `/etc/claude-code/` (Linux,
+   WSL), `/Library/Application Support/ClaudeCode/` (macOS),
+   `C:\Program Files\ClaudeCode\` (Windows). "Everyone gets Airlock
+   and nothing else" is literally this file:
+
+   ```json
+   { "mcpServers": { "airlock": {
+       "type": "http", "url": "https://mcp.<domain>/mcp" } } }
+   ```
+
+   Alongside it, `managed-settings.json` (same directories, or
+   MDM/registry, or the claude.ai admin console for server-delivered
+   settings) carries `allowedMcpServers` / `deniedMcpServers` /
+   `allowManagedMcpServersOnly`. Two properties worth knowing:
+   `--mcp-config` and `--strict-mcp-config` do **not** bypass the
+   allow/deny lists, and `deniedMcpServers` merges from every source
+   so a user cannot clear it. One trap: matching by **`serverName` is
+   explicitly not a security boundary** — a user can label any server
+   `github` — so enforcement rules must match on `serverUrl` or
+   `serverCommand`. Note the split: the admin console can deliver the
+   allow/deny settings, but `managed-mcp.json` itself needs MDM or
+   OS-level deployment. And it all still governs the CLIENT, so it is
+   exactly as strong as device management — which is why it ranks
+   below credential monopoly, not above it.
 4. **Making the sanctioned path the easy one.** Birthright
    entitlements at zero approvals and `confirm` elevation that beats
    an IT ticket. Shadow IT is usually a friction symptom: people route
