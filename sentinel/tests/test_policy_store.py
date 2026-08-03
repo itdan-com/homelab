@@ -35,6 +35,22 @@ from app.policy import (  # noqa: E402
 _EXAMPLE = Path(__file__).resolve().parents[1] / "policy-example"
 
 
+def _migrate() -> None:
+    """This file only ever passed because some OTHER test module
+    happened to run first and create the tables — so running it alone
+    failed with `no such table`, which is exactly when someone is
+    debugging it. Own the setup here."""
+    from alembic import command
+    from alembic.config import Config
+    root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(root / "migrations"))
+    command.upgrade(cfg, "head")
+
+
+_migrate()
+
+
 def _mk_store(tmp: Path, **overrides: str) -> Path:
     """A store dir seeded from the committed example, with optional
     per-document overrides — the example store IS the fixture, so the
@@ -173,7 +189,7 @@ def test_broken_edit_keeps_last_good_live(tmp_path):
 def test_classification_and_profiles(tmp_path):
     ap = activate(_mk_store(tmp_path), actor="test")
     s = ap.servers
-    assert classify_tool(s, "github", "get_file") == "read"
+    assert classify_tool(s, "github", "get_file_contents") == "read"
     assert classify_tool(s, "github", "create_pull_request") == "write"
     assert classify_tool(s, "github", "rpc.tools.list") == "read"   # prefix class
     assert classify_tool(s, "github", "rpc.transport.get") == "read"
@@ -182,7 +198,7 @@ def test_classification_and_profiles(tmp_path):
 
     read = profile_tools(s, "github", "read")
     write = profile_tools(s, "github", "write")
-    assert "github.get_file" in read and "github.rpc.*" in read
+    assert "github.get_file_contents" in read and "github.rpc.*" in read
     assert "github.create_pull_request" not in read
     assert set(read) < set(write)  # write profile covers read too
 
@@ -204,3 +220,33 @@ def test_status_endpoint_reports_active_version(tmp_path):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+def test_a_resource_id_is_unique_across_owners(tmp_path):
+    """GitHub sends `owner` and `repo` separately. Deriving from `repo`
+    alone would make acme/homelab and attacker/homelab the SAME
+    resource, so a tier rule written for one would silently govern the
+    other. An identifier that is not unique is not an identifier."""
+    d = _mk_store(tmp_path)
+    ap = activate(d, actor="t")
+    mine = policy.derive_resource(ap.servers, "github", "get_file_contents",
+                                  {"owner": "itdan-com", "repo": "homelab"})
+    theirs = policy.derive_resource(ap.servers, "github", "get_file_contents",
+                                    {"owner": "attacker", "repo": "homelab"})
+    # ids are namespaced by server, so the full id is github/<owner>/<repo>
+    assert mine == ("github/itdan-com/homelab", "prod")
+    assert theirs[0] == "github/attacker/homelab" and theirs[1] != "prod"
+    # a missing half is not a partial identifier — it is no identifier
+    assert policy.derive_resource(ap.servers, "github", "get_file_contents",
+                                  {"repo": "homelab"}) is None
+
+
+def test_unclassified_github_verbs_cannot_be_called(tmp_path):
+    """delete_file exists in the server's enabled toolset and is
+    deliberately absent from the store, so the ladder denies it — the
+    platform does not guess whether an unknown verb is dangerous."""
+    d = _mk_store(tmp_path)
+    ap = activate(d, actor="t")
+    assert policy.classify_tool(ap.servers, "github", "delete_file") is None
+    assert policy.classify_tool(ap.servers, "github", "create_repository") is None
+    assert policy.classify_tool(ap.servers, "github", "get_file_contents") == "read"

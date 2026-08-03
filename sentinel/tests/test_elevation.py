@@ -136,7 +136,7 @@ def _revoke_all(email: str) -> None:
 
 def test_a_refusal_hands_back_a_one_time_elevation_link(c):
     ticket, elev = _ticket_from_refusal(
-        c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+        c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
     assert elev["profile"] == "github:write"
     assert elev["url"].startswith(f"{door.DOOR_ORIGIN}/elevate/")
     assert door._tickets[ticket]["outcome"] == "confirm"
@@ -148,7 +148,7 @@ def test_the_refusal_carries_the_link_in_its_MESSAGE(c):
     it inline — otherwise the caller is told to open a link it was
     never given (found live, 2026-08-02)."""
     body = _call(c, ENGINEER, "github.create_pull_request",
-                 {"repo": "itdan-com/other"}).json()
+                 {"owner": "itdan-com", "repo": "other"}).json()
     err = body["error"]
     assert err["data"]["elevation"]["url"] in err["message"]
     assert "elevation.url" not in err["message"]  # no dangling field reference
@@ -159,7 +159,7 @@ def test_the_page_requires_signing_in_first(c):
     holds an API token, not a browser session, so it cannot follow
     this path — which is the whole point of putting elevation here."""
     ticket, _ = _ticket_from_refusal(
-        c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+        c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
     r = c.get(f"/elevate/{ticket}", follow_redirects=False)
     assert r.status_code == 302
     assert "authorize" in r.headers["location"]
@@ -167,7 +167,7 @@ def test_the_page_requires_signing_in_first(c):
 
 def test_another_person_cannot_use_your_link(c):
     ticket, _ = _ticket_from_refusal(
-        c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+        c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
     r = c.get(f"/elevate/{ticket}",
               cookies={"door_session": _session_cookie(HR_HEAD)})
     assert r.status_code == 403
@@ -175,7 +175,7 @@ def test_another_person_cannot_use_your_link(c):
 
 def test_a_forged_form_post_is_refused(c):
     ticket, _ = _ticket_from_refusal(
-        c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+        c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
     def confirm_grants() -> int:
         with SessionLocal() as s:
             p = s.scalars(select(Principal).where(
@@ -195,7 +195,7 @@ def test_only_an_offered_window_is_accepted(c):
     """The windows come from the matrix; a hand-typed 10-hour window is
     not a negotiation."""
     ticket, _ = _ticket_from_refusal(
-        c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+        c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
     page = c.get(f"/elevate/{ticket}",
                  cookies={"door_session": _session_cookie(ENGINEER)})
     csrf = page.text.split('name=csrf value=')[1].split('>')[0].strip()
@@ -218,15 +218,15 @@ def _confirm(c, email, ticket, minutes=30):
 def test_confirm_unlocks_the_call_and_the_window_is_recorded(c):
     try:
         ticket, _ = _ticket_from_refusal(
-            c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+            c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
         assert "error" in _call(c, ENGINEER, "github.create_pull_request",
-                                {"repo": "itdan-com/other"}).json()
+                                {"owner": "itdan-com", "repo": "other"}).json()
 
         r = _confirm(c, ENGINEER, ticket, minutes=60)
         assert r.status_code == 200 and "60 minutes" in r.text
 
         assert "error" not in _call(c, ENGINEER, "github.create_pull_request",
-                                    {"repo": "itdan-com/other"}).json()
+                                    {"owner": "itdan-com", "repo": "other"}).json()
         with SessionLocal() as s:
             g = s.scalars(select(CapabilityGrant).where(
                 CapabilityGrant.granted_via == "confirm").order_by(
@@ -241,7 +241,7 @@ def test_confirm_unlocks_the_call_and_the_window_is_recorded(c):
 def test_a_link_works_once(c):
     try:
         ticket, _ = _ticket_from_refusal(
-            c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+            c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
         assert _confirm(c, ENGINEER, ticket).status_code == 200
         assert c.get(f"/elevate/{ticket}",
                      cookies={"door_session": _session_cookie(ENGINEER)}
@@ -256,7 +256,7 @@ def test_self_elevation_does_not_open_the_approve_rung(c):
     every high-risk tool would be one self-service click away."""
     try:
         ticket, _ = _ticket_from_refusal(
-            c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+            c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
         _confirm(c, ENGINEER, ticket)
         # harriet's rung is approve; prove a confirm-grant cannot reach it
         t2, elev = _ticket_from_refusal(
@@ -369,19 +369,19 @@ def test_an_honest_session_costs_at_most_one_approval(c):
         assert "result" in rpc("tools/list").json()
         for _ in range(3):
             assert "result" in rpc("tools/call", {
-                "name": "github.get_file",
-                "arguments": {"repo": "itdan-com/other"}}).json()
+                "name": "github.get_file_contents",
+                "arguments": {"owner": "itdan-com", "repo": "other"}}).json()
         assert taps["n"] == 0, "birthright must cost nothing"
 
         # one write ⇒ one human act, covering every write in the window
         ticket, _ = _ticket_from_refusal(
-            c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+            c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
         _confirm(c, ENGINEER, ticket, minutes=30)
         taps["n"] += 1
         for _ in range(3):
             assert "error" not in rpc("tools/call", {
                 "name": "github.create_pull_request",
-                "arguments": {"repo": "itdan-com/other"}}).json()
+                "arguments": {"owner": "itdan-com", "repo": "other"}}).json()
         assert taps["n"] == 1
     finally:
         _revoke_all(ENGINEER)
@@ -392,9 +392,9 @@ def test_the_audit_log_reconstructs_the_window(c):
     elevation window' — the grant, its via, and every call under it."""
     try:
         ticket, _ = _ticket_from_refusal(
-            c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+            c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
         _confirm(c, ENGINEER, ticket, minutes=30)
-        _call(c, ENGINEER, "github.create_pull_request", {"repo": "itdan-com/other"})
+        _call(c, ENGINEER, "github.create_pull_request", {"owner": "itdan-com", "repo": "other"})
         with SessionLocal() as s:
             rows = s.scalars(select(AuditEvent).where(
                 AuditEvent.principal == ENGINEER)).all()

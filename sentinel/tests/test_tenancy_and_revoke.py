@@ -122,11 +122,11 @@ def test_flowless_profile_grant_denies_closed_until_the_person_door_exists():
     with SessionLocal() as s:
         p = get_or_create_principal(s, email=f"{_uid('bob')}@example.com")
         _, tok = mint_profile_grant(
-            s, profile="github:read", tools=["github.get_file"],
+            s, profile="github:read", tools=["github.get_file_contents"],
             window_minutes=30, granted_by="tester", granted_via="confirm",
             principal=p,
         )
-        ok, reason, _ = check_capability(s, token=tok, tool="github.get_file",
+        ok, reason, _ = check_capability(s, token=tok, tool="github.get_file_contents",
                                          flow_id=_uid("any"))
         assert (ok, reason) == (False, "scope-mismatch")
 

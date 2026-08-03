@@ -5,11 +5,23 @@
 # what makes an assigned server REACHABLE at zero approvals while an
 # unassigned one cannot even complete initialize.
 github:
+  # Real tool names from the official server's `repos` and
+  # `pull_requests` toolsets (v1.8.0). Anything not listed here is
+  # UNCLASSIFIED and therefore denied — the platform does not guess
+  # whether an unknown verb is dangerous — so this list is also the
+  # place a new GitHub release gets reviewed rather than absorbed.
   tools:
-    read: [get_file, list_pull_requests, "rpc.*"]
-    write: [create_pull_request, merge_pull_request]
+    read: [get_file_contents, list_pull_requests, list_branches,
+           list_commits, list_tags, list_releases, "rpc.*"]
+    write: [create_pull_request, update_pull_request, merge_pull_request,
+            create_or_update_file, create_branch]
+    # Deliberately NOT classified, so they cannot be called at all:
+    # delete_file, create_repository, list_repository_collaborators.
   resource:
-    from: params.arguments.repo
+    # TWO arguments, joined — GitHub sends owner and repo separately,
+    # and `repo` alone would make acme/homelab and attacker/homelab the
+    # same resource.
+    from: [params.arguments.owner, params.arguments.repo]
     tiers:
       prod: [itdan-com/homelab]
 echo:

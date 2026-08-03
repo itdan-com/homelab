@@ -125,7 +125,7 @@ def test_engineering_sees_its_tools_and_hr_is_invisible(c):
     absent from alice's listing entirely, not listed-and-refused."""
     tools = _tools(c, "alice@example.com")
     assert tools["echo.say"] == "permit"              # birthright, zero approvals
-    assert tools["github.get_file"] == "permit"       # write-on-request implies read
+    assert tools["github.get_file_contents"] == "permit"       # write-on-request implies read
     assert tools["github.create_pull_request"] == "confirm"  # borrowable, and says so
     assert not [t for t in tools if t.startswith("hr-platform.")]
 
@@ -171,7 +171,7 @@ def test_a_borrowable_refusal_carries_the_offer(c):
     for 30 minutes?' instead of a dead end."""
     r = _rpc(c, _token("alice@example.com"), "tools/call",
              {"name": "github.create_pull_request",
-              "arguments": {"repo": "itdan-com/other"}})
+              "arguments": {"owner": "itdan-com", "repo": "other"}})
     err = r.json()["error"]
     assert err["data"]["outcome"] == "confirm"
     assert err["data"]["reason"] == "elevation-available"
@@ -194,7 +194,7 @@ def test_holding_a_grant_turns_the_refusal_into_a_call(c):
     try:
         r = _rpc(c, _token(email), "tools/call",
                  {"name": "github.create_pull_request",
-                  "arguments": {"repo": "itdan-com/other"}})
+                  "arguments": {"owner": "itdan-com", "repo": "other"}})
         assert "error" not in r.json(), r.text
     finally:
         # Live authority must not leak out of the test that minted it:

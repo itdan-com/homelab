@@ -222,9 +222,19 @@ def load_store(policy_dir: str | Path = POLICY_DIR):
         resource = spec.get("resource")
         if resource is not None:
             src = (resource or {}).get("from", "")
-            if not re.fullmatch(r"params\.arguments\.[A-Za-z0-9_.-]{1,64}", str(src)):
+            # One key, or several joined with "/" — several because a
+            # resource identifier has to be unique. GitHub passes
+            # `owner` and `repo` separately; deriving from `repo` alone
+            # would make two different orgs' identically-named repos the
+            # same resource, so a tier rule for one would govern the
+            # other.
+            srcs = src if isinstance(src, list) else [src]
+            if not srcs or not all(
+                    re.fullmatch(r"params\.arguments\.[A-Za-z0-9_.-]{1,64}",
+                                 str(one)) for one in srcs):
                 errors.append(f"server {name!r}: resource.from must be "
-                              f"'params.arguments.<key>', got {src!r}")
+                              f"'params.arguments.<key>' (or a list of "
+                              f"them), got {src!r}")
             for tier, members in ((resource or {}).get("tiers") or {}).items():
                 if not _safe(str(tier), f"server {name!r} tier", errors):
                     continue
@@ -686,13 +696,25 @@ def derive_resource(servers: dict, server: str, leaf: str,
     rmap = spec.get("resource")
     if leaf.startswith("rpc.") or rmap is None:
         return f"{server}/*", "unclassified"
-    key_path = rmap["from"].split(".")[2:]  # validated shape at load
-    value = arguments or {}
-    for key in key_path:
-        if not isinstance(value, dict) or key not in value:
+    # `from` may name ONE argument or SEVERAL, joined with "/". Several
+    # is not a convenience: GitHub passes `owner` and `repo` as separate
+    # arguments, so deriving from `repo` alone would make `acme/homelab`
+    # and `attacker/homelab` the same resource — a tier rule written for
+    # one would silently govern the other. An identifier that is not
+    # unique is not an identifier.
+    sources = rmap["from"] if isinstance(rmap["from"], list) else [rmap["from"]]
+    parts = []
+    for source in sources:
+        value = arguments or {}
+        for key in str(source).split(".")[2:]:
+            if not isinstance(value, dict) or key not in value:
+                return None
+            value = value[key]
+        if not isinstance(value, str) or not _SAFE_RESOURCE.fullmatch(value):
             return None
-        value = value[key]
-    if not isinstance(value, str) or not _SAFE_RESOURCE.fullmatch(value):
+        parts.append(value)
+    value = "/".join(parts)
+    if not _SAFE_RESOURCE.fullmatch(value):
         return None
     tier = "unclassified"
     for name, members in (rmap.get("tiers") or {}).items():

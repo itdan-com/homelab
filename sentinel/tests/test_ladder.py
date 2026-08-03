@@ -65,8 +65,8 @@ def _person(s, email):
 def test_birthright_read_is_permit_with_full_audit(example_policy):
     with SessionLocal() as s:
         alice = _person(s, "alice@example.com")
-        r = ladder.decide(s, principal=alice, tool="github.get_file",
-                          arguments={"repo": "acme/website"})
+        r = ladder.decide(s, principal=alice, tool="github.get_file_contents",
+                          arguments={"owner": "acme", "repo": "website"})
         assert (r.allowed, r.outcome, r.grant_id) == (True, "permit", None)
         assert r.resource == "github/acme/website"
 
@@ -94,7 +94,7 @@ def test_confirm_outcome_offers_elevation_then_grant_unlocks(example_policy):
     with SessionLocal() as s:
         alice = _person(s, "alice@example.com")
         write = dict(tool="github.create_pull_request",
-                     arguments={"repo": "acme/website"})
+                     arguments={"owner": "acme", "repo": "website"})
 
         r = ladder.decide(s, principal=alice, **write)
         assert (r.allowed, r.outcome, r.reason) == (
@@ -166,9 +166,9 @@ def test_forbid_trumps_possession_on_prod_tier(example_policy):
 def test_unassigned_server_is_invisible_even_for_handshake(example_policy):
     with SessionLocal() as s:
         harriet = _person(s, "harriet@example.com")
-        for tool in ("github.rpc.initialize", "github.get_file"):
+        for tool in ("github.rpc.initialize", "github.get_file_contents"):
             r = ladder.decide(s, principal=harriet, tool=tool,
-                              arguments={"repo": "acme/website"})
+                              arguments={"owner": "acme", "repo": "website"})
             assert (r.allowed, r.outcome) == (False, "forbid"), tool
 
 
@@ -196,19 +196,19 @@ def test_kill_switch_beats_policy(example_policy):
         alice = _person(s, "alice@example.com")
         engage_kill(s, by="ladder-test", reason="drill")
         try:
-            r = ladder.decide(s, principal=alice, tool="github.get_file",
-                              arguments={"repo": "acme/website"})
+            r = ladder.decide(s, principal=alice, tool="github.get_file_contents",
+                              arguments={"owner": "acme", "repo": "website"})
             assert (r.allowed, r.reason) == (False, "kill-engaged")
         finally:
             release_kill(s, by="ladder-test")
 
 
 def test_grant_covers_prefix_classes():
-    g = CapabilityGrant(tools_json=["github.rpc.*", "github.get_file"],
+    g = CapabilityGrant(tools_json=["github.rpc.*", "github.get_file_contents"],
                         tool="profile:github:read")
     assert _grant_covers(g, "github.rpc.transport.get")
     assert _grant_covers(g, "github.rpc")          # the bare class name
-    assert _grant_covers(g, "github.get_file")
+    assert _grant_covers(g, "github.get_file_contents")
     assert not _grant_covers(g, "github.rpcx")     # the dot is load-bearing
     assert not _grant_covers(g, "github.merge_pull_request")
 
