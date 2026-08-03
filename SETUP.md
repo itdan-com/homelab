@@ -330,58 +330,79 @@ risk tools instead file a request on the Sentinel console for a
 ### 1.6c Adding the GitHub tools (Phase 7.4)
 
 The GitHub MCP server ships with the platform as a catalog chart —
-GitHub's official image, unmodified. You supply one token; everything
-else is already wired.
+GitHub's official image, unmodified. You create one GitHub App and hand
+Sentinel its key; everything else is already wired, and nothing
+expires on a schedule afterwards.
 
-**Step 1 — mint a fine-grained token.** Go to
-[github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new):
+**Step 1 — create Airlock's GitHub App** (once, ~2 minutes; nothing
+expires afterwards). At
+[github.com/settings/apps/new](https://github.com/settings/apps/new):
 
 | Field | Value |
 |---|---|
-| Token name | `airlock-mcp` |
-| Resource owner | your org or account |
-| Expiration | 90 days (rotate; see below) |
-| Repository access | *Only select repositories* → the ones this platform may touch |
+| Name | `<something>-airlock` (globally unique) |
+| Homepage URL | your repo URL |
+| Webhook | **UNCHECK "Active"** — or the form demands a URL and refuses to submit |
 | Repository permissions | **Contents: Read and write** · **Pull requests: Read and write** |
 | Everything else | leave alone — and **do not** grant *Administration* |
+| Where can this be installed | Only on this account |
 
-That last row is the important one. This server has no repository
-allowlist of its own, so **the token's scope is the boundary**.
-Withholding *Administration* means repository deletion is not
-"forbidden by policy" — it is impossible, and stays impossible even if
-Sentinel itself is compromised. Grant only what should *ever* be
-possible through this path; who may do what *within* it is the access
-policy's job, not the token's.
+Create it, note the **App ID**, click **Generate a private key** (a
+`.pem` downloads), then **Install App** → your account → select the
+repositories this platform may touch.
 
-**Step 2 — put it on the Sentinel host** (not in the cluster, and not
-in git):
+That "no Administration" row is the important one. The MCP server has
+no repository allowlist of its own, so **the App's permissions are the
+boundary**. Withholding *Administration* means repository deletion is
+not "forbidden by policy" — it is impossible, and stays impossible even
+if Sentinel itself is compromised. Grant only what should *ever* be
+possible here; who may do what *within* that is the access policy's
+job.
+
+> **Why an App and not a personal access token.** A PAT expires — 90
+> days, a year — and a human re-pasting one on a schedule is an outage
+> with a calendar invite. An App's private key does not expire, and
+> Sentinel mints a fresh *installation token* from it that lives about
+> an hour. Nobody rotates anything by hand, ever. This is what
+> production organisations do, and it is the same mechanism the
+> operator already uses for Mission Control — with a **separate** App,
+> so the audit trail can still tell the platform's actions from a
+> person's.
+
+**Step 2 — hand the key to Sentinel** (not to the cluster, and not to
+git):
 
 ```bash
+sudo install -m 0640 -o root -g sentinel ~/Downloads/<the-app>.private-key.pem \
+  /etc/sentinel/airlock-github-app.pem
 sudo install -m 0640 -o root -g sentinel /dev/null /etc/sentinel/upstream-tokens.json
 sudo nano /etc/sentinel/upstream-tokens.json
 ```
 
-Paste exactly this, with your token:
+Paste, with your App ID:
 
 ```json
-{ "github": "github_pat_YOUR_TOKEN_HERE" }
+{ "github": { "app_id": "1234567",
+              "private_key_file": "/etc/sentinel/airlock-github-app.pem" } }
 ```
 
-Save. Root owns the file; the service can read it and cannot rewrite
-it. **Edit it, never `echo` it** — a token echoed into a shell lands in
-your history.
+Save. Root owns both files; the service can read them and cannot
+rewrite them. Sentinel discovers the installation automatically when
+the App is installed in exactly one place; with more than one, add
+`"installation_id": "..."` rather than letting anything guess.
 
-> **Why the token lives here and not in the cluster.** GitHub's server
-> has no static-token mode over HTTP: every request must carry its own
-> credential. So the credential belongs to whoever authorizes the call
-> — Sentinel — and the workload holds **nothing**. Compromising the MCP
+> **Why the credential lives here and not in the cluster.** GitHub's
+> server has no static-token mode over HTTP: every request must carry
+> its own credential. So it belongs to whoever authorizes the call —
+> Sentinel — and the workload holds **nothing**. Compromising the MCP
 > server pod steals no credential, because there isn't one in it. This
 > is also how GitHub runs their own hosted server: same code, with an
 > auth proxy in front supplying the token.
 
-**Rotation** is editing that one file and restarting the door
-(`sudo systemctl restart sentinel-door`) — no chart change, no redeploy,
-no secret to re-encrypt.
+**Rotation** is not a chore: installation tokens are minted on demand
+and refreshed before they expire. The only long-lived secret is the
+App's private key, and replacing it is overwriting one file. Revoking
+everything is uninstalling the App on GitHub.
 
 **Using GitHub's hosted server instead of self-hosting** is one line:
 point `SENTINEL_MCP_UPSTREAMS` at their endpoint rather than the

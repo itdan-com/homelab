@@ -67,6 +67,7 @@ from .config import (
 )
 from .db import SessionLocal
 from .models import AuditEventType, Principal
+from .upstream_auth import UpstreamAuthError
 from .service import (
     mint_forwarding_token,
     audit,
@@ -648,7 +649,17 @@ def _call_upstream(server: str, leaf: str, arguments: dict, *,
     # The upstream credential is injected HERE, by the component that
     # just authorized the call — the workload holds none. A compromised
     # MCP server pod therefore has nothing to steal.
-    upstream_secret = upstream_token(server)
+    try:
+        upstream_secret = upstream_token(server)
+    except UpstreamAuthError as e:
+        # Refuse loudly. Calling on without a credential would produce
+        # an upstream 401 that reads like a policy problem, and the
+        # operator would debug the wrong layer.
+        log.warning("upstream credential unavailable for %s: %s", server, e)
+        return {"content": [{"type": "text", "text":
+                             f"This platform's credential for '{server}' is "
+                             f"not usable ({e}). Nothing was attempted."}],
+                "isError": True}
     if upstream_secret:
         headers["Authorization"] = f"Bearer {upstream_secret}"
     try:

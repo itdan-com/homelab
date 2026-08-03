@@ -184,13 +184,11 @@ MCP_UPSTREAM_TOKENS_FILE = os.environ.get(
 
 def upstream_token(server: str) -> str | None:
     """Read at call time, not import time: rotating a credential should
-    be editing one file, never restarting the trust anchor."""
-    import json as _json
-    try:
-        with open(MCP_UPSTREAM_TOKENS_FILE) as f:
-            return (_json.load(f) or {}).get(server) or None
-    except (OSError, ValueError):
-        return None
+    be editing one file, never restarting the trust anchor. App-backed
+    entries mint a short-lived token here (app.upstream_auth), so a
+    production deployment never has a 90-day rotation chore."""
+    from .upstream_auth import token_for
+    return token_for(server, MCP_UPSTREAM_TOKENS_FILE)
 
 
 MCP_UPSTREAMS = {
