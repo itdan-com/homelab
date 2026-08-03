@@ -233,7 +233,7 @@ Decisions and their whys live in [`docs/adr/`](docs/adr/).
 
 ## License
 
-**AGPL-3.0-or-later** — Copyright (C) 2026 Bob Slosing. Use it, run it,
+**AGPL-3.0-or-later** — Copyright (C) 2026 Daniel Slosing. Use it, run it,
 learn from it freely; if you modify it and offer it as a product or
 service, your modifications must be published under the same license.
 The copyright is held solely by the author, which keeps dual licensing
