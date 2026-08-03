@@ -142,6 +142,18 @@ def test_a_refusal_hands_back_a_one_time_elevation_link(c):
     assert door._tickets[ticket]["outcome"] == "confirm"
 
 
+def test_the_refusal_carries_the_link_in_its_MESSAGE(c):
+    """MCP clients surface the message string and may drop the
+    structured payload, so a refusal that names a remedy has to carry
+    it inline — otherwise the caller is told to open a link it was
+    never given (found live, 2026-08-02)."""
+    body = _call(c, ENGINEER, "github.create_pull_request",
+                 {"repo": "itdan-com/other"}).json()
+    err = body["error"]
+    assert err["data"]["elevation"]["url"] in err["message"]
+    assert "elevation.url" not in err["message"]  # no dangling field reference
+
+
 def test_the_page_requires_signing_in_first(c):
     """No cookie ⇒ the door sends you to the company IdP. The MODEL
     holds an API token, not a browser session, so it cannot follow

@@ -743,21 +743,30 @@ def _handle_rpc(msg: dict, claims: dict, flow_id: str) -> dict | None:
             # client can offer "unlock this?" instead of a dead end.
             data = {"outcome": result.outcome, "reason": result.reason,
                     "resource": result.resource, "policy_version": ap.version}
+            message = "Not permitted."
             if result.hint:
                 ticket = _elevation_ticket(
                     principal_id=claims["sub"], email=claims["email"],
                     outcome=result.outcome, profile=result.hint["profile"],
                     windows=result.hint["windows"], tool=name)
-                data["elevation"] = {**result.hint,
-                                     "url": f"{DOOR_ORIGIN}/elevate/{ticket}"}
-            return _rpc_error(rid, -32003, {
-                "elevation-available": "This tool needs a timed elevation you "
-                                       "can start yourself — open the link in "
-                                       "`elevation.url` and confirm.",
-                "approval-required": "This tool needs another person's "
-                                     "approval — open the link in "
-                                     "`elevation.url` to ask.",
-            }.get(result.reason, "Not permitted."), data)
+                url = f"{DOOR_ORIGIN}/elevate/{ticket}"
+                data["elevation"] = {**result.hint, "url": url}
+                # The URL goes in the MESSAGE, not only in `data`: MCP
+                # clients surface the message string and may drop the
+                # structured payload entirely, which turned "open the
+                # link in elevation.url" into an instruction pointing at
+                # something invisible (found live, 2026-08-02 — the
+                # calling agent correctly refused to go hunting for it).
+                # A refusal that names a remedy has to carry it.
+                message = (
+                    f"This tool needs a timed elevation you can start "
+                    f"yourself. Open this link and confirm a window "
+                    f"({'/'.join(str(w) for w in result.hint['windows'])} "
+                    f"minutes): {url}"
+                    if result.reason == "elevation-available" else
+                    f"This tool needs approval from a different person. "
+                    f"Open this link to request it: {url}")
+            return _rpc_error(rid, -32003, message, data)
         return {"jsonrpc": "2.0", "id": rid,
                 "result": _call_upstream(server, leaf, arguments,
                                          principal_id=principal_id,
