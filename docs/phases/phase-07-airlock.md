@@ -63,8 +63,44 @@ decisions.
    knows which PERSON is calling. Corrects the earlier in-repo claim
    that MCP servers need no client authorization because the proxy
    handles it — true for an in-cluster agent, incomplete for humans.
-4. **7.4 — The GitHub MCP server, with XAA.** Its own session;
-   upstream and toolset decided in 7.1.
+4. **7.4 — The GitHub MCP server.** Its own session; upstream and
+   toolset decided in 7.1.
+
+   **Clarified 2026-08-02 (owner confusion, and the owner was right):**
+   *"wouldn't you be building the github mcp server in a portable
+   scalable docker container in this infra we've created? it would
+   almost COME with the stack?"* — **yes, exactly that**, and the
+   earlier "give me your GHES hostname" framing was wrong. Nobody
+   needs to own a GitHub Enterprise Server to do this phase. The MCP
+   server is **a catalog chart like every other workload**: official
+   `ghcr.io/github/github-mcp-server` image in native http mode, a
+   Deployment behind the sentinel-proxy, `exposes-mcp: "true"`,
+   fronted by the same enforcement path everything else uses. It ships
+   WITH the stack; a new deployment gets it by dropping the chart in
+   `catalog/`, exactly like OpenWebUI or Postgres.
+
+   Only two things vary per deployment, and neither is
+   infrastructure: **which GitHub it points at** (`github.com` by
+   default; a company's self-hosted GHES is one values line —
+   `GITHUB_HOST` — which is where the original "on-prem" idea
+   actually lands, as a *variant*, not a requirement) and **the
+   credential** (a fine-grained PAT in SOPS; App auth is stdio-only
+   per 7.1, and there is no server-side repo allowlist, so the PAT's
+   own scope IS the repo boundary — layer 1 of the three-layer rule).
+
+   **Where scale comes from:** the server is a stateless HTTP proxy to
+   an API, so it is `replicas` + the existing KEDA pattern like any
+   other Deployment. The real ceiling is GitHub's per-token rate
+   limit, not pods — which is a layer-1 credential question (more
+   tokens / an App installation), not a Kubernetes one. Worth stating
+   because "scale the MCP server" sounds like a cluster problem and
+   is not.
+
+   **How it completes the chain:** every "allowed by policy, but no
+   upstream is configured" answer from 7.3 becomes a real API call —
+   door → ladder → forwarding token → sentinel-proxy → this chart →
+   GitHub. Nothing above it changes; that is the point of having
+   built the gate first.
 5. **7.5 — The Slack MCP server.** Socket Mode (below). This is also
    where `#claude-audit` / `#claude-alerts` become real channels.
 
