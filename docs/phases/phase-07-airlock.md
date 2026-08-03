@@ -141,6 +141,49 @@ decisions.
    `servers.yaml` resource map already answer.
 5. **7.5 — The Slack MCP server.** Socket Mode (below). This is also
    where `#claude-audit` / `#claude-alerts` become real channels.
+6. **7.6 — The record, made durable (added 2026-08-02, owner ask).**
+   *"our LOGS will show that exact flow right? what they accessed WHO
+   accessed it when… we'll want a database of sorts like 90 days and
+   optional log streaming to a better service"* — split honestly into
+   what already exists and what does not.
+
+   **Already true today.** Every decision writes an `audit_events`
+   row carrying `ts`, `principal` (the person's email), `tool`,
+   `resource` (the derived object, e.g. `itdan-com/homelab`),
+   `policy_version` (the exact policy that decided it), `flow_id`,
+   `event_type` (use/denial/grant/…), and a JSON `details` blob with
+   the outcome, reason, and grant id. So "who accessed what, when,
+   under which authority, and was it allowed" is answerable **now**,
+   per call, and the console reads it. This needs nothing from the
+   GitHub MCP server: the record is written at the gate, which is why
+   it works identically for every future server.
+
+   **Not true yet — three gaps, in priority order.**
+   1. **The effect is unrecorded.** We log the decision, not what the
+      upstream did with it. A permitted call that GitHub then rejects,
+      or that created PR #42, looks identical in the log. Fix: the
+      door audits the upstream response — status, latency, error
+      class, and the upstream's own object id where it returns one.
+      **Deliberately not the payload**: PR bodies and file contents
+      are a privacy and retention liability, and the upstream keeps
+      its own content log. Small; belongs *with* 7.4.
+   2. **No integrity.** `audit_events` is a mutable local table
+      (ADR-004 debt 3): anyone with the DB file can edit history
+      silently. Fix: a `prev_hash` chain so tampering is detectable,
+      plus a verify command. ~20 lines and a migration.
+   3. **No retention, rotation, or export.** The table grows forever
+      and lives only on one host. Fix: a configurable window
+      (default **90 days**), rotation that **seals and exports a
+      segment rather than deleting rows** (deleting from a hash chain
+      breaks it — segments get sealed with their terminal hash), and
+      a JSONL sink. The sink is the streaming answer: Phase 8 already
+      plans Loki and a "Claude actions dashboard", so Sentinel's
+      audit becomes one more Loki stream, and any SIEM that reads
+      JSONL or Loki works with no Sentinel change.
+
+   Sequencing: (1) rides 7.4 because it is where the first real
+   upstream appears; (2) and (3) are their own small session, before
+   any second person uses Airlock in anger.
 
 ## Phase 7.2 checklist (capability profiles + multi-user Sentinel)
 
