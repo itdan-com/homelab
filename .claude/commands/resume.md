@@ -34,13 +34,28 @@ first and report PASS/FAIL on each line before reading further:
 6. Sentinel — the trust anchor's units AND its transport (added
    2026-08-02: `Active: running` told the truth for five days while
    the console served plain http; check the wire, not the unit):
-   `systemctl is-active sentinel-broker sentinel-admin` → both
-   `active`; then
-   `curl -sk -o /dev/null -w '%{http_code}\n' --max-time 5 https://localhost:8400/healthz`
-   → `200` over httpS specifically. An http-only answer on 8400
-   means the units are running stale code or a stale unit file —
-   the fix is the install line in SETUP §1.7 (it restarts and
+   **THREE units since 7.3** — broker (mTLS, the cluster), admin
+   (loopback, the operator, holds the kill switch), door (TLS,
+   people with MCP clients):
+   `systemctl is-active sentinel-broker sentinel-admin sentinel-door`
+   → all three `active`; then both wires:
+   `curl -sk -o /dev/null -w 'admin %{http_code}\n' --max-time 5 https://localhost:8400/healthz`
+   → `200` over httpS specifically, and
+   `curl -sk --max-time 5 https://localhost:8402/healthz`
+   → `{"status":"ok","listener":"door",…,"policy_version":"…"}`.
+   **A null `policy_version` is a FAIL even though the unit is
+   active**: it means the door has no policy loaded, so every
+   person-path call denies closed and Airlock is silently shut. An
+   http-only answer on 8400 means stale code or a stale unit file —
+   the fix is the install line in SETUP §1.6 (it restarts and
    wire-probes), not a manual restart.
+7. Logs (Phase 8, added 2026-08-04) — Loki is where a problem gets
+   *counted* rather than glimpsed once:
+   `kubectl -n monitoring get pods -l app.kubernetes.io/name=loki`
+   and the Alloy DaemonSet → all Running. Loki being down loses
+   observability, not service, so it is a WARN not a stop-work —
+   but note it, because the next thing you debug will be harder
+   without it.
 
 Any FAIL: diagnose and fix (or log to STATUS.md Backlog) before phase
 work. A green gate is the entry criterion for every session.
