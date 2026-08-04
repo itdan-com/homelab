@@ -661,14 +661,15 @@ def _call_upstream(server: str, leaf: str, arguments: dict, *,
     try:
         upstream_secret = upstream_token(server, caller=principal_email)
     except UpstreamAuthError as e:
-        # Refuse loudly. Calling on without a credential would produce
-        # an upstream 401 that reads like a policy problem, and the
-        # operator would debug the wrong layer.
+        # Refuse loudly, and — when the fix is the person linking their
+        # own account — hand back the link that does it, the same way a
+        # policy refusal carries its elevation link.
         log.warning("upstream credential unavailable for %s: %s", server, e)
-        return {"content": [{"type": "text", "text":
-                             f"This platform's credential for '{server}' is "
-                             f"not usable ({e}). Nothing was attempted."}],
-                "isError": True}
+        text = f"This platform's credential for '{server}' is not usable ({e})."
+        if "link your account" in str(e) or "linked account" in str(e):
+            text = (f"{e}. Open this link to connect your own {server} "
+                    f"account: {DOOR_ORIGIN}/link/{server}")
+        return {"content": [{"type": "text", "text": text}], "isError": True}
     if upstream_secret:
         headers["Authorization"] = f"Bearer {upstream_secret}"
     try:
@@ -1023,6 +1024,66 @@ def elevate_submit(ticket: str, request: Request, csrf: str = Form(...),
                  "<p>Someone with a Sentinel passkey has to approve this. "
                  "You will be able to make the call once they do — no need "
                  "to sign in again.</p>")
+
+
+# --- linking your own account at an upstream (7.7) ---------------------------
+#
+# A person authorises the upstream themselves, once, and Sentinel holds
+# THEIR token. Same shape as the elevation doors and for the same
+# reason: it happens in a browser behind the company sign-in, where the
+# model cannot follow. A model that could link accounts could link
+# somebody else's.
+
+@app.get("/link/{server}", tags=["elevation"])
+def link_start(server: str, request: Request):
+    sess = _session(request)
+    if sess is None:
+        sid = secrets.token_urlsafe(24)
+        _pending[sid] = {"t": time.time(), "kind": "browser",
+                         "verifier": secrets.token_urlsafe(48),
+                         "return_to": f"{DOOR_ORIGIN}/link/{server}"}
+        return RedirectResponse(_upstream_login(sid), status_code=302)
+    from .config import MCP_UPSTREAM_TOKENS_FILE
+    from . import upstream_auth
+    state = secrets.token_urlsafe(24)
+    _pending[state] = {"t": time.time(), "kind": "link", "server": server,
+                       "caller": sess["email"], "verifier": ""}
+    try:
+        url = upstream_auth.link_start_url(
+            server, MCP_UPSTREAM_TOKENS_FILE,
+            f"{DOOR_ORIGIN}/link/{server}/callback", state)
+    except upstream_auth.UpstreamAuthError as e:
+        return _page("Not available", f"<h1>Cannot link {server}</h1><p>{e}</p>",
+                     409)
+    return RedirectResponse(url, status_code=302)
+
+
+@app.get("/link/{server}/callback", tags=["elevation"])
+def link_callback(server: str, request: Request):
+    from .config import MCP_UPSTREAM_TOKENS_FILE
+    from . import upstream_auth
+    sess = _pending.pop(request.query_params.get("state") or "", None)
+    if sess is None or sess.get("kind") != "link":
+        return _page("Expired", "<h1>That link expired</h1>"
+                     "<p>Start again from your client.</p>", 400)
+    code = request.query_params.get("code")
+    if not code:
+        return _page("Refused", f"<h1>{server} did not authorise</h1>", 400)
+    try:
+        upstream_auth.link_complete(server, MCP_UPSTREAM_TOKENS_FILE, code,
+                                    sess["caller"],
+                                    f"{DOOR_ORIGIN}/link/{server}/callback")
+    except upstream_auth.UpstreamAuthError as e:
+        return _page("Refused", f"<h1>Could not link {server}</h1><p>{e}</p>", 400)
+    with SessionLocal() as s:
+        audit(s, AuditEventType.CREDENTIAL_ADDED, principal=sess["caller"],
+              details={"kind": "upstream-account-linked", "server": server})
+        s.commit()
+    return _page("Linked",
+                 f"<h1>{server} is linked to your account</h1>"
+                 f"<p>Calls you make now act as <strong>you</strong> at "
+                 f"{server} — its own audit log will name you, and its own "
+                 f"permissions apply. Go back to your client.</p>")
 
 
 @app.get(MCP_PATH, tags=["mcp"])

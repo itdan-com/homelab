@@ -247,3 +247,60 @@ def test_an_unknown_rung_is_refused(tmp_path):
     path = _conf(tmp_path, {})
     with pytest.raises(UpstreamAuthError, match="identity must be"):
         upstream_auth.save(path, "slack", {"token": "x", "identity": "magic"})
+
+
+# --- per-user account linking (7.7) ------------------------------------------
+
+def _link_stub(monkeypatch, payload, status=200):
+    class R:
+        status_code = status
+        def json(self): return payload
+    class C:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, *a, **k): return R()
+    monkeypatch.setattr(upstream_auth.httpx, "Client", lambda **k: C())
+
+
+def test_linking_stores_this_persons_own_token(tmp_path, monkeypatch):
+    path = _conf(tmp_path, {"github": {"identity": "per-caller",
+                                       "client_id": "Iv1.x", "client_secret": "s"}})
+    _link_stub(monkeypatch, {"access_token": "ghu_alice", "expires_in": 28800,
+                             "refresh_token": "ghr_alice"})
+    upstream_auth.link_complete("github", path, "code", "Alice@Example.com",
+                                "https://door/cb")
+    assert token_for("github", path, caller="alice@example.com") == "ghu_alice"
+    # and somebody who has not linked is still refused, not served
+    with pytest.raises(UpstreamAuthError, match="linked account"):
+        token_for("github", path, caller="bob@example.com")
+
+
+def test_an_expiring_user_token_is_refreshed(tmp_path, monkeypatch):
+    path = _conf(tmp_path, {"github": {
+        "identity": "per-caller", "client_id": "i", "client_secret": "s",
+        "callers": {"alice@example.com": {
+            "token": "ghu_old", "refresh_token": "ghr_1",
+            "expires_at": time.time() + 60}}}})   # inside the margin
+    _link_stub(monkeypatch, {"access_token": "ghu_new", "expires_in": 28800,
+                             "refresh_token": "ghr_2"})
+    assert token_for("github", path, caller="alice@example.com") == "ghu_new"
+
+
+def test_a_failed_refresh_refuses_and_says_to_link_again(tmp_path, monkeypatch):
+    """Never fall back to the shared credential — that would silently
+    turn 'acting as Alice' into 'acting as the service account'."""
+    path = _conf(tmp_path, {"github": {
+        "identity": "per-caller", "client_id": "i", "client_secret": "s",
+        "token": "ghs_shared",
+        "callers": {"alice@example.com": {
+            "token": "ghu_old", "refresh_token": "ghr_1",
+            "expires_at": time.time() + 60}}}})
+    _link_stub(monkeypatch, {"error": "bad_refresh_token"})
+    with pytest.raises(UpstreamAuthError, match="link your account again"):
+        token_for("github", path, caller="alice@example.com")
+
+
+def test_linking_needs_a_client_id_and_says_so(tmp_path):
+    path = _conf(tmp_path, {"github": {"identity": "per-caller"}})
+    with pytest.raises(UpstreamAuthError, match="OAuth client id"):
+        upstream_auth.link_start_url("github", path, "https://door/cb", "st")

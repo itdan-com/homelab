@@ -170,7 +170,15 @@ def token_for(server: str, path: str, caller: str | None = None) -> str | None:
             raise UpstreamAuthError(
                 f"{server} needs your own linked account — this platform "
                 f"deliberately will not act as somebody else on your behalf")
-        return own
+        if isinstance(own, str):
+            return own
+        exp = own.get("expires_at")
+        if exp and exp - REFRESH_MARGIN_SECONDS <= time.time():
+            if not own.get("refresh_token"):
+                raise UpstreamAuthError(
+                    f"your {server} access expired — link your account again")
+            return _refresh_caller(server, path, caller, own)
+        return own["token"]
 
     if entry.get("token"):
         return entry["token"]
@@ -413,3 +421,107 @@ def discover_tools(server: str, url: str, token: str | None,
     read.append("rpc.*")
     return {"read": sorted(set(read)), "write": sorted(set(write)),
             "destructive": sorted(set(destructive))}
+
+
+# --- per-user account linking (7.7) ------------------------------------------
+#
+# The rule (ADR-005 D10): a server with write tools must use per-user
+# credentials. For GitHub that means each person authorises the App
+# themselves and we hold THEIR token — so GitHub's own audit log names
+# the human, and GitHub enforces that human's own permissions. Somebody
+# who cannot write a repo in GitHub cannot do it through Airlock
+# either, whatever our policy says.
+#
+# The token is a GitHub App USER token (`ghu_`), which expires in hours
+# and carries a refresh token. Stored per principal beside the shared
+# credential, 0600, and refreshed before expiry the same way
+# installation tokens are.
+#
+# Honest about storage: these are plaintext in a root-owned,
+# service-readable file — the same protection as every other secret on
+# this host. Encrypting them would need a key on the same machine,
+# which is theatre unless it lives in a TPM or a KMS; when this runs in
+# cloud, that key belongs in the provider's KMS and this is where it
+# gets wired.
+
+GITHUB_AUTHORIZE = "https://github.com/login/oauth/authorize"
+GITHUB_TOKEN = "https://github.com/login/oauth/access_token"
+
+
+def link_start_url(server: str, path: str, redirect_uri: str, state: str) -> str:
+    """Where to send a person to authorise their own account."""
+    entry = _load(path).get(server) or {}
+    client_id = entry.get("client_id")
+    if not client_id:
+        raise UpstreamAuthError(
+            f"{server} has no OAuth client id — add one to the connection "
+            f"before people can link their accounts")
+    from urllib.parse import urlencode
+    return f"{GITHUB_AUTHORIZE}?" + urlencode({
+        "client_id": client_id, "redirect_uri": redirect_uri, "state": state})
+
+
+def link_complete(server: str, path: str, code: str, caller: str,
+                  redirect_uri: str) -> dict:
+    """Exchange the code for THIS PERSON's token and store it."""
+    entry = _load(path).get(server) or {}
+    if not entry.get("client_id") or not entry.get("client_secret"):
+        raise UpstreamAuthError(f"{server} is missing its OAuth client credentials")
+    with httpx.Client(timeout=15.0) as c:
+        r = c.post(GITHUB_TOKEN, headers={"Accept": "application/json"}, data={
+            "client_id": entry["client_id"], "client_secret": entry["client_secret"],
+            "code": code, "redirect_uri": redirect_uri})
+    if r.status_code != 200:
+        raise UpstreamAuthError(f"linking failed ({r.status_code})")
+    body = r.json()
+    if body.get("error") or not body.get("access_token"):
+        raise UpstreamAuthError(
+            f"linking refused: {body.get('error_description') or body.get('error')}")
+
+    doc = _load(path)
+    rec = {"token": body["access_token"]}
+    if body.get("refresh_token"):
+        rec["refresh_token"] = body["refresh_token"]
+    if body.get("expires_in"):
+        rec["expires_at"] = time.time() + int(body["expires_in"])
+    doc.setdefault(server, {}).setdefault("callers", {})[
+        caller.strip().lower()] = rec
+    _write(path, doc)
+    forget(server)
+    return {"server": server, "caller": caller,
+            "expires_in": body.get("expires_in")}
+
+
+def _refresh_caller(server: str, path: str, caller: str, rec: dict) -> str:
+    """Refresh a person's token before it expires. A refresh that fails
+    is a REFUSAL — telling them to link again is honest; silently using
+    somebody else's credential is not."""
+    entry = _load(path).get(server) or {}
+    with httpx.Client(timeout=15.0) as c:
+        r = c.post(GITHUB_TOKEN, headers={"Accept": "application/json"}, data={
+            "client_id": entry.get("client_id"),
+            "client_secret": entry.get("client_secret"),
+            "grant_type": "refresh_token",
+            "refresh_token": rec["refresh_token"]})
+    body = r.json() if r.status_code == 200 else {}
+    if not body.get("access_token"):
+        raise UpstreamAuthError(
+            f"your {server} access expired and could not be renewed — "
+            f"link your account again")
+    rec["token"] = body["access_token"]
+    if body.get("refresh_token"):
+        rec["refresh_token"] = body["refresh_token"]
+    if body.get("expires_in"):
+        rec["expires_at"] = time.time() + int(body["expires_in"])
+    doc = _load(path)
+    doc[server].setdefault("callers", {})[caller.strip().lower()] = rec
+    _write(path, doc)
+    return rec["token"]
+
+
+def _write(path: str, doc: dict) -> None:
+    tmp = Path(path).with_suffix(".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(doc, f, indent=1)
+    tmp.replace(path)
