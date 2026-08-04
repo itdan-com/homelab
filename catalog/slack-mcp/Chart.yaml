@@ -1,0 +1,22 @@
+apiVersion: v2
+name: slack-mcp
+description: >-
+  Self-hosted Slack MCP server (korotovsky/slack-mcp-server) behind the
+  Sentinel proxy — Airlock's second real tool (Phase 7.5).
+
+  Self-hosted deliberately: Slack ships an official HOSTED MCP server,
+  but a hosted server is reached directly by the client and therefore
+  bypasses the gate entirely — no policy, no elevation, no audit trail.
+  A tool this platform cannot govern is not a tool this platform offers.
+type: application
+version: 0.1.0
+# Pinned by TAG here and by DIGEST in values: this image reports
+# version "0.0.0" over the wire regardless of which tag you pulled, so
+# the tag is documentation and the digest is the actual pin.
+appVersion: "v1.3.0"
+
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "true"

@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "catalog.fullname" . }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "catalog.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "catalog.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ .Values.image.repository }}@{{ .Values.image.digest }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          # The image's default command is `--transport sse`. Streamable
+          # HTTP has to be asked for explicitly, and the MCP path is
+          # hardcoded to /mcp upstream — not configurable.
+          args: ["--transport", "http"]
+          env:
+            # Without this the server binds 127.0.0.1 INSIDE the
+            # container and every probe and every proxied call fails
+            # while the pod looks perfectly healthy.
+            - name: SLACK_MCP_HOST
+              value: "0.0.0.0"
+            # The default port is 13080 while the image EXPOSEs 3001;
+            # neither is a safe assumption, so it is set.
+            - name: SLACK_MCP_PORT
+              value: {{ .Values.service.targetPort | quote }}
+            - name: SLACK_MCP_XOXP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "catalog.fullname" . }}
+                  key: token
+            - name: SLACK_MCP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "catalog.fullname" . }}
+                  key: apiKey
+            {{- with .Values.slack.enabledTools }}
+            - name: SLACK_MCP_ENABLED_TOOLS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            - name: SLACK_MCP_ADD_MESSAGE_UNFURLING
+              value: {{ .Values.slack.addMessageUnfurling | quote }}
+            {{- if .Values.cache.enabled }}
+            # Explicit cache paths. The default is $HOME/.cache, and as
+            # a non-root user HOME is "/" — the write fails, the server
+            # logs an error and keeps going, and then re-fetches the
+            # whole workspace user list on every restart. That is the
+            # behaviour upstream users report as tripping Slack's
+            # anti-scraping detection.
+            - name: SLACK_MCP_USERS_CACHE
+              value: {{ .Values.cache.mountPath }}/users_cache.json
+            - name: SLACK_MCP_CHANNELS_CACHE
+              value: {{ .Values.cache.mountPath }}/channels_cache_v2.json
+            {{- end }}
+          ports:
+            - name: {{ .Values.service.portName }}
+              containerPort: {{ .Values.service.targetPort }}
+          # A TCP probe, deliberately: this server has NO health
+          # endpoint (/health, /healthz, /ready all 404) and a GET on
+          # /mcp opens a stream that never closes.
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.cache.enabled }}
+            - name: cache
+              mountPath: {{ .Values.cache.mountPath }}
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        {{- if .Values.cache.enabled }}
+        - name: cache
+          emptyDir:
+            sizeLimit: {{ .Values.cache.sizeLimit }}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

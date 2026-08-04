@@ -1,0 +1,139 @@
+# values.yaml — the Slack MCP server (Phase 7.5).
+#
+# EVERY non-obvious value here was verified against the shipped image,
+# not the README. The README's own debug section names a source path
+# that does not exist and documents 20 of the 22 tools, so it is not a
+# deployment reference.
+#
+# THE ARCHITECTURAL DIFFERENCE FROM github-mcp, stated plainly because
+# it is a real weakening: this server takes NO per-request credential.
+# The Slack client is built once from environment variables at boot and
+# never rebuilt, so **one process is one Slack identity**, and every
+# person calling through it acts as that identity — with its full
+# visibility, including the token owner's DMs. The upstream maintainer
+# confirms this is by design and points at an unmerged PR for
+# multi-user support.
+#
+# Consequences we accept, and one we do not:
+#   * the pod HOLDS a credential (github-mcp holds none) — so this
+#     workload is worth more to an attacker, and its NetworkPolicy and
+#     the proxy in front of it are load-bearing rather than tidy;
+#   * Sentinel's audit log is again the ONLY record of which human
+#     acted, since Slack sees one identity;
+#   * per-person isolation, if it is ever needed, is one Deployment per
+#     Slack principal with the door routing by authenticated user —
+#     the chart supports that by being ordinary, not by being clever.
+
+catalog:
+  tier: dev
+  dataClass: confidential
+
+image:
+  repository: ghcr.io/korotovsky/slack-mcp-server
+  # Tag AND digest: the binary is built without version stamping and
+  # reports "0.0.0" over MCP whatever you pulled, so the tag cannot be
+  # confirmed from the wire and the digest is the real pin.
+  tag: "v1.3.0"
+  digest: "sha256:35cbc988d9282409e27b755957e48a6096fcf037dee72118e97177fe38b1a1b3"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+slack:
+  # LAYER 2, and unusually good here: SLACK_MCP_ENABLED_TOOLS is a real
+  # allowlist — non-listed tools are never registered, calling one
+  # returns "tool not found", and a typo is a fatal boot error that
+  # prints the valid names. Read-only set by default; adding a write
+  # tool is a deliberate edit.
+  #
+  # WARNING carried from the upstream review: naming a write tool here
+  # while its own enabling env var is unset registers it ANYWAY and
+  # defaults its scope to every channel and DM. Do not add
+  # conversations_add_message here without also setting its env var
+  # deliberately.
+  enabledTools:
+    - channels_list
+    - conversations_history
+    - conversations_replies
+    - conversations_search_messages
+    - users_search
+  # Link unfurling stays OFF. Slack's crawler fetching a URL an LLM was
+  # talked into posting is an exfiltration channel (the class behind
+  # CVE-2025-34072 against a different Slack MCP server); upstream
+  # disabled it by default in a security release and it stays disabled.
+  addMessageUnfurling: false
+
+# The credential. `xoxp` (user OAuth) or `xoxb` (bot) ONLY — never the
+# xoxc/xoxd browser-session pair: those carry a human's full privileges
+# with no scope narrowing, are harvested by pasting JavaScript into
+# devtools, and the upstream ships a uTLS handshake that impersonates
+# Chrome to avoid Slack's fingerprinting when using them. Whatever that
+# is for, it is not a corporate deployment.
+auth:
+  # Set in catalog/slack-mcp/secrets.enc.yaml as auth.token
+  token: ""
+  # The HTTP transport's own shared key. Load-bearing: when this is
+  # UNSET the server's auth is skipped entirely — it fails OPEN — and
+  # even when set it only guards tools/call, so an unauthenticated
+  # caller can still open a session and enumerate every tool and
+  # argument schema. Treat this server as an unauthenticated backend on
+  # a private network; the NetworkPolicy and the Sentinel proxy are the
+  # actual enforcement. This key is defence in depth, not the gate.
+  apiKey: ""
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+service:
+  type: ClusterIP
+  port: 80
+  portName: http
+  targetPort: 3001
+
+# The server caches the workspace's users and channels. If the cache
+# cannot be written it logs an error, keeps running, and re-fetches the
+# ENTIRE user list on every restart — which upstream users report
+# triggering Slack's anti-scraping detection and logging the token
+# owner out of all their devices. So the cache gets a real writable
+# volume and explicit paths, rather than being left to fall back into a
+# read-only root filesystem.
+cache:
+  enabled: true
+  mountPath: /cache
+  sizeLimit: 256Mi
+
+networkPolicy:
+  enabled: true
+  proxyNamespace: envoy-gateway-system
+  gatewayName: sentinel-proxy
+  gatewayNamespace: mcp-servers
+  egress:
+    enabled: true
+    dnsNamespace: kube-system
+    # Outbound to slack.com only in intent; a CIDR policy cannot express
+    # that, so this is a port restriction that still blocks the route
+    # back into the cluster's own networks.
+    httpsToInternet: true
+
+podSecurityContext:
+  # The image ships NO USER directive and runs as root by default, so
+  # this is not belt-and-braces — without it the server runs as uid 0.
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+nodeSelector: {}

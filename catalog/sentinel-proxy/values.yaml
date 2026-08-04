@@ -102,6 +102,14 @@ upstreams:
     namespace: mcp-servers
     service: github-mcp
     port: 80
+  # 7.5. Note this one holds a Slack credential in its own environment
+  # (its upstream takes no per-request token), so the proxy in front of
+  # it is not merely policy plumbing — it is what stands between any
+  # in-cluster caller and a workspace identity.
+  - name: slack
+    namespace: mcp-servers
+    service: slack-mcp
+    port: 80
 
 nameOverride: ""
 fullnameOverride: ""

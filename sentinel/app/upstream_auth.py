@@ -337,11 +337,25 @@ def discover_tools(server: str, url: str, token: str | None,
         if not name:
             continue
         ann = t.get("annotations") or {}
-        if ann.get("destructiveHint"):
-            destructive.append(name)
-        elif ann.get("readOnlyHint"):
+        # `readOnlyHint` is the primary signal, and `destructiveHint`
+        # is only consulted for tools that are NOT read-only.
+        #
+        # Not a style choice: MCP's spec default for destructiveHint is
+        # TRUE, so a server that annotates it selectively leaves it set
+        # on everything it did not think about. Slack's server does
+        # exactly that — 21 of its 22 tools report destructive, read-only
+        # ones included — and reading destructive first would have
+        # classified its whole catalog as dangerous, left every tool
+        # unclassified, and made the server silently uncallable.
+        # A default that means "unknown" must not be read as "yes".
+        if ann.get("readOnlyHint"):
             read.append(name)
+        elif ann.get("destructiveHint"):
+            destructive.append(name)
         else:
+            # No hint at all, or explicitly not read-only: a write. The
+            # safe direction — write is the more restricted rung, and a
+            # tool nobody annotated is a tool nobody vouched for.
             write.append(name)
     # The handshake always rides a prefix class, or an assigned server
     # could not even be initialized.

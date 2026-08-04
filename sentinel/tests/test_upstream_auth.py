@@ -180,3 +180,35 @@ def test_rotation_takes_effect_without_a_restart(tmp_path, key_file, github):
     Path(path).write_text(json.dumps({"github": "ghp_static_now"}))
     upstream_auth.forget("github")
     assert token_for("github", path) == "ghp_static_now"
+
+
+def test_a_default_destructive_hint_does_not_hide_read_tools(monkeypatch):
+    """MCP's spec default for destructiveHint is TRUE, so a server that
+    annotates it selectively leaves it set on tools it never considered.
+    Slack's server reports destructive on 21 of 22 tools, read-only ones
+    included — reading that first would classify the whole catalog as
+    dangerous, leave every tool unclassified, and make the server
+    silently uncallable."""
+    class R:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        def json(self):
+            return {"result": {"tools": [
+                {"name": "channels_list",
+                 "annotations": {"readOnlyHint": True, "destructiveHint": True}},
+                {"name": "conversations_add_message",
+                 "annotations": {"readOnlyHint": False, "destructiveHint": True}},
+                {"name": "usergroups_me", "annotations": {}},
+            ]}}
+
+    class C:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, *a, **k): return R()
+
+    monkeypatch.setattr(upstream_auth.httpx, "Client", lambda **k: C())
+    out = upstream_auth.discover_tools("slack", "https://x/mcp", "t")
+    assert "channels_list" in out["read"]          # read wins over the default
+    assert "conversations_add_message" in out["destructive"]
+    assert "usergroups_me" in out["write"]         # unannotated = nobody vouched

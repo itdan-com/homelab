@@ -1,0 +1,6 @@
+# GitOps self-declaration (see catalog/argocd ApplicationSet).
+name: slack-mcp
+namespace: mcp-servers
+# Unlike github-mcp, this one DOES hold a credential: the upstream has
+# no per-request auth, so the Slack token is env-only (see values.yaml).
+secrets: "true"
