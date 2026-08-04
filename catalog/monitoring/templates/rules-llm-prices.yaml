@@ -1,0 +1,39 @@
+# The price table, as recording rules (Phase 8).
+#
+# Prometheus has no notion of "a constant", so a price becomes a series
+# with the model as a label, and the cost panel joins token counts
+# against it. Putting the table HERE rather than inside a dashboard
+# query means one place to edit, in git, reviewed like anything else —
+# and a price that changed shows up in a diff instead of hiding in a
+# panel nobody opens.
+#
+# THE HONEST PART: this table is maintained by a human and will drift.
+# Locally-hosted models are priced at 0 because they cost electricity
+# and GPU time rather than dollars — which is true, and also means the
+# "cost" panel says $0 for a platform that is definitely consuming
+# something. That is why the dashboard leads with tokens and labels
+# this an estimate: a confident wrong number is worse than an obvious
+# gap, because somebody will budget against it.
+{{- if .Values.llmPrices }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "catalog.fullname" . }}-llm-prices
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+spec:
+  groups:
+    - name: llm.prices
+      rules:
+        {{- range .Values.llmPrices }}
+        - record: llm_price_per_1k_input
+          expr: {{ .input | quote }}
+          labels:
+            gen_ai_request_model: {{ .model | quote }}
+        - record: llm_price_per_1k_output
+          expr: {{ .output | quote }}
+          labels:
+            gen_ai_request_model: {{ .model | quote }}
+        {{- end }}
+{{- end }}

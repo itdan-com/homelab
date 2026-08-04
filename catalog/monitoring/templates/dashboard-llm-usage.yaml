@@ -1,0 +1,139 @@
+# Provisioned dashboard (dashboards-as-code): the Grafana sidecar loads any
+# ConfigMap labeled `grafana_dashboard: "1"` in this namespace.
+#
+# LLM USAGE AND COST — Phase 8's second dashboard.
+#
+# The honest framing, which is why "cost" is not the first word on the
+# page: this platform measures TOKENS accurately and infers money from
+# a price table that only a human can keep true. Local models cost no
+# money at all and cost GPU instead. So the panels lead with what is
+# measured and put the estimate beside it, clearly labelled — an
+# invented dollar figure presented confidently is worse than none,
+# because somebody will budget against it.
+#
+# Labels available on gen_ai_client_token_usage (verified live):
+# gen_ai_request_model, gen_ai_token_type (input|output),
+# gen_ai_operation_name. There is NO per-user label — attribution to a
+# person lives in Sentinel's audit log, not here, and pretending
+# otherwise would be the same mistake as the invented dollar figure.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "catalog.fullname" . }}-dashboard-llm-usage
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  llm-usage.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "graphTooltip": 1,
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["homelab", "llm"],
+      "title": "LLM usage and cost",
+      "uid": "llm-usage",
+      "time": { "from": "now-24h", "to": "now" },
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Output tokens (24h)",
+          "description": "What the platform actually generated. This is measured, not estimated.",
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(increase(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\"}[24h])) or vector(0)",
+            "legendFormat": "output"
+          }],
+          "fieldConfig": { "defaults": { "unit": "short" } }
+        },
+        {
+          "type": "stat",
+          "title": "Input tokens (24h)",
+          "description": "Usually the larger half of a cloud bill, and the one people forget: every turn resends the conversation.",
+          "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(increase(gen_ai_client_token_usage_sum{gen_ai_token_type=\"input\"}[24h])) or vector(0)",
+            "legendFormat": "input"
+          }],
+          "fieldConfig": { "defaults": { "unit": "short" } }
+        },
+        {
+          "type": "stat",
+          "title": "Requests (24h)",
+          "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(increase(gen_ai_server_request_duration_seconds_count[24h])) or vector(0)",
+            "legendFormat": "requests"
+          }],
+          "fieldConfig": { "defaults": { "unit": "short" } }
+        },
+        {
+          "type": "stat",
+          "title": "Estimated cost (24h)",
+          "description": "ESTIMATE. Computed from the price table in catalog/monitoring/values.yaml, which a human must keep current — and which reads $0 for locally-hosted models, because they cost electricity and GPU rather than dollars. Treat as an order of magnitude, never as an invoice.",
+          "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(increase(gen_ai_client_token_usage_sum{gen_ai_token_type=\"input\"}[24h]) * on(gen_ai_request_model) group_left() llm_price_per_1k_input) / 1000 + sum(increase(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\"}[24h]) * on(gen_ai_request_model) group_left() llm_price_per_1k_output) / 1000 or vector(0)",
+            "legendFormat": "usd"
+          }],
+          "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 } }
+        },
+        {
+          "type": "timeseries",
+          "title": "Token rate by model",
+          "description": "The KEDA scaling signal, split by model. A model whose rate climbs while others are flat is where demand actually went.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum by (gen_ai_request_model, gen_ai_token_type) (rate(gen_ai_client_token_usage_sum[5m]))",
+            "legendFormat": "{{`{{gen_ai_request_model}} {{gen_ai_token_type}}`}}"
+          }],
+          "fieldConfig": { "defaults": { "unit": "short" } }
+        },
+        {
+          "type": "timeseries",
+          "title": "Request latency (p50 / p95)",
+          "description": "Generation latency scales with output length, so a rising p95 with flat p50 usually means longer answers rather than a slower backend.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum by (le, gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "p50 {{`{{gen_ai_request_model}}`}}"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(gen_ai_server_request_duration_seconds_bucket[5m])))",
+              "legendFormat": "p95 {{`{{gen_ai_request_model}}`}}"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s" } }
+        },
+        {
+          "type": "piechart",
+          "title": "Share of output tokens by model (24h)",
+          "description": "Which model is doing the work. The lever behind the tiered-routing idea: if an expensive model is carrying traffic a cheap one could, this panel is where that shows.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum by (gen_ai_request_model) (increase(gen_ai_client_token_usage_sum{gen_ai_token_type=\"output\"}[24h]))",
+            "legendFormat": "{{`{{gen_ai_request_model}}`}}"
+          }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Gateway replicas",
+          "description": "What KEDA did about the token rate above. Read the two together: replicas that never move while the rate climbs means the ceiling is the binding constraint.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(kube_deployment_status_replicas_ready{namespace=\"envoy-gateway-system\", deployment=~\".*ai-gateway.*\"})",
+            "legendFormat": "ready replicas"
+          }]
+        }
+      ]
+    }

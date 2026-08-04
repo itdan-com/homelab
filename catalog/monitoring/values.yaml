@@ -215,3 +215,20 @@ alerts:
   # than after. Re-derive both together — see the backlog item about
   # the scaling knobs needing one surface.
   tokenRateCeiling: 80
+
+# Price per 1,000 tokens, per model, in USD. Maintained by a HUMAN —
+# there is no API that tells a cluster what its tokens cost, so this
+# drifts unless somebody updates it, and the dashboard says so rather
+# than presenting the result as an invoice.
+#
+# Locally-hosted models are 0 on purpose: they cost electricity and GPU
+# time, not dollars. Add cloud models here as they are wired to the
+# gateway; the model name must match `gen_ai_request_model` exactly as
+# the gateway reports it, or the join silently produces nothing.
+llmPrices:
+  - model: "qwen3.5:9b"
+    input: 0
+    output: 0
+  - model: "qwen3.5:4b"
+    input: 0
+    output: 0
