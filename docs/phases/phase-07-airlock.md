@@ -10,7 +10,16 @@ The gate is elevation, not per-call approval — you cannot diff an
 action that already happened, and a queue nobody reads manufactures
 the appearance of oversight. See `CLAUDE.md` → "Two flows".
 
-**Status:** **7.2 CLOSED 2026-08-02** (7.2.1–7.2.6 all done; live on
+**Status:** **7.3 CLOSED 2026-08-02** (the door: live, owner signed in
+from a real MCP client, birthright tools listed at zero approvals, a
+consequential call refused and elevated). **7.4 BUILT AND LIVE
+2026-08-03** — GitHub's official server runs in-cluster holding NO
+credential, Sentinel mints App installation tokens hourly, and the
+console discovers a server's own tool classification from its
+`readOnlyHint`/`destructiveHint` annotations. Remaining for 7.4's
+close: a human running `docs/demos/airlock-github-pr.md` end to end,
+which by design only a signed-in person can do. **7.2 CLOSED
+2026-08-02** (7.2.1–7.2.6 all done; live on
 the installed units; battery 18/18; owner drove the Access GUI
 through two same-day iterations and accepted it as far as example
 data allows — v3+ iterates against REAL servers). **7.3 IN
@@ -524,7 +533,9 @@ RFC 8693 at the gateway.
   5.5.8's seven. Lab collapse stays named: one enrolled human means
   requester ≈ approver until a second passkey enrolls; the mechanism
   (console grant + window + `granted_by`) is enforced regardless.
-- [~] **7.3.6 Install line + battery + demo + close** (builder half
+- [x] **7.3.6 Install line + battery + demo + close** (DONE — live,
+  five install bugs found and each paired with the guard that catches
+  it; demo written concretely at `docs/demos/airlock-github-pr.md`) (builder half
   DONE; **LIVE 2026-08-02** — installed, owner signed in from real
   Claude Code, tools listed, a real call got a policy verdict.
   Remaining: the confirm-elevation click, then close). **Five bugs
