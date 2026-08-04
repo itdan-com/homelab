@@ -880,6 +880,25 @@ birthright plus Decision 6's profile grants.
 - The agent cannot PR the policy that governs it, nor its own group
   membership.
 
+## Exit criteria — scored honestly (2026-08-04)
+
+| criterion | status |
+|---|---|
+| birthright tools at ZERO approvals | **LIVE.** The owner signed in from real Claude Code and listed their tools; nobody approved anything. |
+| elevation unlocks a tool SET for a window, expires by itself, audit reconstructs it | **LIVE.** The owner hit a refusal, approved it on the console, and the same call went through — then stopped when the window closed (the 5-minute Grant button, which is why that mismatch is now a backlog item). |
+| `approve` needs a different human; `forbid` has no prod path while staging works | **TESTED, not lived.** Enforced and covered by tests including a held human-issued grant against a forbidden tier; the *different human* half collapses in a lab with one enrolled passkey, and that is named rather than papered over. |
+| one honest session costs at most ONE approval | **MEASURED.** Handshake + listing + three birthright calls = zero; one write window = one act. 5.5.8 measured seven. |
+| the agent cannot PR the policy that governs it, nor its own group membership | **TRUE BY CONSTRUCTION.** The policy store lives in Sentinel's state directory, is console-authored behind a passkey, and is not in this repo — so there is no PR that reaches it. |
+
+**Not done, and deliberately not blocking the phase:** a real pull
+request travelling the whole chain (written up concretely in
+`docs/demos/airlock-github-pr.md`, needs a human because the design
+refuses to act without one); Slack deployed (needs a workspace token —
+the owner's call whether they want it at all); GitHub switched to
+per-user credentials (built at 7.7, needs the App's OAuth client and
+one link per person). All three are follow-through, not missing
+mechanism.
+
 ## Notes captured during execution
 
 - **2026-08-02 (7.1):** The scope-mapping finding — blocker 3 was
