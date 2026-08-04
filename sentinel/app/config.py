@@ -205,13 +205,13 @@ MCP_UPSTREAM_TOKENS_FILE = os.environ.get(
     os.path.join(os.path.dirname(DB_PATH) or ".", "upstream-credentials.json"))
 
 
-def upstream_token(server: str) -> str | None:
+def upstream_token(server: str, caller: str | None = None) -> str | None:
     """Read at call time, not import time: rotating a credential should
     be editing one file, never restarting the trust anchor. App-backed
     entries mint a short-lived token here (app.upstream_auth), so a
     production deployment never has a 90-day rotation chore."""
     from .upstream_auth import token_for
-    return token_for(server, MCP_UPSTREAM_TOKENS_FILE)
+    return token_for(server, MCP_UPSTREAM_TOKENS_FILE, caller=caller)
 
 
 # Where this platform's own MCP servers answer. A connection that says

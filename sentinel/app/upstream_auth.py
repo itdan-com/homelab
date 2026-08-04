@@ -128,7 +128,20 @@ def _mint_installation_token(cfg: dict) -> tuple[str, float]:
     return body["token"], exp
 
 
-def token_for(server: str, path: str) -> str | None:
+# The identity ladder (ADR-005 D10), best first. A connection records
+# which rung it is on, so "which of our tools flatten identity" is a
+# query rather than an archaeology exercise through chart comments.
+IDENTITY_MODES = ("delegated", "per-caller", "shared")
+
+
+def identity_mode(server: str, path: str) -> str:
+    entry = _load(path).get(server)
+    if isinstance(entry, dict):
+        return entry.get("identity") or "shared"
+    return "shared"
+
+
+def token_for(server: str, path: str, caller: str | None = None) -> str | None:
     """The credential to present upstream for `server`, or None when
     the deployment has not configured one (a decidable server that
     cannot be called — an honest state, not an error).
@@ -140,6 +153,25 @@ def token_for(server: str, path: str) -> str | None:
         return None
     if isinstance(entry, str):
         return entry or None
+
+    # PER-CALLER: this person's own credential at the upstream, so the
+    # upstream sees the human rather than a service account. Missing is
+    # a REFUSAL, never a silent fall back to the shared credential —
+    # falling down the ladder quietly turns an identity guarantee into
+    # an identity guess, and the audit trail would not show the
+    # difference.
+    if entry.get("identity") == "per-caller":
+        if not caller:
+            raise UpstreamAuthError(
+                f"{server} is configured per-caller but the call carried no "
+                f"identity")
+        own = (entry.get("callers") or {}).get(caller.strip().lower())
+        if not own:
+            raise UpstreamAuthError(
+                f"{server} needs your own linked account — this platform "
+                f"deliberately will not act as somebody else on your behalf")
+        return own
+
     if entry.get("token"):
         return entry["token"]
     if not entry.get("app_id") or not entry.get("private_key_file"):
@@ -190,10 +222,15 @@ def describe(path: str) -> list[dict]:
     for server, entry in sorted(_load(path).items()):
         if isinstance(entry, str) or entry.get("token"):
             where = entry.get("url", "") if isinstance(entry, dict) else ""
-            out.append({"server": server, "kind": "token",
-                        "detail": (f"{where} · " if where else "") + "static token"})
+            mode = entry.get("identity", "shared") if isinstance(entry, dict) else "shared"
+            n = len((entry.get("callers") or {})) if isinstance(entry, dict) else 0
+            out.append({"server": server, "kind": "token", "identity": mode,
+                        "detail": (f"{where} · " if where else "")
+                                  + f"[{mode} identity] static token"
+                                  + (f" · {n} linked account(s)" if n else "")})
             continue
-        detail = f"App {entry.get('app_id', '?')}"
+        detail = f"[{entry.get('identity', 'shared')} identity] " \
+                 f"App {entry.get('app_id', '?')}"
         if entry.get("url"):
             detail = f"{entry['url']} · " + detail
         if entry.get("installation_id"):
@@ -248,6 +285,20 @@ def save(path: str, server: str, entry: dict) -> dict:
     # front of the address, not behind it.
     if url:
         doc[server]["url"] = url
+    # Which rung of the identity ladder this server is on (ADR-005 D10).
+    mode = (entry.get("identity") or "").strip()
+    if mode:
+        if mode not in IDENTITY_MODES:
+            raise UpstreamAuthError(
+                f"identity must be one of {', '.join(IDENTITY_MODES)}")
+        doc[server]["identity"] = mode
+    # A person linking their OWN account at the upstream. Kept per
+    # server and keyed by email, so revoking one person is deleting one
+    # entry rather than rotating everybody's access.
+    link = entry.get("link_caller")
+    if link and entry.get("link_token"):
+        doc[server].setdefault("callers", {})[
+            link.strip().lower()] = entry["link_token"].strip()
 
     tmp = Path(path).with_suffix(".tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

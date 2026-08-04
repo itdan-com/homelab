@@ -659,7 +659,7 @@ def _call_upstream(server: str, leaf: str, arguments: dict, *,
     # just authorized the call — the workload holds none. A compromised
     # MCP server pod therefore has nothing to steal.
     try:
-        upstream_secret = upstream_token(server)
+        upstream_secret = upstream_token(server, caller=principal_email)
     except UpstreamAuthError as e:
         # Refuse loudly. Calling on without a credential would produce
         # an upstream 401 that reads like a policy problem, and the

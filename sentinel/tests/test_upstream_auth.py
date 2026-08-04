@@ -212,3 +212,38 @@ def test_a_default_destructive_hint_does_not_hide_read_tools(monkeypatch):
     assert "channels_list" in out["read"]          # read wins over the default
     assert "conversations_add_message" in out["destructive"]
     assert "usergroups_me" in out["write"]         # unannotated = nobody vouched
+
+
+# --- the identity ladder (ADR-005 D10) ----------------------------------------
+
+def test_per_caller_uses_the_persons_own_credential(tmp_path):
+    path = _conf(tmp_path, {"slack": {
+        "identity": "per-caller", "token": "xoxb-shared",
+        "callers": {"alice@example.com": "xoxp-alice"}}})
+    assert token_for("slack", path, caller="Alice@Example.com") == "xoxp-alice"
+
+
+def test_per_caller_REFUSES_rather_than_falling_back_to_the_shared_one(tmp_path):
+    """The load-bearing one. Quietly using the shared credential for
+    somebody who has not linked their account turns an identity
+    guarantee into an identity guess, and the audit trail would not
+    show the difference."""
+    path = _conf(tmp_path, {"slack": {
+        "identity": "per-caller", "token": "xoxb-shared",
+        "callers": {"alice@example.com": "xoxp-alice"}}})
+    with pytest.raises(UpstreamAuthError, match="your own linked account"):
+        token_for("slack", path, caller="bob@example.com")
+    with pytest.raises(UpstreamAuthError, match="no identity"):
+        token_for("slack", path, caller=None)
+
+
+def test_shared_is_the_default_and_still_works(tmp_path):
+    path = _conf(tmp_path, {"slack": {"token": "xoxb-shared"}})
+    assert token_for("slack", path, caller="anyone@example.com") == "xoxb-shared"
+    assert upstream_auth.identity_mode("slack", path) == "shared"
+
+
+def test_an_unknown_rung_is_refused(tmp_path):
+    path = _conf(tmp_path, {})
+    with pytest.raises(UpstreamAuthError, match="identity must be"):
+        upstream_auth.save(path, "slack", {"token": "x", "identity": "magic"})

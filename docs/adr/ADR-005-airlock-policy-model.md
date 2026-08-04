@@ -559,6 +559,58 @@ first, 7.4), and the roadmap names the common enterprise set
 (Snowflake and peers) as future catalog charts + `servers.yaml`
 columns.
 
+## Decision 10 — the identity ladder (amended 2026-08-04, owner)
+
+Owner, after seeing GitHub and Slack land differently: *"not every MCP
+server is the same, so we want to ensure we use the identity that
+provides the MOST user identity — XAA, STS, then tokens as a last
+resort. The playing field is changing rapidly; today Slack might only
+support a token, tomorrow it might support XAA, and we want THAT one
+implemented instead."*
+
+Adopted as a standing rule rather than a per-server judgement call.
+
+**The ladder, best first:**
+
+1. **Delegated assertion (XAA / ID-JAG, RFC 8693).** The IdP mints a
+   short-lived, audience-scoped assertion for *this person* to *this
+   resource*. The upstream sees the human. Nothing long-lived is held.
+2. **Per-caller credential.** Each person authorises the upstream
+   themselves and Sentinel brokers their own token per call (GitHub's
+   `ghu_` user-to-server tokens; Slack's per-user OAuth). The upstream
+   still sees the human; we hold revocable per-person secrets.
+3. **Shared credential, scoped by what it can reach.** One identity for
+   everyone, chosen so the credential ITSELF bounds the blast radius —
+   a Slack bot invited only to certain channels, a GitHub App without
+   Administration. The upstream sees one actor.
+4. **Shared credential, unscoped.** Not acceptable. If a server offers
+   only this, the answer is a narrower credential or a different
+   server.
+
+**What this obliges us to do, and it is the part that matters:**
+
+- **Record each server's tier as data, not prose.** A connection
+  carries an `identity` mode, so "which of our tools flatten identity"
+  is a query rather than an archaeology exercise across chart comments.
+- **The door supports per-caller credentials NOW**, before any upstream
+  needs it, so adopting tier 1 or 2 is configuration rather than a
+  rewrite. This is the whole point: the ladder moves under us, and a
+  platform that has to be re-architected to climb it will not climb it.
+- **Never silently fall down the ladder.** A server configured
+  per-caller for a person who has not linked their account REFUSES —
+  it does not quietly use the shared credential, because that turns an
+  identity guarantee into an identity guess.
+- **Sentinel's own record never degrades.** Every call is attributed to
+  the person regardless of tier; the tier decides what the UPSTREAM
+  sees, not what we know. When a tier-3 server is the only option, that
+  is the honest sentence to put in front of an auditor.
+
+**Where things stand at adoption:** `github` is tier 3 by choice (its
+server accepts `ghu_`, so tier 2 is reachable without touching the
+chart); `slack` is tier 3 by force (its server builds one client at
+boot — Slack itself supports per-user OAuth, the implementation does
+not; upstream PR #166 is open and unmerged). Neither is tier 4.
+
 ## Homes for the four audit gaps (so nobody rediscovers them expensively)
 
 1. **An elevation's expiry cannot close an already-open SSE stream**
