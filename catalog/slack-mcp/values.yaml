@@ -51,11 +51,20 @@ slack:
   # defaults its scope to every channel and DM. Do not add
   # conversations_add_message here without also setting its env var
   # deliberately.
+  # Chosen for a BOT token (see auth below), which is the recommended
+  # shape: a bot sees only channels it has been invited to, so the
+  # credential itself scopes what is readable — layer 1 doing real work
+  # rather than a policy hoping to.
+  #
+  # `conversations_search_messages` is deliberately ABSENT: Slack's
+  # search API requires a USER token, so with a bot token that tool
+  # would appear in the catalog, pass policy, and then fail at Slack —
+  # a tool that lists but cannot work is worse than one that is absent.
+  # Add it only alongside a user token, understanding what that widens.
   enabledTools:
     - channels_list
     - conversations_history
     - conversations_replies
-    - conversations_search_messages
     - users_search
   # Link unfurling stays OFF. Slack's crawler fetching a URL an LLM was
   # talked into posting is an exfiltration channel (the class behind
@@ -63,8 +72,15 @@ slack:
   # disabled it by default in a security release and it stays disabled.
   addMessageUnfurling: false
 
-# The credential. `xoxp` (user OAuth) or `xoxb` (bot) ONLY — never the
-# xoxc/xoxd browser-session pair: those carry a human's full privileges
+# The credential. **A BOT token (`xoxb-`) is the right default**, and
+# the reason is scoping: a bot reads only the channels somebody invited
+# it to, so "which channels may this platform read" is answered by
+# inviting the bot — visible to everyone in Slack, revocable by kicking
+# it out of a channel. A user token (`xoxp-`) instead inherits one
+# human's entire visibility, DMs included, and hands it to every caller.
+#
+# Both are supported; only one is a sensible corporate deployment.
+# Never the xoxc/xoxd browser-session pair: those carry a human's full privileges
 # with no scope narrowing, are harvested by pasting JavaScript into
 # devtools, and the upstream ships a uTLS handshake that impersonates
 # Chrome to avoid Slack's fingerprinting when using them. Whatever that
