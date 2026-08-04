@@ -105,11 +105,83 @@ the enforcement point for rounding error.** If their idle cost ever
 does matter, KEDA (already deployed) scales them to zero *inside* the
 cluster, with the proxy still in front.
 
+## "Are we on Kubernetes or k3s?" — both, and it is not a compromise
+
+**k3s IS Kubernetes.** It is a CNCF-certified conformant distribution:
+same API, same manifests, same `kubectl`, same Helm charts. The
+differences are packaging — one binary instead of six, lighter
+defaults, SQLite or embedded etcd instead of an external cluster.
+Everything in `catalog/` runs unchanged on EKS, GKE or AKS.
+
+So this is not "we built the cheap version". It is "we built on
+Kubernetes, and we are not obliged to rent a managed control plane to
+run it".
+
+## Scaling: what actually moves, and by how much
+
+The number that matters is **concurrent**, not registered. A 20,000
+person workforce typically peaks around 5–10% concurrent (1,000–2,000
+people), of whom maybe 10% are mid-generation at any instant
+(100–200 active streams).
+
+| component | scales with | at 20k registered / ~1.5k concurrent |
+|---|---|---|
+| control plane floor (ArgoCD, Prometheus, Authentik, cert-manager, KEDA) | nothing — fixed | 2.2 vCPU / 4.9 GiB |
+| OpenWebUI | concurrent chat sessions | ~4–8 replicas |
+| AI gateway (Envoy) | token throughput | 3–6 replicas; Envoy proxies thousands of streams per core, so this follows bandwidth, not users |
+| Sentinel door/broker | MCP calls/sec — a Cedar eval plus a row write, sub-millisecond | 1–2 (today a VM, see the gap below) |
+| MCP servers | calls/sec per server | 1–3 each |
+| Postgres | connections | 1 primary, read replicas only if Authentik logins spike |
+
+**Roughly: floor plus 12–20 pods at that scale — call it 8–12 vCPU
+total.** Two mid-size nodes. The platform is not what gets expensive
+at 20k users; **the model bill is**, by an order of magnitude.
+
+**The known gap:** the `threshold: 30` output-tokens/sec on the AI
+gateway is a LAB number, derived from a 9B local model at ~70 tok/s.
+It must be re-derived against the real backend before it means
+anything in production — already in the backlog as "the scaling knobs
+need one surface".
+
+**Sentinel is the honest bottleneck**, because it is a VM rather than
+a Deployment: it cannot autoscale today. Its work per call is tiny
+(one policy evaluation, one insert), so a single instance goes a long
+way — but the horizontal story is *shared Postgres instead of SQLite,
+two or three instances behind a load balancer*, and that is unbuilt.
+Worth naming now rather than discovering at 5,000 users.
+
+## Scale-DOWN is a policy question, not a metric question
+
+Owner, correctly: *"probably realising 5 mins to shut down a pod in
+the middle of the day is a bad idea — wait for a 2k user drop, or it
+being past 5pm in most places."*
+
+Right, and today's config is naive: the HPA's scale-down stabilisation
+window is the 300s default, so a lunchtime lull can shed replicas that
+are needed twenty minutes later. Churn costs more than the replicas
+saved — every scale-down drops warm connections and every scale-up
+pays a cold start.
+
+The fix uses what is already deployed. KEDA supports a **cron scaler**
+alongside the metric one, and the two compose: the cron sets a FLOOR
+by time of day, the metric scales above it. So:
+
+- business hours in the workforce's timezones → floor of N,
+- outside them → floor of 1, and the metric may still scale up for a
+  batch job or a night shift,
+- and a much longer scale-down stabilisation window (30–60 min) so
+  capacity is shed on a trend, not a dip.
+
+This is a values change on the existing ScaledObject, not new
+machinery — it belongs with the knobs consolidation already in the
+backlog.
+
 ## Provider, given the above
 
-- **Cheapest, and it is not close:** k3s on VMs. DigitalOcean or
-  Hetzner at $40–70/month all-in for the whole platform. This is the
-  Phase 9 target and the right first proof.
+- **Cheapest, and it is not close:** k3s on VMs — DigitalOcean at
+  $40–70/month all-in. (Hetzner is cheaper still and deliberately not
+  recommended: the owner has had a bad experience, and support quality
+  is worth more than €10/month on the machine your platform lives on.)
 - **Cheapest managed:** AKS — free control plane on the basic SKU and
   free cross-AZ traffic, which matters because this platform is
   egress-heavy (agents calling GitHub, registries, LLM APIs).
@@ -132,8 +204,10 @@ cheap shape; support customers wherever they are.
 Today it is unambiguously the **former**: `bootstrap.sh` assembles a
 platform and Mission Control manages *that* cluster. ADR-002's "domain
 in, platform out" says the same thing. So the unit of sale is **a
-deployment**, and per-cluster fees multiply per customer — which is
-exactly why the k3s option matters commercially, not just for the lab.
+deployment**, and per-cluster fees multiply per customer — which is why avoiding a
+per-cluster fee is a **margin** question, not a lab-frugality one: at
+$73/month per customer on EKS, 100 customers is $7,300/month of pure
+control-plane rent before a single workload runs.
 
 The alternative — connecting to a customer's existing cluster — is a
 different product with a different security model (their RBAC, their
