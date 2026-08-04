@@ -94,8 +94,19 @@ alloy:
     # nothing to the host and reaches only Loki.
     mounts:
       varlog: true
+      # A writable /tmp — see the securityContext note below.
+      extra:
+        - name: tmp
+          mountPath: /tmp
     securityContext:
       runAsUser: 0
+      # Alloy creates /tmp/alloy for its remotecfg service at startup,
+      # so a read-only root filesystem crash-loops it. The answer is a
+      # writable /tmp rather than a writable root: the guarantee worth
+      # having is "the image cannot be modified", and an emptyDir
+      # mounted at /tmp keeps that while giving the process the one
+      # directory it actually needs. Verified by the crash, not
+      # assumed — the securityContext looked correct until it ran.
       readOnlyRootFilesystem: true
       capabilities:
         drop: ["ALL"]
@@ -112,3 +123,7 @@ alloy:
       key: config.alloy
   controller:
     type: daemonset
+    volumes:
+      extra:
+        - name: tmp
+          emptyDir: {}
