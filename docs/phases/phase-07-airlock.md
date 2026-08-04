@@ -150,7 +150,17 @@ decisions.
    `servers.yaml` resource map already answer.
 5. **7.5 — The Slack MCP server.** Socket Mode (below). This is also
    where `#claude-audit` / `#claude-alerts` become real channels.
-6. **7.6 — The record, made durable (added 2026-08-02, owner ask).**
+6. **7.6 — The record, made durable.** ✅ **DONE 2026-08-03** —
+   hash chain (edit/delete/reorder/forge all detectable, and the
+   verifier names WHICH row and WHICH kind), sealing as a pass rather
+   than an insert hook (audit() is on every hot path in three
+   processes; one sealer, or the chain forks), 90-day retention whose
+   rotation writes-then-deletes and leaves an anchor so verification
+   spans the gap, JSONL segments as the export for Loki/SIEM, console
+   endpoints with rotate defaulting to a dry run. ADR-004 debt 3
+   closed. Suite 121/121. Original scoping note follows.
+
+   **7.6 — The record, made durable (added 2026-08-02, owner ask).**
    *"our LOGS will show that exact flow right? what they accessed WHO
    accessed it when… we'll want a database of sorts like 90 days and
    optional log streaming to a better service"* — split honestly into
