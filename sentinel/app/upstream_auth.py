@@ -287,7 +287,8 @@ def is_registered(server: str, path: str) -> bool:
 
 
 def discover_tools(server: str, url: str, token: str | None,
-                   ca_bundle: str | None = None) -> dict:
+                   ca_bundle: str | None = None,
+                   gate_headers: dict | None = None) -> dict:
     """Ask a server what it can do, and classify it from what it says.
 
     MCP tools carry `annotations.readOnlyHint` and `destructiveHint`,
@@ -306,17 +307,26 @@ def discover_tools(server: str, url: str, token: str | None,
                "Accept": "application/json, text/event-stream"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    # Discovery goes through the enforcement proxy like every other
+    # call — an admin action is not an exemption from the gate, it just
+    # carries a system-issued capability instead of a person's.
+    headers.update(gate_headers or {})
     with httpx.Client(timeout=15.0, verify=ca_bundle or True) as c:
         r = c.post(url, json=body, headers=headers)
     if r.status_code != 200:
         raise UpstreamAuthError(f"{server} did not answer tools/list "
                                 f"(HTTP {r.status_code})")
-    payload = r.json()
+    # Check the CONTENT TYPE first. An MCP server may answer a POST as
+    # JSON or as a one-message event stream — its choice, not ours — and
+    # parsing before looking threw on the stream form.
     if "text/event-stream" in r.headers.get("content-type", ""):
+        payload = {}
         for line in r.text.splitlines():
             if line.startswith("data:"):
                 payload = json.loads(line[5:].strip())
                 break
+    else:
+        payload = r.json()
     tools = (payload.get("result") or {}).get("tools")
     if tools is None:
         raise UpstreamAuthError(f"{server} returned no tool list")

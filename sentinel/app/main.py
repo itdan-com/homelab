@@ -90,6 +90,7 @@ from .schemas import (
 )
 from .service import (
     audit,
+    mint_forwarding_token,
     deny_request,
     engage_kill,
     grant_request,
@@ -504,9 +505,17 @@ def discover_server_tools(server: str, operator: str = Depends(current_operator)
                          OIDC_CA_BUNDLE)
     url = (upstream_auth.upstream_url(server, MCP_UPSTREAM_TOKENS_FILE)
            or f"{MCP_PROXY_BASE}/{server}/mcp")
+    import secrets as _secrets
+    flow_id = f"discover-{_secrets.token_urlsafe(6)}"
+    with SessionLocal() as s:
+        gate = mint_forwarding_token(s, flow_id=flow_id, principal=None,
+                                     tool=f"{server}.rpc.tools.list",
+                                     ttl_seconds=60)
     try:
         token = upstream_auth.token_for(server, MCP_UPSTREAM_TOKENS_FILE)
-        found = upstream_auth.discover_tools(server, url, token, OIDC_CA_BUNDLE)
+        found = upstream_auth.discover_tools(
+            server, url, token, OIDC_CA_BUNDLE,
+            gate_headers={"X-Sentinel-Token": gate, "X-Flow-Id": flow_id})
     except upstream_auth.UpstreamAuthError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:

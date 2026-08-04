@@ -423,7 +423,7 @@ def mint_profile_grant(
 
 
 def mint_forwarding_token(
-    s: Session, *, flow_id: str, tool: str, principal: Principal,
+    s: Session, *, flow_id: str, tool: str, principal: Principal | None,
     ttl_seconds: int = 30,
 ) -> str:
     """A one-call token the DOOR presents to the proxy (7.3.6).
@@ -447,10 +447,12 @@ def mint_forwarding_token(
     if kill_state(s).engaged:
         raise ValueError("kill switch engaged — no new grants")
     if s.get(Flow, flow_id) is None:
-        s.add(Flow(id=flow_id, agent=f"airlock-door:{principal.email}"))
+        s.add(Flow(id=flow_id, agent=(f"airlock-door:{principal.email}"
+                                     if principal else "sentinel-console")))
     token = TOKEN_PREFIX + secrets.token_urlsafe(32)
     s.add(CapabilityGrant(
-        flow_id=flow_id, principal_id=principal.id, tool=tool,
+        flow_id=flow_id,
+        principal_id=principal.id if principal else None, tool=tool,
         token_hash=_hash(token), granted_by="airlock-door",
         granted_via="admin",
         expires_at=utcnow() + timedelta(seconds=ttl_seconds),
