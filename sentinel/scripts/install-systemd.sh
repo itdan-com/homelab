@@ -59,6 +59,7 @@ OIDC_CLIENT_ID="${SENTINEL_OIDC_CLIENT_ID:-mcp-door}"
 OIDC_CA_BUNDLE="${SENTINEL_OIDC_CA_BUNDLE:-$CERT_DIR/lab-ca.crt}"
 MCP_UPSTREAMS="${SENTINEL_MCP_UPSTREAMS:-}"
 MCP_PROXY_BASE="${SENTINEL_MCP_PROXY_BASE:-https://localhost:8443}"
+AUDIT_RETAIN_DAYS="${SENTINEL_AUDIT_RETAIN_DAYS:-90}"
 
 [[ $EUID -eq 0 ]] || { echo "!! run with sudo" >&2; exit 1; }
 
@@ -118,6 +119,10 @@ echo "== import check (clean-venv proof)"
 
 echo "== state + config directories"
 install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$STATE_DIR"
+# Where sealed audit segments land. 0750: the service writes them, and
+# a log-shipper running as another account can be added to the group
+# to read them without being able to alter the live database.
+install -d -o "$SVC_USER" -g "$SVC_USER" -m 0750 "$STATE_DIR/audit-segments"
 install -d -o root -g root -m 0755 "$ETC_DIR"
 install -d -o "$SVC_USER" -g "$SVC_USER" -m 0700 "$CERT_DIR"
 
@@ -250,6 +255,11 @@ SENTINEL_MCP_UPSTREAMS=$MCP_UPSTREAMS
 # "runs on this platform" resolves to <base>/<server>/mcp, so nobody
 # types the address of something this platform deployed itself.
 SENTINEL_MCP_PROXY_BASE=$MCP_PROXY_BASE
+# --- the record (7.6) ---
+# Rows older than this are exported to a sealed JSONL segment and
+# removed; the segments are kept (they are the export a SIEM reads).
+SENTINEL_AUDIT_RETAIN_DAYS=$AUDIT_RETAIN_DAYS
+SENTINEL_AUDIT_EXPORT_DIR=$STATE_DIR/audit-segments
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
 
