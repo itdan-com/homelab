@@ -1,6 +1,8 @@
 # GitOps self-declaration (see catalog/argocd ApplicationSet).
 name: slack-mcp
 namespace: mcp-servers
-# Unlike github-mcp, this one DOES hold a credential: the upstream has
-# no per-request auth, so the Slack token is env-only (see values.yaml).
-secrets: "true"
+# "false" until a credential exists. The chart renders NOTHING without
+# one (see templates), so this app syncs as an empty release rather
+# than failing to render — a server nobody has configured should be
+# absent, not broken. Flip to "true" when secrets.enc.yaml is added.
+secrets: "false"

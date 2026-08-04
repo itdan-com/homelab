@@ -1,4 +1,4 @@
-{{- if .Values.networkPolicy.enabled }}
+{{- if and .Values.networkPolicy.enabled .Values.auth.token .Values.auth.apiKey }}
 # BOTH directions, and that is the point.
 #
 # Ingress: the sentinel-proxy's Envoy fleet and nothing else — no Traefik

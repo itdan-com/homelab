@@ -102,14 +102,23 @@ upstreams:
     namespace: mcp-servers
     service: github-mcp
     port: 80
-  # 7.5. Note this one holds a Slack credential in its own environment
-  # (its upstream takes no per-request token), so the proxy in front of
-  # it is not merely policy plumbing — it is what stands between any
-  # in-cluster caller and a workspace identity.
-  - name: slack
-    namespace: mcp-servers
-    service: slack-mcp
-    port: 80
+  # 7.5 — Slack, COMMENTED OUT until the server is actually deployed.
+  #
+  # An upstream entry here is a real backendRef: naming a service that
+  # does not exist makes the whole HTTPRoute report ResolvedRefs=False
+  # and the app Degraded, which is how a route for a server nobody has
+  # configured yet turns into a permanently red dashboard. And a
+  # dashboard that is always red is one nobody reads.
+  #
+  # Uncomment when catalog/slack-mcp has a credential. Note when you
+  # do: that server holds a Slack token in its own environment (its
+  # upstream takes no per-request credential), so this proxy is not
+  # merely policy plumbing in front of it — it is what stands between
+  # any in-cluster caller and a workspace identity.
+  # - name: slack
+  #   namespace: mcp-servers
+  #   service: slack-mcp
+  #   port: 80
 
 nameOverride: ""
 fullnameOverride: ""
