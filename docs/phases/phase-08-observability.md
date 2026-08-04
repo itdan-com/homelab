@@ -21,7 +21,14 @@
      because that is what blocks a deploy), and two Loki panels. Eight
      panels deliberately, not forty.
    - **App metrics** (request rate, latency, error rate per service).
-   - **LLM cost** (tokens/sec, $/min, per-consumer attribution — sourced from the AI gateway's `gen_ai_*` metrics + Langfuse).
+   - ~~**LLM cost**~~ — **DONE 2026-08-04** as "LLM usage and cost":
+     tokens in/out, requests, latency percentiles, share by model, and
+     the gateway replicas beside the token rate so the two are read
+     together. Price table lives as recording rules generated from
+     values. **Per-consumer attribution is NOT possible from these
+     metrics** — `gen_ai_*` carries model and token type, no user — so
+     the dashboard says so rather than implying it; person-level
+     attribution is Sentinel's audit log.
    - **Claude actions** (actions/hr, MCP-server-invocation rate, grant request latency, denial rate, kill-switch events).
 5. Wire Alertmanager → Slack `#claude-alerts`. **Rules written
    2026-08-04** (`catalog/monitoring/templates/alerts-platform.yaml`);
