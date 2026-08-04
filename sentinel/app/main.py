@@ -34,6 +34,7 @@ Relying Party ID must be a domain, so `localhost` works and
 """
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -51,6 +52,9 @@ from . import auth_routes
 from . import policy
 from .actor import console_guard, current_operator, require_operator
 from .config import (
+    AUDIT_EXPORT_DIR,
+    AUDIT_RETAIN_DAYS,
+    AUDIT_SEAL_SECONDS,
     CONSOLE_ALLOWED_HOSTS,
     CONSOLE_ORIGIN,
     FLOW_ACTIVE_MINUTES,
@@ -161,13 +165,31 @@ async def lifespan(_app: FastAPI):
     task = (asyncio.create_task(
                 policy.watch_store(policy.POLICY_DIR, POLICY_RELOAD_SECONDS))
             if POLICY_RELOAD_SECONDS > 0 else None)
+    # 7.6: seal new audit rows into the hash chain. The ADMIN process
+    # and only the admin process — two sealers would fork the chain —
+    # which is safe to assert because this is the single-instance,
+    # loopback-bound console.
+    sealer = (asyncio.create_task(_seal_loop())
+              if AUDIT_SEAL_SECONDS > 0 else None)
     yield
-    if task:
-        task.cancel()
+    for t in (task, sealer):
+        if t:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+
+
+async def _seal_loop():
+    from . import audit_chain
+    while True:
+        await asyncio.sleep(AUDIT_SEAL_SECONDS)
         try:
-            await task
-        except asyncio.CancelledError:
-            pass
+            with SessionLocal() as s:
+                audit_chain.seal(s)
+        except Exception:
+            logging.getLogger("sentinel").exception("audit sealing failed")
 
 
 app = FastAPI(
@@ -538,6 +560,48 @@ def discover_server_tools(server: str, operator: str = Depends(current_operator)
         "left_unclassified": found["destructive"],
         "previous": previous}, version=ap.version)
     return {"server": server, "policy_version": ap.version, **found}
+
+
+@app.get(
+    "/v1/audit/integrity",
+    tags=["record"],
+    summary="Is the record intact, and if not, where did it stop being so",
+    dependencies=[Depends(require_operator)],
+)
+def audit_integrity():
+    """Recomputes the hash chain. A verdict of not-ok names the FIRST
+    row that fails and why — a row removed or reordered reads
+    differently from a row edited in place, and an operator needs to
+    know which."""
+    from . import audit_chain
+    with SessionLocal() as s:
+        audit_chain.seal(s)
+        out = audit_chain.verify(s, audit_chain.anchor_from_segments(AUDIT_EXPORT_DIR))
+    out["retain_days"] = AUDIT_RETAIN_DAYS
+    out["export_dir"] = AUDIT_EXPORT_DIR
+    return out
+
+
+@app.post(
+    "/v1/audit/rotate",
+    tags=["decisions"],
+    summary="Export rows past the retention window to a sealed segment",
+    dependencies=[Depends(console_guard)],
+)
+def audit_rotate(dry_run: bool = Query(default=True,
+                                       description="Report what would move."),
+                 operator: str = Depends(current_operator)):
+    """Writes old rows out as JSONL and only then removes them. Defaults
+    to a DRY RUN: a button that deletes audit history on first click is
+    a button that will be clicked by accident."""
+    from . import audit_chain
+    with SessionLocal() as s:
+        audit_chain.seal(s)
+        out = audit_chain.export_and_prune(s, AUDIT_EXPORT_DIR,
+                                           AUDIT_RETAIN_DAYS, dry_run=dry_run)
+    if not dry_run and out.get("pruned"):
+        _audit_policy_change(operator, {"action": "audit-rotated", **out})
+    return out
 
 
 @app.get(

@@ -105,6 +105,20 @@ POLICY_DIR = os.environ.get("SENTINEL_POLICY_DIR", "./policy-dev")
 # after a console save.
 POLICY_RELOAD_SECONDS = float(os.environ.get("SENTINEL_POLICY_RELOAD_SECONDS", "2"))
 
+# --- the record (7.6) --------------------------------------------------------
+#
+# How long audit rows stay in the database before being exported to a
+# sealed JSONL segment and removed. 90 days is the owner's number and a
+# common compliance floor; the segments are kept indefinitely (they are
+# small, line-oriented, and are what a SIEM or Loki reads).
+AUDIT_RETAIN_DAYS = int(os.environ.get("SENTINEL_AUDIT_RETAIN_DAYS", "90"))
+AUDIT_EXPORT_DIR = os.environ.get(
+    "SENTINEL_AUDIT_EXPORT_DIR",
+    os.path.join(os.path.dirname(DB_PATH) or ".", "audit-segments"))
+# How often the admin process seals new rows into the hash chain.
+# Exactly ONE process seals — two would fork the chain.
+AUDIT_SEAL_SECONDS = float(os.environ.get("SENTINEL_AUDIT_SEAL_SECONDS", "30"))
+
 # --- the Airlock door (7.3.3) -------------------------------------------------
 #
 # A THIRD listener, because Sentinel now faces three populations with

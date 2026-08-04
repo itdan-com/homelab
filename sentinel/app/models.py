@@ -284,6 +284,15 @@ class AuditEvent(Base):
     principal: Mapped[str | None] = mapped_column(String(254), index=True)
     resource: Mapped[str | None] = mapped_column(String(255))
     policy_version: Mapped[str | None] = mapped_column(String(64))
+    # 7.6 — tamper evidence. The chain is computed by a SEALING pass,
+    # not on insert: audit() is called on every hot path by three
+    # separate processes, and making each write first read the previous
+    # row would turn the record into a contention point (and two
+    # processes reading the same predecessor would fork the chain).
+    # Unsealed rows are still the truth; they are simply not yet
+    # provable. See app/audit_chain.py.
+    prev_hash: Mapped[str | None] = mapped_column(String(64))
+    row_hash: Mapped[str | None] = mapped_column(String(64), index=True)
 
 
 # --- human auth (5.5.6) -------------------------------------------------------
