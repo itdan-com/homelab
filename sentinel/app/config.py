@@ -200,6 +200,14 @@ def upstream_token(server: str) -> str | None:
     return token_for(server, MCP_UPSTREAM_TOKENS_FILE)
 
 
+# Where this platform's own MCP servers answer. A connection that says
+# "runs on this platform" resolves to <base>/<server>/mcp — the
+# operator registers a server and the address is DERIVED, because
+# making someone type the address of a thing this platform deployed
+# itself is a chore the platform invented for them.
+MCP_PROXY_BASE = os.environ.get(
+    "SENTINEL_MCP_PROXY_BASE", "https://localhost:8443").rstrip("/")
+
 MCP_UPSTREAMS = {
     k.strip(): v.strip() for k, _, v in
     (part.partition("=") for part in

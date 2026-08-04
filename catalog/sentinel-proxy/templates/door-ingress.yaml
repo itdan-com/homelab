@@ -32,6 +32,11 @@ spec:
   secretName: {{ include "catalog.fullname" . }}-tls
   dnsNames:
     - {{ .Values.doorIngress.host }}
+    # `localhost` too, so Sentinel's door — which runs ON this host —
+    # can reach the proxy without anyone editing /etc/hosts. Asking a
+    # human to add a hosts entry so the platform can talk to itself is
+    # a chore the platform invented for them.
+    - localhost
   privateKey:
     rotationPolicy: Always
   issuerRef:
@@ -50,7 +55,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`{{ .Values.doorIngress.host }}`)
+    - match: Host(`{{ .Values.doorIngress.host }}`) || Host(`localhost`)
       kind: Rule
       services:
         - name: {{ include "sentinelproxy.dataplaneName" . }}

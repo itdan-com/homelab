@@ -615,9 +615,14 @@ def _call_upstream(server: str, leaf: str, arguments: dict, *,
     making rather than ceremonial."""
     # The connection's own address wins; the env map stays as the
     # deployment-level fallback so existing installs are unaffected.
-    from .config import MCP_UPSTREAM_TOKENS_FILE
-    from .upstream_auth import upstream_url
+    from .config import MCP_PROXY_BASE, MCP_UPSTREAM_TOKENS_FILE
+    from .upstream_auth import upstream_url, is_registered
+    # In order: the connection's explicit address, then a deployment
+    # override, then THIS platform's own proxy path — so registering a
+    # server that runs here needs no address at all.
     url = upstream_url(server, MCP_UPSTREAM_TOKENS_FILE) or MCP_UPSTREAMS.get(server)
+    if not url and is_registered(server, MCP_UPSTREAM_TOKENS_FILE):
+        url = f"{MCP_PROXY_BASE}/{server}/mcp"
     if not url:
         return {"content": [{"type": "text", "text":
                              f"Allowed by policy, but no upstream is "

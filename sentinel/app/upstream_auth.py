@@ -278,3 +278,63 @@ def upstream_url(server: str, path: str) -> str | None:
     working unchanged."""
     entry = _load(path).get(server)
     return entry.get("url") if isinstance(entry, dict) else None
+
+
+def is_registered(server: str, path: str) -> bool:
+    """Has an operator connected this server at all? Distinguishes
+    "runs here, address derived" from "nothing configured"."""
+    return server in _load(path)
+
+
+def discover_tools(server: str, url: str, token: str | None,
+                   ca_bundle: str | None = None) -> dict:
+    """Ask a server what it can do, and classify it from what it says.
+
+    MCP tools carry `annotations.readOnlyHint` and `destructiveHint`,
+    so a server describes its own verbs and the platform does not have
+    to be told them by a human retyping a list. Returns
+    {read: [...], write: [...], destructive: [...]}.
+
+    `destructive` is returned SEPARATELY and deliberately left out of
+    both classified sets: an unclassified tool is denied, so a
+    destructive verb a server offers cannot be called until a human
+    decides it should be. Discovery proposes; it never widens access on
+    its own.
+    """
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    headers = {"Content-Type": "application/json",
+               "Accept": "application/json, text/event-stream"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    with httpx.Client(timeout=15.0, verify=ca_bundle or True) as c:
+        r = c.post(url, json=body, headers=headers)
+    if r.status_code != 200:
+        raise UpstreamAuthError(f"{server} did not answer tools/list "
+                                f"(HTTP {r.status_code})")
+    payload = r.json()
+    if "text/event-stream" in r.headers.get("content-type", ""):
+        for line in r.text.splitlines():
+            if line.startswith("data:"):
+                payload = json.loads(line[5:].strip())
+                break
+    tools = (payload.get("result") or {}).get("tools")
+    if tools is None:
+        raise UpstreamAuthError(f"{server} returned no tool list")
+
+    read, write, destructive = [], [], []
+    for t in tools:
+        name = t.get("name")
+        if not name:
+            continue
+        ann = t.get("annotations") or {}
+        if ann.get("destructiveHint"):
+            destructive.append(name)
+        elif ann.get("readOnlyHint"):
+            read.append(name)
+        else:
+            write.append(name)
+    # The handshake always rides a prefix class, or an assigned server
+    # could not even be initialized.
+    read.append("rpc.*")
+    return {"read": sorted(set(read)), "write": sorted(set(write)),
+            "destructive": sorted(set(destructive))}

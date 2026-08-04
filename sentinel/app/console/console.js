@@ -781,6 +781,25 @@ async function buildCredsPane() {
       const detail = document.createElement('span');
       detail.className = 'hint';
       detail.textContent = ' — ' + row.detail;
+      // Registering a server should be the last manual step. This asks
+      // it what it can do and writes the classification, so nobody
+      // retypes verbs into YAML.
+      const disc = document.createElement('button');
+      disc.textContent = 'Discover tools';
+      disc.className = 'grant';
+      disc.onclick = async () => {
+        disc.textContent = 'asking…';
+        try {
+          const out = await api('/v1/upstream-credentials/'
+            + encodeURIComponent(row.server) + '/discover', { method: 'POST' });
+          const left = (out.destructive || []).length;
+          disc.textContent = `${out.read.length} read / ${out.write.length} write`
+            + (left ? ` · ${left} destructive left off` : '');
+          loadAccess(true);
+        } catch (e) {
+          disc.textContent = String((e && e.message) || e);
+        }
+      };
       const del = document.createElement('button');
       del.textContent = 'Remove';
       del.className = 'deny';
@@ -789,7 +808,7 @@ async function buildCredsPane() {
                   { method: 'DELETE' });
         refresh();
       };
-      line.append(name, detail, del);
+      line.append(name, detail, disc, del);
       list.appendChild(line);
     });
   }

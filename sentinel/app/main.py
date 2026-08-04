@@ -484,6 +484,53 @@ def delete_upstream_credential(server: str,
     return {"server": server, "removed": True}
 
 
+@app.post(
+    "/v1/upstream-credentials/{server}/discover",
+    tags=["decisions"],
+    summary="Ask a connected server what it can do, and classify it",
+    dependencies=[Depends(console_guard)],
+)
+def discover_server_tools(server: str, operator: str = Depends(current_operator)):
+    """Registering a server should not be followed by a human retyping
+    its verbs into YAML. MCP tools declare `readOnlyHint` and
+    `destructiveHint`, so the server describes itself and the platform
+    writes the classification.
+
+    Discovery PROPOSES and never widens: destructive verbs come back
+    listed but unclassified, and an unclassified tool is denied — so a
+    human still decides before anything dangerous becomes callable."""
+    from . import upstream_auth
+    from .config import (MCP_PROXY_BASE, MCP_UPSTREAM_TOKENS_FILE,
+                         OIDC_CA_BUNDLE)
+    url = (upstream_auth.upstream_url(server, MCP_UPSTREAM_TOKENS_FILE)
+           or f"{MCP_PROXY_BASE}/{server}/mcp")
+    try:
+        token = upstream_auth.token_for(server, MCP_UPSTREAM_TOKENS_FILE)
+        found = upstream_auth.discover_tools(server, url, token, OIDC_CA_BUNDLE)
+    except upstream_auth.UpstreamAuthError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{server}: {e}")
+
+    docs = policy.store_documents(policy.POLICY_DIR)
+    import yaml as _yaml
+    servers = _yaml.safe_load(docs.get("servers") or "") or {}
+    entry = servers.setdefault(server, {})
+    previous = entry.get("tools") or {}
+    entry["tools"] = {"read": found["read"], "write": found["write"]}
+    docs["servers"] = _yaml.safe_dump(servers, sort_keys=False)
+    try:
+        ap = policy.save_and_activate(policy.POLICY_DIR, docs, actor=operator)
+    except PolicyError as e:
+        raise HTTPException(status_code=422, detail=e.errors)
+    _audit_policy_change(operator, {
+        "action": "server-tools-discovered", "server": server,
+        "read": len(found["read"]), "write": len(found["write"]),
+        "left_unclassified": found["destructive"],
+        "previous": previous}, version=ap.version)
+    return {"server": server, "policy_version": ap.version, **found}
+
+
 @app.get(
     "/v1/policy/status",
     response_model=PolicyStatusOut,

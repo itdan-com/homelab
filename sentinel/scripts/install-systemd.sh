@@ -45,6 +45,7 @@ OIDC_CLIENT_ID="${SENTINEL_OIDC_CLIENT_ID:-mcp-door}"
 # cluster if present — never hardcoded (ADR-004).
 OIDC_CA_BUNDLE="${SENTINEL_OIDC_CA_BUNDLE:-$CERT_DIR/lab-ca.crt}"
 MCP_UPSTREAMS="${SENTINEL_MCP_UPSTREAMS:-}"
+MCP_PROXY_BASE="${SENTINEL_MCP_PROXY_BASE:-https://localhost:8443}"
 
 [[ $EUID -eq 0 ]] || { echo "!! run with sudo" >&2; exit 1; }
 
@@ -228,6 +229,10 @@ SENTINEL_OIDC_CA_BUNDLE=$OIDC_CA_BUNDLE
 # a real server is deployed — policy can decide about a server that has
 # no upstream yet; it simply cannot be called.
 SENTINEL_MCP_UPSTREAMS=$MCP_UPSTREAMS
+# Where this platform's own MCP servers answer. A connection that says
+# "runs on this platform" resolves to <base>/<server>/mcp, so nobody
+# types the address of something this platform deployed itself.
+SENTINEL_MCP_PROXY_BASE=$MCP_PROXY_BASE
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
 
