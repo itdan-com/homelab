@@ -77,3 +77,14 @@ cert-manager:
         memory: 128Mi
       limits:
         memory: 256Mi
+
+  # Metrics (Phase 8) — specifically so certificate EXPIRY is
+  # observable. Every door on this platform is TLS, and an expiring
+  # lab CA is the classic silent outage: nothing degrades until the
+  # day everything fails at once.
+  prometheus:
+    enabled: true
+    servicemonitor:
+      enabled: true
+      labels:
+        release: monitoring

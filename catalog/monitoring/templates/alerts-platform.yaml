@@ -1,0 +1,122 @@
+# Alert rules for THIS platform (Phase 8), on top of the ~30 groups
+# kube-prometheus-stack already ships.
+#
+# The bar every rule here has to clear: **a human should want to be
+# told.** kube-prometheus-stack's defaults are tuned for a large fleet
+# and fire on things a four-node lab does constantly — an alert that
+# cries wolf trains its reader to ignore the next one, which is worse
+# than having no alert at all. So this file is short on purpose, and
+# each rule states what a human should DO about it.
+#
+# Deliberately absent, and worth saying why: nothing here alerts on CPU
+# or memory percentages. "Memory is at 80%" is not an incident; a pod
+# being OOM-killed is, and that shows up as a restart.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "catalog.fullname" . }}-platform
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}   # the operator selects rules by this
+spec:
+  groups:
+    - name: platform.rules
+      rules:
+        - alert: PodCrashLooping
+          # 15m, not 5m: a pod that restarts twice during a deploy is
+          # normal. A pod still restarting a quarter-hour later has a
+          # problem no deploy is going to finish fixing.
+          expr: increase(kube_pod_container_status_restarts_total[15m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{`{{ $labels.namespace }}/{{ $labels.pod }}`}} is crash-looping"
+            description: >-
+              More than three restarts in fifteen minutes. Check
+              `kubectl -n {{`{{ $labels.namespace }}`}} logs
+              {{`{{ $labels.pod }}`}} --previous` — the previous
+              container's logs are the ones that explain the crash.
+
+        - alert: PodNotScheduling
+          expr: kube_pod_status_phase{phase="Pending"} == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{`{{ $labels.namespace }}/{{ $labels.pod }}`}} has been Pending for 15m"
+            description: >-
+              Nothing is placing this pod. Usually capacity, an
+              unbound PVC, or a node selector nothing satisfies —
+              `kubectl describe pod` names which in its Events.
+
+        - alert: ArgoCDApplicationUnhealthy
+          # The GitOps controller is how everything else gets fixed, so
+          # an app it cannot reconcile is a platform that has stopped
+          # self-healing — even while every pod still looks fine.
+          expr: argocd_app_info{health_status=~"Degraded|Missing"} == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ArgoCD app {{`{{ $labels.name }}`}} is {{`{{ $labels.health_status }}`}}"
+            description: >-
+              Desired state is not reachable. The platform has stopped
+              converging on git for this app, which means the next
+              change will not land either.
+
+        - alert: CertificateExpiringSoon
+          # Every door on this platform is TLS, and a lab CA expiry is
+          # the classic silent outage: nothing degrades until the day
+          # it all fails at once.
+          expr: (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 14
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate {{`{{ $labels.name }}`}} expires in under 14 days"
+            description: >-
+              cert-manager renews automatically; this firing means
+              renewal is NOT happening. Check the Certificate's status
+              and the issuer.
+
+    - name: airlock.rules
+      # CLAUDE.md's anomaly list, expressed against what the platform
+      # actually exports today. Two of the four named there —
+      # secret reuse and unexpected namespaces — need Sentinel's audit
+      # in Prometheus or Loki, which is not wired yet; they are NOT
+      # written as rules that would silently never fire.
+      rules:
+        - alert: MCPServerUnreachable
+          # An MCP server that is down fails CLOSED (the proxy refuses),
+          # so this is availability, not a security event. Said
+          # explicitly because "MCP" in an alert name reads as scarier
+          # than it is at 3am.
+          expr: kube_deployment_status_replicas_available{namespace="mcp-servers"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "MCP server {{`{{ $labels.deployment }}`}} has no available replicas"
+            description: >-
+              Calls to it are refused while it is down — the gate fails
+              closed, so this is an outage for its users rather than an
+              exposure.
+
+        - alert: GatewayTokenRateAtCeiling
+          # The KEDA signal pinned at its ceiling means demand exceeds
+          # what the replica cap allows. Worth knowing BEFORE users
+          # report slowness.
+          expr: |
+            sum(rate(gen_ai_client_token_usage_sum{gen_ai_token_type="output"}[5m]))
+              > {{ .Values.alerts.tokenRateCeiling | default 80 }}
+          for: 15m
+          labels:
+            severity: info
+          annotations:
+            summary: "AI gateway sustained at its scaling ceiling"
+            description: >-
+              Output token rate has been above the ceiling for fifteen
+              minutes. If this is sustained rather than a burst, the
+              replica cap or the per-replica threshold wants raising —
+              both are values in catalog/ai-gateway.

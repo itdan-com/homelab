@@ -205,3 +205,13 @@ kube-prometheus-stack:
         memory: 32Mi
       limits:
         memory: 64Mi
+
+# Phase 8 alert thresholds. Kept here rather than inline in the rule so
+# the number a human argues about lives with the other tunables.
+alerts:
+  # Sustained output tokens/sec that means the gateway is pinned at its
+  # ceiling. Derived, not guessed: KEDA's per-replica threshold (30)
+  # times maxReplicas (3) is 90, and 80 fires before saturation rather
+  # than after. Re-derive both together — see the backlog item about
+  # the scaling knobs needing one surface.
+  tokenRateCeiling: 80

@@ -107,6 +107,18 @@ argo-cd:
       server.insecure: true
 
   controller:
+    # Metrics (Phase 8). Without this the ArgoCD alert rule references
+    # a metric nobody exports — a rule that can never fire, which is
+    # worse than no rule because it reads like coverage.
+    # `additionalLabels.release` is how the Prometheus operator selects
+    # ServiceMonitors: omit it and the object exists, looks correct,
+    # and is never scraped.
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        additionalLabels:
+          release: monitoring
     resources:
       requests:
         cpu: 250m
@@ -114,6 +126,18 @@ argo-cd:
       limits:
         memory: 1Gi
   server:
+    # Metrics (Phase 8). Without this the ArgoCD alert rule references
+    # a metric nobody exports — a rule that can never fire, which is
+    # worse than no rule because it reads like coverage.
+    # `additionalLabels.release` is how the Prometheus operator selects
+    # ServiceMonitors: omit it and the object exists, looks correct,
+    # and is never scraped.
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        additionalLabels:
+          release: monitoring
     resources:
       requests:
         cpu: 50m
@@ -121,6 +145,18 @@ argo-cd:
       limits:
         memory: 256Mi
   repoServer:
+    # Metrics (Phase 8). Without this the ArgoCD alert rule references
+    # a metric nobody exports — a rule that can never fire, which is
+    # worse than no rule because it reads like coverage.
+    # `additionalLabels.release` is how the Prometheus operator selects
+    # ServiceMonitors: omit it and the object exists, looks correct,
+    # and is never scraped.
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        additionalLabels:
+          release: monitoring
     resources:
       requests:
         cpu: 100m
