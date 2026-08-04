@@ -15,6 +15,19 @@
 # running service.
 set -euo pipefail
 
+# --code : redeploy the application and restart, skipping everything
+# that only matters on a first install (venv build, certificates, CA
+# trust, migrations, enrollment). Seconds instead of a minute, for the
+# build loop. Everything it skips is idempotent anyway — a full run
+# stays the safe default and the ONLY thing cloud-init ever calls.
+CODE_ONLY=0
+for arg in "$@"; do
+  case "$arg" in
+    --code) CODE_ONLY=1 ;;
+    *) echo "usage: $0 [--code]" >&2; exit 2 ;;
+  esac
+done
+
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_DIR="${SENTINEL_APP_DIR:-/opt/sentinel}"
 ETC_DIR="${SENTINEL_ETC_DIR:-/etc/sentinel}"
@@ -79,10 +92,14 @@ cp -r "$REPO_DIR/app" "$REPO_DIR/migrations" "$APP_DIR/"
 install -m 0644 "$REPO_DIR/alembic.ini" "$REPO_DIR/requirements.txt" "$APP_DIR/"
 find "$APP_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
-echo "== virtualenv"
-[[ -x "$APP_DIR/.venv/bin/python" ]] || python3 -m venv "$APP_DIR/.venv"
-"$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+if (( CODE_ONLY )); then
+  echo "== virtualenv (skipped: --code)"
+else
+  echo "== virtualenv"
+  [[ -x "$APP_DIR/.venv/bin/python" ]] || python3 -m venv "$APP_DIR/.venv"
+  "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
+  "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+fi
 
 # Prove the DEPLOYED venv can actually build every app before systemd
 # tries. A developer's venv accumulates packages that requirements.txt
@@ -236,6 +253,10 @@ SENTINEL_MCP_PROXY_BASE=$MCP_PROXY_BASE
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
 
+if (( CODE_ONLY )); then
+  echo "== certificates, CA trust, migrations (skipped: --code)"
+fi
+if (( ! CODE_ONLY )); then
 # Trust Sentinel's CA for the Windows user, so the console is a valid
 # https origin in Edge/Chrome with no manual import. Deliberately
 # `-user`, not the machine store: no elevation, and the blast radius is
@@ -283,6 +304,7 @@ fi
 SENTINEL_DB="$STATE_DIR/sentinel.db" \
   runuser -u "$SVC_USER" -- "$APP_DIR/.venv/bin/alembic" \
   -c "$APP_DIR/alembic.ini" upgrade head
+fi   # end !CODE_ONLY
 
 echo "== units"
 install -m 0644 "$REPO_DIR/deploy/sentinel-admin.service" \
@@ -388,6 +410,14 @@ fi
 echo "== policy version agreed by broker and door: $DOOR_PV"
 systemctl --no-pager --lines=0 status sentinel-broker.service \
   sentinel-admin.service sentinel-door.service || true
+
+if (( CODE_ONLY )); then
+  echo
+  echo "  == code redeployed and units restarted (--code). Full install:"
+  echo "     sudo $0"
+  echo
+  exit 0
+fi
 
 # First install: mint an enrollment code and hand over one clickable
 # URL (the code rides the fragment — never sent to the server, never in
