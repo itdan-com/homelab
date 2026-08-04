@@ -1,0 +1,162 @@
+# Provisioned dashboard (dashboards-as-code): the Grafana sidecar loads any
+# ConfigMap labeled `grafana_dashboard: "1"` in this namespace.
+#
+# CLUSTER HEALTH — Phase 8's first dashboard, and deliberately not a
+# wall of 40 panels. Four questions an operator actually asks at 3am,
+# in the order they ask them:
+#
+#   1. Is anything restarting?      (the first symptom of most outages)
+#   2. Is anything not running?     (pending = capacity, failed = broken)
+#   3. Are we near a resource wall? (requests vs allocatable, not usage)
+#   4. What is filling the logs?    (the Loki panel, added because the
+#                                    inotify finding came from exactly
+#                                    this view and nothing else showed it)
+#
+# Panels a human never reads are worse than no panel: they train people
+# that the dashboard is decoration.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "catalog.fullname" . }}-dashboard-platform-health
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  platform-health.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "graphTooltip": 1,
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["homelab", "platform"],
+      "title": "Platform health",
+      "uid": "platform-health",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Pods not Running",
+          "description": "Pending means the cluster cannot place it (capacity, node selector, PVC). Failed means it ran and stopped. Both need a human; neither is normal.",
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(kube_pod_status_phase{phase=~\"Pending|Failed|Unknown\"}) or vector(0)",
+            "legendFormat": "not running"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 1 },
+                { "color": "red", "value": 3 }
+              ]}
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Container restarts (1h)",
+          "description": "A restarting container is the earliest visible symptom of most outages — earlier than error rate, because a crash-looping pod serves no traffic to have errors in.",
+          "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(increase(kube_pod_container_status_restarts_total[1h])) or vector(0)",
+            "legendFormat": "restarts"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 1 },
+                { "color": "red", "value": 5 }
+              ]}
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "CPU requested vs allocatable",
+          "description": "REQUESTS, not usage. Usage tells you how busy the platform is; requests tell you whether the next pod can be scheduled at all — which is the question that actually blocks a deploy.",
+          "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "100 * sum(kube_pod_container_resource_requests{resource=\"cpu\"}) / sum(kube_node_status_allocatable{resource=\"cpu\"})",
+            "legendFormat": "% committed"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 75 },
+                { "color": "red", "value": 90 }
+              ]}
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Memory requested vs allocatable",
+          "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "100 * sum(kube_pod_container_resource_requests{resource=\"memory\"}) / sum(kube_node_status_allocatable{resource=\"memory\"})",
+            "legendFormat": "% committed"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 75 },
+                { "color": "red", "value": 90 }
+              ]}
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Restarts by workload",
+          "description": "Which one, not just how many. A single pod restarting hourly is a different problem from every pod restarting once.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum by (namespace, pod) (increase(kube_pod_container_status_restarts_total[15m])) > 0",
+            "legendFormat": "{{`{{namespace}}/{{pod}}`}}"
+          }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Pods by phase",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum by (phase) (kube_pod_status_phase)",
+            "legendFormat": "{{`{{phase}}`}}"
+          }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Log lines per namespace",
+          "description": "Volume, not content — a namespace that suddenly triples its logging is usually retrying something. This is the panel that surfaced platform-wide inotify exhaustion that a single warning had made look like noise.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+          "datasource": { "type": "loki", "uid": "loki" },
+          "targets": [{
+            "expr": "sum by (namespace) (count_over_time({namespace=~\".+\"}[5m]))",
+            "legendFormat": "{{`{{namespace}}`}}"
+          }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Error-shaped log lines",
+          "description": "A blunt text match on purpose. Structured levels would be better and most of this platform's components do not emit them; a crude signal that exists beats a precise one that does not.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+          "datasource": { "type": "loki", "uid": "loki" },
+          "targets": [{
+            "expr": "sum by (namespace) (count_over_time({namespace=~\".+\"} |~ \"(?i)(error|fatal|panic|refused|denied)\" [5m]))",
+            "legendFormat": "{{`{{namespace}}`}}"
+          }]
+        }
+      ]
+    }
