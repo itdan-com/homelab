@@ -85,6 +85,16 @@
   obvious** — here, from "Slack is not set up" to "the enforcement
   proxy is degraded", which is a far more alarming sentence for a
   problem that is neither.
+- **2026-08-04 — Loki paid for itself in ten minutes.** Its first real
+  query turned a backlog item filed as "harmless cosmetic" into
+  measured evidence: 460+ `fsnotify: too many open files` lines per
+  hour across eight namespaces, with `fs.inotify.max_user_instances`
+  at its 128 default. A process that cannot create a watcher cannot
+  notice a file change — which is how config reloads and cert
+  rotations work. Nothing is visibly broken, which is precisely the
+  profile of something that breaks at the next rotation. **The
+  transferable point: one warning looks like noise; the same warning
+  counted across a platform is a finding. That difference IS the phase.**
 - **2026-08-04:** a permanently-degraded app is worse than a missing
   one, because a dashboard that is always red is one nobody reads.
   That is the reason the upstream is commented out rather than left
