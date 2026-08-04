@@ -1,0 +1,29 @@
+apiVersion: v2
+name: loki
+description: >-
+  Logs for the platform and, deliberately, for the record Sentinel
+  keeps (Phase 8). Loki in single-binary mode with Grafana Alloy as
+  the shipper — the pair Grafana now recommends over Promtail, which
+  is end-of-life.
+
+  Storage is the cloud-parity decision (ADR-002): filesystem locally,
+  S3/GCS in cloud, and the SAME code path either way because Loki
+  speaks object storage natively. Swapping is a values change, not a
+  redeploy of a different thing.
+type: application
+version: 0.1.0
+appVersion: "3.6.11"
+
+dependencies:
+  - name: loki
+    version: 7.2.0
+    repository: https://grafana.github.io/helm-charts
+  - name: alloy
+    version: 1.11.0
+    repository: https://grafana.github.io/helm-charts
+
+annotations:
+  catalog.homelab/needs-sso: "false"
+  catalog.homelab/llm-traffic: "false"
+  catalog.homelab/wants-vector: "false"
+  catalog.homelab/exposes-mcp: "false"

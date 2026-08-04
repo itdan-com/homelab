@@ -113,6 +113,21 @@ kube-prometheus-stack:
           memory: 128Mi
 
   grafana:
+    # Loki as a datasource (Phase 8). Provisioned here rather than
+    # clicked in, for the same reason everything else is: a dashboard
+    # that only exists because somebody configured it by hand does not
+    # survive a rebuild, and this platform's disaster-recovery claim
+    # rests on rebuilding from git.
+    additionalDataSources:
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
+        jsonData:
+          # Ties a log line to its trace when Tempo lands; harmless
+          # until then.
+          maxLines: 1000
     # Real value injected from secrets.enc.yaml (SOPS) at install time.
     # Post-B6 this account is the BREAK-GLASS login (same decision as
     # OpenWebUI): humans arrive via SSO; admin + the form stay for

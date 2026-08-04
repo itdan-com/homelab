@@ -1,0 +1,114 @@
+# values.yaml — Loki + Grafana Alloy (Phase 8).
+#
+# WHY ALLOY AND NOT PROMTAIL: Promtail is end-of-life (Grafana's own
+# migration guidance points at Alloy), so starting a new deployment on
+# it would be adopting a dependency with a known expiry date.
+#
+# WHY SINGLE-BINARY: the distributed mode splits Loki into a dozen
+# components for horizontal scale that a platform this size will not
+# reach. Single-binary is the supported shape below roughly 100 GB/day
+# and moves to `simple-scalable` by changing `deploymentMode` — the
+# storage layout does not change with it, which is what makes that a
+# real upgrade path rather than a migration.
+
+catalog:
+  tier: dev
+  dataClass: internal
+
+loki:
+  deploymentMode: SingleBinary
+
+  loki:
+    auth_enabled: false   # single tenant; the cluster boundary is the tenancy boundary
+    commonConfig:
+      replication_factor: 1
+    schemaConfig:
+      configs:
+        # TSDB + v13 is the current default; pinned explicitly because a
+        # schema that changes underneath you silently splits queries
+        # across incompatible index formats.
+        - from: "2024-04-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    storage:
+      # THE CLOUD-PARITY LINE (ADR-002). `filesystem` here; in cloud
+      # this becomes s3/gcs with a bucket and the same schema above.
+      # Loki speaks object storage natively, so the code path is
+      # identical — which is the point: the local shape is not a
+      # different product.
+      type: filesystem
+    limits_config:
+      # 14 days, matching the phase doc's proposal. Sentinel's own audit
+      # segments keep 90 days independently (they are the compliance
+      # record; these are operational logs).
+      retention_period: 336h
+      # A single noisy pod must not be able to evict everyone else's
+      # logs by filling the store.
+      ingestion_rate_mb: 8
+      ingestion_burst_size_mb: 16
+      per_stream_rate_limit: 3MB
+    compactor:
+      retention_enabled: true
+      delete_request_store: filesystem
+
+  singleBinary:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: local-path
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+
+  # Everything the distributed mode would deploy, switched off. Left
+  # explicit rather than relying on chart defaults, because a default
+  # that changes on upgrade silently doubles the pod count.
+  backend: {replicas: 0}
+  read: {replicas: 0}
+  write: {replicas: 0}
+  chunksCache:
+    enabled: false      # 8Gi of memcached by default — far past this scale
+  resultsCache:
+    enabled: false
+  lokiCanary:
+    enabled: false
+  test:
+    enabled: false
+  gateway:
+    enabled: false      # nothing external reaches Loki; Grafana talks to it in-cluster
+
+alloy:
+  alloy:
+    # Alloy needs to read container logs on each node, which live in a
+    # root-owned directory — so this one is deliberately privileged in
+    # the narrow sense of mounting host paths read-only. It writes
+    # nothing to the host and reaches only Loki.
+    mounts:
+      varlog: true
+    securityContext:
+      runAsUser: 0
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    configMap:
+      create: false
+      name: loki-alloy-config
+      key: config.alloy
+  controller:
+    type: daemonset
