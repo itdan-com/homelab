@@ -23,7 +23,10 @@
    - **App metrics** (request rate, latency, error rate per service).
    - **LLM cost** (tokens/sec, $/min, per-consumer attribution — sourced from the AI gateway's `gen_ai_*` metrics + Langfuse).
    - **Claude actions** (actions/hr, MCP-server-invocation rate, grant request latency, denial rate, kill-switch events).
-5. Wire Alertmanager → Slack `#claude-alerts`.
+5. Wire Alertmanager → Slack `#claude-alerts`. **Rules written
+   2026-08-04** (`catalog/monitoring/templates/alerts-platform.yaml`);
+   the receiver still needs a Slack webhook, which is an owner
+   decision, so alerts currently fire into Alertmanager's UI only.
 6. Define anomaly rules:
    - Secret reuse (same key appears in two distinct namespaces or files).
    - Abnormal action rate (agent doing > N actions/min).
@@ -92,6 +95,28 @@
   obvious** — here, from "Slack is not set up" to "the enforcement
   proxy is degraded", which is a far more alarming sentence for a
   problem that is neither.
+- **2026-08-04 (alert rules) — I wrote "no rules that can never fire",
+  then checked, and two of six could not.** `argocd_app_info` and
+  `certmanager_certificate_expiration_timestamp_seconds` had ZERO
+  series: neither component was being scraped at all. Fixed at the
+  cause (ServiceMonitors on both) rather than by deleting the rules,
+  because both signals matter — ArgoCD is how everything else gets
+  repaired, so an app it cannot reconcile means the platform has
+  stopped self-healing while every pod still looks fine; and cert
+  expiry is the silent outage on a platform where every door is TLS.
+  Now 15 and 7 series respectively.
+- **2026-08-04 — ArgoCD is the one component ArgoCD does not manage**
+  (chicken-and-egg: `bootstrap.sh` helm-installs it). So a change to
+  `catalog/argocd/values.yaml` does NOT self-apply; it needs the same
+  `helm secrets upgrade` bootstrap runs, or the next rebuild. Easy to
+  forget and it fails silently — the app list simply does not contain
+  it.
+- **2026-08-04 — a near-miss worth remembering:** appending a second
+  `controller:` block under `argo-cd:` in values.yaml would have been a
+  DUPLICATE YAML KEY. The parser keeps the last one silently, which
+  would have discarded the helm-secrets plugin config the entire GitOps
+  path depends on. Merge into existing blocks; never append a key that
+  might already exist.
 - **2026-08-04 — Loki paid for itself in ten minutes.** Its first real
   query turned a backlog item filed as "harmless cosmetic" into
   measured evidence: 460+ `fsnotify: too many open files` lines per
