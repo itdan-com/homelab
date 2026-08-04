@@ -9,10 +9,17 @@
 ## High-level outline
 
 1. ~~Install `kube-prometheus-stack`~~ — **moved to Phase 3 (ADR-001).** Verify it's healthy and re-tune retention if disk pressure appeared.
-2. Add Loki for logs + a log shipper (Promtail or Vector).
+2. ~~Add Loki for logs + a log shipper~~ — **DONE 2026-08-04.** Loki
+   single-binary + Grafana Alloy DaemonSet, ingesting all 12
+   namespaces, 14-day retention, bounded label set, Grafana datasource
+   provisioned. First finding within ten minutes: platform-wide inotify
+   exhaustion (see notes).
 3. Add Tempo for traces + OpenTelemetry instrumentation on the control-plane Claude.
 4. Build Grafana dashboards:
-   - **Cluster health** (CPU, memory, pod counts, restarts).
+   - ~~**Cluster health**~~ — **DONE 2026-08-04**, as "Platform
+     health": restarts, pod phases, requests-vs-allocatable (requests,
+     because that is what blocks a deploy), and two Loki panels. Eight
+     panels deliberately, not forty.
    - **App metrics** (request rate, latency, error rate per service).
    - **LLM cost** (tokens/sec, $/min, per-consumer attribution — sourced from the AI gateway's `gen_ai_*` metrics + Langfuse).
    - **Claude actions** (actions/hr, MCP-server-invocation rate, grant request latency, denial rate, kill-switch events).
