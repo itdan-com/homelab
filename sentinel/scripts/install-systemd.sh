@@ -264,7 +264,7 @@ EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
 
 if (( CODE_ONLY )); then
-  echo "== certificates, CA trust, migrations (skipped: --code)"
+  echo "== certificates and CA trust (skipped: --code; migrations still run)"
 fi
 if (( ! CODE_ONLY )); then
 # Trust Sentinel's CA for the Windows user, so the console is a valid
@@ -301,7 +301,17 @@ if [[ -z "${SENTINEL_SKIP_CA_TRUST:-}" ]]; then
     echo "   certutil.exe -user -addstore Root 'C:\\Users\\Public\\ca.crt'"
   fi
 fi
+fi   # end !CODE_ONLY
 
+# MIGRATIONS RUN ON EVERY DEPLOY, INCLUDING --code.
+#
+# They were briefly inside the skip block, on the reasoning that they
+# "only matter on a first install". That is wrong and it broke a live
+# console: any code change that adds a column needs its migration, so
+# skipping them is guaranteed to fail exactly when the new code is the
+# reason you are deploying. `alembic upgrade head` on an
+# already-current database is a no-op costing a second — there was
+# never anything to save.
 echo "== schema"
 # Snapshot before migrating — a system-state rewrite gets a same-script
 # backup, always. Keep the last three, rotate the rest.
@@ -314,7 +324,6 @@ fi
 SENTINEL_DB="$STATE_DIR/sentinel.db" \
   runuser -u "$SVC_USER" -- "$APP_DIR/.venv/bin/alembic" \
   -c "$APP_DIR/alembic.ini" upgrade head
-fi   # end !CODE_ONLY
 
 echo "== units"
 install -m 0644 "$REPO_DIR/deploy/sentinel-admin.service" \
