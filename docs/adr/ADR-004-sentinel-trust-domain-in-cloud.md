@@ -315,3 +315,50 @@ ADR-005 Decision 6.
 - **Two brokers (cloud + local) sharing state.** Deferred: multi-writer
   state is exactly the complexity SQLite was chosen to avoid, and one
   droplet per platform is the honest unit.
+
+## Secrets at rest: the file today, the provider's KMS in cloud (added 2026-08-04, owner)
+
+Owner: *"locally secrets are just useable while the thing is deployed
+locally I guess? once we build out the terraform + deployment scripts
+for AWS this will be a no brainer — secrets stored in their management
+system or similar right?"* Yes, and the shape matters more than the
+provider.
+
+**What is true today.** Sentinel holds three kinds of secret on the
+host: the door's signing key, upstream credentials (a GitHub App
+private key, a Slack token), and per-person linked tokens. All are
+plaintext in root-owned files, mode 0600, in a directory the service
+user owns and cannot escape (`ProtectSystem=strict`, `StateDirectory`).
+
+**Why they are not encrypted at rest here, stated plainly rather than
+apologised for.** Encrypting them requires a key, and on a single host
+that key lives on the same disk — so it protects against someone
+reading a backup and against nothing else. That is worth having in
+cloud, where the key can live somewhere the application cannot read
+(KMS, a TPM, an instance identity), and is theatre on a laptop. Saying
+"encrypted at rest" while the key sits beside the ciphertext is the
+kind of claim that survives a checklist and fails an incident.
+
+**The cloud shape, and it is a small change by construction.** Every
+secret is already read through one function per kind
+(`upstream_auth._load`, `door.signing_key`), so the provider's secret
+manager becomes a backend behind those, selected by config:
+
+| deployment | backend | what protects it |
+|---|---|---|
+| this host | file, 0600, root-owned | filesystem permissions + systemd sandboxing |
+| AWS | Secrets Manager / Parameter Store (SecureString) | KMS key + IAM, instance role, no key on disk |
+| GCP / Azure | Secret Manager / Key Vault | equivalent |
+
+Two properties Terraform must preserve, or the move is a downgrade
+wearing a better label: **the workload's identity fetches the secret**
+(an instance role, not a copied credential — otherwise the bootstrap
+credential becomes the new thing on disk), and **the secret never
+lands in a Terraform state file or a container environment variable**
+— fetched at use, held in memory, never written back. `terraform
+apply` should create the secret's *container* and the access policy;
+the value goes in through the console, exactly as it does today.
+
+That last point is why the console's Connections screen was worth
+building before cloud: the paste-it-here flow is provider-independent,
+and the only thing that changes underneath is where the bytes rest.

@@ -857,6 +857,42 @@ async function buildCredsPane() {
   token.placeholder = 'or a plain token (Slack xoxb-…, etc.)';
   token.size = 40;
 
+  // Which rung of the identity ladder this connection is on
+  // (ADR-005 D10). Shown as a choice rather than buried in a file,
+  // because "which of our tools flatten identity" is the question a
+  // reviewer will actually ask.
+  const identity = document.createElement('select');
+  [['shared', 'one shared identity — read-only tools only'],
+   ['per-caller', 'each person acts as themselves (recommended)']]
+    .forEach(([v, label]) => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      identity.appendChild(o);
+    });
+  // Per-caller needs the upstream's OAuth client so people can link
+  // their own accounts.
+  const clientId = document.createElement('input');
+  clientId.placeholder = 'OAuth client ID (for per-person sign-in)';
+  clientId.size = 32;
+  const clientSecret = document.createElement('input');
+  clientSecret.placeholder = 'OAuth client secret';
+  clientSecret.size = 32;
+  clientSecret.type = 'password';
+  const identityNote = document.createElement('p');
+  identityNote.className = 'hint';
+  const syncIdentity = () => {
+    const per = identity.value === 'per-caller';
+    clientId.style.display = clientSecret.style.display = per ? '' : 'none';
+    identityNote.textContent = per
+      ? 'Each person links their own account once. The upstream then sees '
+        + 'the human and enforces THEIR permissions — someone who cannot do '
+        + 'it there cannot do it here. Required for any tool that writes.'
+      : 'Everyone acts as one identity at the upstream. Acceptable only for '
+        + 'read-only access that the credential itself scopes.';
+  };
+  identity.onchange = syncIdentity;
+  syncIdentity();
+
   const why = document.createElement('p');
   why.className = 'hint';
   why.textContent = 'Use a GitHub App rather than a personal token: its key '
@@ -878,18 +914,21 @@ async function buildCredsPane() {
                   body: JSON.stringify({
                     app_id: appId.value, installation_id: install.value,
                     private_key: key.value, token: token.value,
+                    identity: identity.value, client_id: clientId.value,
+                    client_secret: clientSecret.value,
                     url: where.value === 'custom' ? customUrl.value
                       : where.value }) });
       status.textContent = 'saved — it takes effect on the next call';
-      key.value = ''; token.value = '';   // never leave a secret on screen
+      // never leave a secret on screen
+      key.value = ''; token.value = ''; clientSecret.value = '';
       refresh();
     } catch (e) {
       status.textContent = String((e && e.message) || e);
     }
   };
 
-  [server, appId, install, where, customUrl, key, token, why, save,
-   status].forEach((el) => {
+  [server, appId, install, where, customUrl, identity, identityNote,
+   clientId, clientSecret, key, token, why, save, status].forEach((el) => {
     form.appendChild(el);
     if (el.tagName === 'INPUT' || el.tagName === 'SELECT') {
       form.appendChild(document.createElement('br'));

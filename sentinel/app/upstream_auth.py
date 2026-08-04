@@ -237,8 +237,14 @@ def describe(path: str) -> list[dict]:
                                   + f"[{mode} identity] static token"
                                   + (f" · {n} linked account(s)" if n else "")})
             continue
-        detail = f"[{entry.get('identity', 'shared')} identity] " \
-                 f"App {entry.get('app_id', '?')}"
+        mode = entry.get("identity", "shared")
+        detail = f"[{mode} identity] App {entry.get('app_id', '?')}"
+        if mode == "per-caller":
+            n = len(entry.get("callers") or {})
+            detail += (f", {n} person(s) linked" if n
+                       else ", nobody linked yet — calls will refuse")
+            if not entry.get("client_id"):
+                detail += " · NO OAuth client set, linking is impossible"
         if entry.get("url"):
             detail = f"{entry['url']} · " + detail
         if entry.get("installation_id"):
@@ -293,6 +299,12 @@ def save(path: str, server: str, entry: dict) -> dict:
     # front of the address, not behind it.
     if url:
         doc[server]["url"] = url
+    # The upstream's OAuth client, so people can link their own
+    # accounts. Kept beside the shared credential rather than in a
+    # separate store: one connection, one place.
+    for field in ("client_id", "client_secret"):
+        if entry.get(field, "").strip():
+            doc[server][field] = entry[field].strip()
     # Which rung of the identity ladder this server is on (ADR-005 D10).
     mode = (entry.get("identity") or "").strip()
     if mode:
