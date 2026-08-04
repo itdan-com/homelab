@@ -747,6 +747,37 @@ rich enough to reconstruct an elevation window — and, where the
 upstream tool supports it, reverse it (universal undo is not a
 thing; scope honestly).
 
+## 7.7 — per-user GitHub credentials (added 2026-08-04, owner)
+
+The rule adopted in ADR-005 D10 — *a server with write tools must use
+per-user credentials or better* — makes this the next piece of work,
+not an improvement someday. GitHub has write tools and is running on a
+shared App identity.
+
+What it takes, all achievable today with no vendor dependency:
+
+- **A GitHub OAuth authorization flow at the door.** Each person
+  authorizes the Airlock App once; GitHub returns a user token
+  (`ghu_`) that identifies them, with a refresh token.
+- **Per-person token storage in Sentinel**, encrypted at rest, keyed
+  by principal — the `callers` map the door already reads.
+- **Refresh before expiry**, the same shape `upstream_auth` already
+  does for App installation tokens.
+- **Refusal, not fallback**, for anyone who has not linked their
+  account — already built and tested.
+
+What it buys, and the second half matters more than the first:
+
+- GitHub's audit log names the human instead of the App.
+- **The upstream enforces that person's own permissions.** Someone who
+  cannot write a repo in GitHub cannot do it through Airlock either,
+  whatever our policy says — so the layers stop being a diagram.
+
+Explicitly NOT waiting for XAA: it needs an IdP that issues ID-JAGs
+(Authentik does not) and a resource server that accepts them (GitHub
+has signalled intent, not shipped). Per-user OAuth is the same shape,
+so adopting XAA later swaps the token source and moves nothing else.
+
 ## How a company actually makes Airlock the only path (owner question, 2026-08-02)
 
 Asked at the first live sign-in: *"how is this locking down a

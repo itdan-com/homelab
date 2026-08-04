@@ -605,11 +605,45 @@ Adopted as a standing rule rather than a per-server judgement call.
   sees, not what we know. When a tier-3 server is the only option, that
   is the honest sentence to put in front of an auditor.
 
-**Where things stand at adoption:** `github` is tier 3 by choice (its
-server accepts `ghu_`, so tier 2 is reachable without touching the
-chart); `slack` is tier 3 by force (its server builds one client at
-boot — Slack itself supports per-user OAuth, the implementation does
-not; upstream PR #166 is open and unmerged). Neither is tier 4.
+**THE RULE (owner, 2026-08-04):**
+
+> **A server with WRITE tools must use per-user credentials or better.
+> A shared credential is acceptable only for read-only access that the
+> credential itself scopes.**
+
+This is the line that should have stopped GitHub shipping shared: it
+has write tools, so it never qualified. It also keeps Slack honest —
+read-only through a bot invited to specific channels is within the
+rule; the moment anyone wants to POST to Slack, the shared bot stops
+being acceptable and the upstream's missing per-request auth becomes a
+blocker rather than a footnote.
+
+The reasoning is not only attribution. A per-user credential means the
+UPSTREAM enforces that person's own permissions: someone who cannot
+write a repo in GitHub cannot do it through Airlock either, whatever
+our policy says. That turns "three independent layers" from a diagram
+into something the upstream actually enforces per person. With a
+shared credential, the upstream enforces only what the service account
+can do — which is the union of what everyone might need, granted to
+everyone at once.
+
+**On XAA specifically, so nobody re-litigates it:** it is unavailable
+today for reasons outside our choices — it needs an IdP that issues
+ID-JAGs (Okta, Entra; Authentik does not) AND a resource server that
+accepts them (GitHub has signalled "when the spec lands"). Per-user
+OAuth is the best rung that exists, and it is the SAME SHAPE: when XAA
+arrives, the door swaps where it obtains the token and nothing else
+moves. That is why the door was built to look credentials up per
+caller before any upstream needed it.
+
+**Where things stand at adoption:** `github` is on a SHARED credential
+and, under the rule above, should not be — it has write tools, and its
+server already accepts per-user tokens, so the move is ours to make
+(scheduled as 7.7). `slack` is on a shared credential and stays there
+for now, within the rule: read-only, scoped by which channels the bot
+was invited to, with the upstream's missing per-request auth recorded
+as what blocks the move. Neither is an unscoped shared credential, and
+nothing is allowed to be.
 
 ## Homes for the four audit gaps (so nobody rediscovers them expensively)
 
