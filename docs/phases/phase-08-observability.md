@@ -64,4 +64,30 @@
 
 ## Notes captured during execution
 
+- **2026-08-04 (item 2, Loki):** Alloy over Promtail (Promtail is
+  EOL); single-binary Loki (distributed mode is a dozen components for
+  a scale this platform will not reach, and `simple-scalable` is a
+  values change over the same storage layout). Storage is the
+  cloud-parity line — filesystem here, s3/gcs by one value, same code
+  path, which is why MinIO was rejected: it would add a service to
+  prove a path Loki already takes.
+- **2026-08-04 — two failures I caused by wiring Slack in before it
+  existed, and the rule that came out of it.** `slack-mcp`'s
+  `argo.yaml` promised a `secrets.enc.yaml` that was never created, so
+  the app failed to RENDER; its Service was therefore absent, so
+  `sentinel-proxy`'s HTTPRoute reported `ResolvedRefs=False` and the
+  app went Degraded. Fixed at the root: the chart now renders NOTHING
+  without a credential (an unconfigured server syncs as an empty
+  release rather than half-deploying a pod pointing at a missing
+  Secret), and the proxy's slack upstream is commented out until the
+  server exists. **The rule: declaring a dependency before the thing
+  exists does not defer the failure, it moves it somewhere less
+  obvious** — here, from "Slack is not set up" to "the enforcement
+  proxy is degraded", which is a far more alarming sentence for a
+  problem that is neither.
+- **2026-08-04:** a permanently-degraded app is worse than a missing
+  one, because a dashboard that is always red is one nobody reads.
+  That is the reason the upstream is commented out rather than left
+  dangling with a note.
+
 - (empty)
