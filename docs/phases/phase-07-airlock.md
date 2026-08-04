@@ -148,8 +148,28 @@ decisions.
    minting 500 credentials — because *which* repo a given person may
    touch, at which tier, is exactly the question the matrix and
    `servers.yaml` resource map already answer.
-5. **7.5 — The Slack MCP server.** Socket Mode (below). This is also
-   where `#claude-audit` / `#claude-alerts` become real channels.
+5. **7.5 — The Slack MCP server.** Socket Mode (below).
+
+   **Which flow is this? AIRLOCK, and only Airlock** (asked by the
+   owner 2026-08-04, and the docs were ambiguous). It is an MCP server
+   the workforce reaches through the door: a person asks their client
+   to read a channel, Cedar decides, the audit log records who read
+   what. Mission Control cannot touch it by construction — its every
+   external action is "open a pull request", it calls no MCP tool and
+   holds no SaaS credential, which is what keeps "Mission Control needs
+   no Sentinel" honest.
+
+   **The `#claude-audit` / `#claude-alerts` channels are a DIFFERENT
+   thing and were wrongly listed here.** Those are the platform
+   emitting its own alerts — Alertmanager posting to a webhook, which
+   is Phase 8's work and needs no MCP server at all. Routing them
+   through this chart would be strictly worse: it would put a
+   monitoring dependency behind a policy gate that could deny it,
+   and an alerting path that can be denied is not an alerting path.
+   Note also that if the platform ever posts to Slack as an *agent
+   action*, that is not a PR, so by ADR-001's amended rule it is
+   Airlock-shaped and takes the capability path — it does not become
+   Mission Control work by virtue of being about the platform.
 6. **7.6 — The record, made durable.** ✅ **DONE 2026-08-03** —
    hash chain (edit/delete/reorder/forge all detectable, and the
    verifier names WHICH row and WHICH kind), sealing as a pass rather
