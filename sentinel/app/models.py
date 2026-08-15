@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, LargeBinary, String
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -284,6 +284,16 @@ class AuditEvent(Base):
     principal: Mapped[str | None] = mapped_column(String(254), index=True)
     resource: Mapped[str | None] = mapped_column(String(255))
     policy_version: Mapped[str | None] = mapped_column(String(64))
+    # ADR-007 Decision 1 — the velocity signal. Populated only on the
+    # ladder's USE row (the only event type velocity counts): the
+    # RESOURCE column already holds the concrete resource_id ("wipe
+    # laptop A" vs "wipe laptop B"), which is exactly what a bulk-action
+    # count must NOT key on — a hundred different laptops would each
+    # count as one. Tier is the axis a velocity rule actually wants
+    # ("5 deletes/hour on prod, 50/hour on staging"), and it rides the
+    # same classification `resource.tier` already carries in every
+    # Cedar evaluation.
+    tier: Mapped[str | None] = mapped_column(String(64))
     # 7.6 — tamper evidence. The chain is computed by a SEALING pass,
     # not on insert: audit() is called on every hot path by three
     # separate processes, and making each write first read the previous
@@ -293,6 +303,14 @@ class AuditEvent(Base):
     # provable. See app/audit_chain.py.
     prev_hash: Mapped[str | None] = mapped_column(String(64))
     row_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+
+    # ADR-007 Decision 1: the exact index the velocity count's hot-path
+    # query needs. This now runs before EVERY person-path decide() call,
+    # not just forensics — an unindexed scan here would be the hot-path
+    # latency regression the design was careful to avoid.
+    __table_args__ = (
+        Index("ix_audit_events_velocity", "principal", "tool", "tier", "ts"),
+    )
 
 
 # --- human auth (5.5.6) -------------------------------------------------------

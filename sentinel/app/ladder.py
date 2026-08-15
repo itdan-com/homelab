@@ -36,8 +36,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import policy
+from .config import VELOCITY_WINDOWS_MINUTES
 from .models import AuditEventType, CapabilityGrant, Principal, utcnow
-from .service import _grant_covers, audit, kill_state
+from .service import _grant_covers, actions_in_window, audit, kill_state
+
+# The window a HYPOTHETICAL check (visible_tools) asks with: zero, on
+# every window, because "could you ever use this" has no real call
+# behind it to have accumulated velocity against. A REAL call
+# (decide()) always asks with the true count instead — never this.
+_NO_VELOCITY = {key: 0 for key in VELOCITY_WINDOWS_MINUTES}
 
 # granted_via values that satisfy the `approved` rung: a human on the
 # passkey console said yes (admin = the 5.5 card flow, approve = the
@@ -66,7 +73,16 @@ def _ask(ap, email: str, action: str, resource_id: str, server: str,
            "action": f'Action::"{action}"',
            "resource": f'Resource::"{resource_id}"',
            "context": context}
-    return is_authorized(req, ap.policies, entities).decision == Decision.Allow
+    # schema= is load-bearing, not a nicety (found in ADR-007 Decision
+    # 1's adversarial review): without it, cedarpy's is_authorized()
+    # does not enforce the schema's `required` flags at all — a
+    # context missing a required field (resource.tier, now also
+    # actions_in_window) returns Decision.Allow outright rather than
+    # erroring or no-op'ing, the exact silent-fail-open "required"
+    # exists to prevent. This is the ONE call in the codebase that
+    # evaluates a live request, so it is the one place this matters.
+    return is_authorized(req, ap.policies, entities,
+                         schema=policy.SCHEMA).decision == Decision.Allow
 
 
 def _windows(ap, email: str, server: str, level: str) -> list[int]:
@@ -117,19 +133,22 @@ def visible_tools(ap, email: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for server, spec in (ap.servers or {}).items():
         resource_id, tier = f"{server}/*", "unclassified"
-        if not _ask(ap, email, "read", resource_id, server, tier, {}):
+
+        def ask(action: str, ctx: dict) -> bool:
+            return _ask(ap, email, action, resource_id, server, tier,
+                       {**ctx, "actions_in_window": _NO_VELOCITY})
+
+        if not ask("read", {}):
             continue  # handshake forbidden ⇒ the server is invisible whole
         for action in ("read", "write"):
             for leaf in spec.get(action) or []:
                 if leaf.endswith(".*"):
                     continue  # transport plumbing, never a listed tool
-                if _ask(ap, email, action, resource_id, server, tier, {}):
+                if ask(action, {}):
                     outcome = "permit"
-                elif _ask(ap, email, action, resource_id, server, tier,
-                          {"elevated": True}):
+                elif ask(action, {"elevated": True}):
                     outcome = "confirm"
-                elif _ask(ap, email, action, resource_id, server, tier,
-                          {"approved": True}):
+                elif ask(action, {"approved": True}):
                     outcome = "approve"
                 else:
                     continue
@@ -172,9 +191,16 @@ def decide(s: Session, *, principal: Principal, tool: str,
         return _deny(s, email=email, tool=tool, reason="unmapped-resource",
                      outcome="forbid", resource=None, version=ap.version)
     resource_id, tier = derived
+    # ADR-007 Decision 1 — computed ONCE, fed into every pass below
+    # (baseline, elevated, approved), never just one: a forbid
+    # referencing it must fire at every rung, the same way a tier-based
+    # forbid already does (forbid-trumps-permit, not
+    # forbid-trumps-permit-except-when-borrowing).
+    window = actions_in_window(s, email, tool, tier)
 
     def ask(ctx: dict) -> bool:
-        return _ask(ap, email, action, resource_id, server, tier, ctx)
+        return _ask(ap, email, action, resource_id, server, tier,
+                   {**ctx, "actions_in_window": window})
 
     if ask({}):
         outcome = "permit"
@@ -222,7 +248,7 @@ def decide(s: Session, *, principal: Principal, tool: str,
         grant = covering[0]
 
     audit(s, AuditEventType.USE, flow_id=grant.flow_id if grant else None,
-          tool=tool, principal=email, resource=resource_id,
+          tool=tool, principal=email, resource=resource_id, tier=tier,
           policy_version=ap.version,
           details={"source": "ladder", "outcome": outcome,
                    **({"grant_id": grant.id, "profile": grant.profile}

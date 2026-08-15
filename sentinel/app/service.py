@@ -16,10 +16,15 @@ import hashlib
 import secrets
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from .config import DEFAULT_GRANT_TTL_MINUTES, REQUEST_TTL_MINUTES, TOKEN_PREFIX
+from .config import (
+    DEFAULT_GRANT_TTL_MINUTES,
+    REQUEST_TTL_MINUTES,
+    TOKEN_PREFIX,
+    VELOCITY_WINDOWS_MINUTES,
+)
 from .models import (
     AuditEvent,
     AuditEventType,
@@ -47,11 +52,12 @@ def audit(
     details: dict | None = None,
     principal: str | None = None,
     resource: str | None = None,
+    tier: str | None = None,
     policy_version: str | None = None,
 ) -> None:
     s.add(AuditEvent(event_type=event_type, flow_id=flow_id, tool=tool,
                      actor=actor, details=details, principal=principal,
-                     resource=resource, policy_version=policy_version))
+                     resource=resource, tier=tier, policy_version=policy_version))
 
 
 # --- kill switch --------------------------------------------------------------
@@ -286,6 +292,45 @@ def _grant_covers(grant: CapabilityGrant, tool: str) -> bool:
                 return True
         return False
     return grant.tool == tool
+
+
+def actions_in_window(
+    s: Session, principal_email: str, tool: str, tier: str,
+) -> dict[str, int]:
+    """The velocity signal (ADR-007 Decision 1): how many times this
+    principal has SUCCESSFULLY used this exact (tool, tier) inside each
+    of app.config.VELOCITY_WINDOWS_MINUTES's trailing windows, computed
+    fresh on every call — no cache, anywhere, so a rule referencing this
+    can never see a stale count and a grant offer can never outlive the
+    moment that made it available.
+
+    Counts AuditEventType.USE rows only: a denied attempt did not
+    complete, so only completed calls count toward "stop action N" —
+    which is the entire point of a velocity rule. Keyed on (principal,
+    tool, tier), deliberately NOT the concrete resource: "wipe laptop A"
+    and "wipe laptop B" must accumulate toward the SAME count, or a
+    bulk action spread across many resources could never be caught at
+    all — the scenario this decision exists for.
+
+    One indexed COUNT per window rather than one clever combined query:
+    there are only ever two or three windows, and a query per window
+    stays trivially auditable against ix_audit_events_velocity — the
+    same trade this codebase already makes elsewhere in favor of
+    readable over clever."""
+    now = utcnow()
+    out: dict[str, int] = {}
+    for key, minutes in VELOCITY_WINDOWS_MINUTES.items():
+        since = now - timedelta(minutes=minutes)
+        out[key] = s.scalar(
+            select(func.count()).select_from(AuditEvent).where(
+                AuditEvent.event_type == AuditEventType.USE,
+                AuditEvent.principal == principal_email,
+                AuditEvent.tool == tool,
+                AuditEvent.tier == tier,
+                AuditEvent.ts >= since,
+            )
+        ) or 0
+    return out
 
 
 def check_capability(

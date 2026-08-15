@@ -105,6 +105,22 @@ POLICY_DIR = os.environ.get("SENTINEL_POLICY_DIR", "./policy-dev")
 # after a console save.
 POLICY_RELOAD_SECONDS = float(os.environ.get("SENTINEL_POLICY_RELOAD_SECONDS", "2"))
 
+# --- velocity (ADR-007 Decision 1) --------------------------------------------
+#
+# How many times a principal has used a tool, on a given tier, inside
+# each trailing window — computed synchronously by the broker from its
+# own audit log immediately before every Cedar evaluation, and exposed
+# as context.actions_in_window so a policy can write e.g.
+# `forbid ... when { context.actions_in_window._1m > 20 }`. The window
+# BUCKETS here are a schema shape (they become field names on the Cedar
+# context record — app/policy.py's schema is generated from this dict's
+# keys, so the two can never drift), not a per-deployment tuning knob:
+# changing them means updating the schema and any policy that
+# references them, so they are a constant, not an env var. The
+# THRESHOLD a policy compares against is exactly what's tunable, per
+# policy, without touching code.
+VELOCITY_WINDOWS_MINUTES = {"_1m": 1, "_1h": 60}
+
 # --- the record (7.6) --------------------------------------------------------
 #
 # How long audit rows stay in the database before being exported to a

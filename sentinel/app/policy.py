@@ -54,7 +54,7 @@ from pathlib import Path
 import yaml
 from cedarpy import validate_policies
 
-from .config import POLICY_DIR
+from .config import POLICY_DIR, VELOCITY_WINDOWS_MINUTES
 from .models import utcnow
 
 LEVELS = {"none", "read", "write", "write-on-request", "write-on-approval"}
@@ -72,7 +72,19 @@ _SAFE = re.compile(r"^[A-Za-z0-9@._:-]{1,254}$")
 # Resource.tier is REQUIRED — Cedar's third evaluation property is
 # skip-on-error, so a forbid reading a missing attribute would be
 # silently skipped and a data bug would become a permit (ADR-005 D3).
-_SCHEMA = json.dumps({"": {
+#
+# PUBLIC (not _SCHEMA) and passed to is_authorized() at every REQUEST,
+# not just to validate_policies() at activation (app/ladder.py's
+# _ask()) — found missing during ADR-007 Decision 1's adversarial
+# review: without it, cedarpy's is_authorized() does not enforce
+# "required" at all at eval time, so a context missing a required
+# field (say, a future call site that forgets to populate
+# actions_in_window) doesn't error or no-op — it returns Decision.Allow
+# outright, the exact silent-fail-open this field's "required" flag
+# was written to prevent. Verified directly against the shipped
+# cedarpy 4.8.7: the identical request differs ONLY in whether schema=
+# is passed, and only the schema= call correctly answers NoDecision.
+SCHEMA = json.dumps({"": {
     "entityTypes": {
         "User": {"memberOfTypes": ["Group"]},
         "Group": {"memberOfTypes": ["Group"]},
@@ -88,6 +100,19 @@ _SCHEMA = json.dumps({"": {
             "context": {"type": "Record", "attributes": {
                 "elevated": {"type": "Boolean", "required": False},
                 "approved": {"type": "Boolean", "required": False},
+                # ADR-007 Decision 1. REQUIRED, unlike elevated/approved
+                # above: the ladder populates this on every real ask()
+                # (a real count for decide(), zeros for the hypothetical
+                # visible_tools() listing), so nothing ever hits Cedar's
+                # third evaluation property — skip-on-error — which
+                # would silently turn a forbid referencing a MISSING
+                # attribute into a permit (the exact bug class
+                # Resource.tier being required already guards against).
+                # Field names are generated from VELOCITY_WINDOWS_MINUTES
+                # so the schema and the broker's query can never drift.
+                "actions_in_window": {"type": "Record", "required": True,
+                    "attributes": {key: {"type": "Long", "required": True}
+                                  for key in VELOCITY_WINDOWS_MINUTES}},
             }},
         }} for action in ("read", "write")
     },
@@ -385,7 +410,7 @@ def _build(d: Path) -> ActivePolicy:
     groups, people, matrix, servers, overlay, sources = load_store(d)
     policies, entities_json = generate(groups, people, matrix, overlay)
 
-    result = validate_policies(policies, _SCHEMA)
+    result = validate_policies(policies, SCHEMA)
     if not result.validation_passed:
         raise PolicyError([f"cedar: {e}" for e in result.errors] or
                           ["cedar: validation failed"])
@@ -452,7 +477,7 @@ def save_and_activate(policy_dir: str | Path, docs: dict[str, str], *,
             (t / name).write_text(docs.get(key, ""))
         groups, people, matrix, _servers, overlay, _ = load_store(t)
         policies, _entities = generate(groups, people, matrix, overlay)
-        result = validate_policies(policies, _SCHEMA)
+        result = validate_policies(policies, SCHEMA)
         if not result.validation_passed:
             raise PolicyError([f"cedar: {e}" for e in result.errors] or
                               ["cedar: validation failed"])
