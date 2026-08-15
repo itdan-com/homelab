@@ -63,13 +63,38 @@ const until = (iso) => {
 
 const clock = (iso) => new Date(Date.parse(iso)).toLocaleTimeString();
 
+/* --- the top-of-page summary: one sentence, before any panel ------------
+ * Lives next to the kill switch — the one thing already guaranteed to be
+ * visible regardless of which view (Dashboard/Access) is open — so a
+ * glance answers "does anything need me" without navigating anywhere. */
+
+const summaryState = { pending: 0, grants: 0, policyActive: true };
+function renderSummary() {
+  const line = document.getElementById('summary-line');
+  if (!line) return;
+  const parts = [];
+  if (!summaryState.policyActive) {
+    parts.push('NO ACTIVE POLICY — the person path denies closed');
+  }
+  parts.push(summaryState.pending
+    ? `${summaryState.pending} waiting for you`
+    : 'nothing waiting');
+  parts.push(`${summaryState.grants} live grant${summaryState.grants === 1 ? '' : 's'}`);
+  line.textContent = '· ' + parts.join(' · ');
+  line.classList.toggle('urgent', summaryState.pending > 0 || !summaryState.policyActive);
+}
+
 /* --- pending requests: the decision panel ------------------------------- */
 
 function renderPending(rows, auditByFlow) {
   const box = document.getElementById('pending');
   box.replaceChildren();
   document.getElementById('pending-count').textContent = rows.length;
+  document.getElementById('pending-count').classList.toggle('urgent', rows.length > 0);
+  document.getElementById('pending-panel').classList.toggle('attention', rows.length > 0);
   document.getElementById('pending-empty').classList.toggle('hidden', rows.length > 0);
+  summaryState.pending = rows.length;
+  renderSummary();
 
   for (const r of rows) {
     const card = el('div', 'req');
@@ -221,6 +246,8 @@ function renderPolicy(store) {
       `${Object.keys(store.people).length} people · activated ${ago(store.loaded_at)}`
     : 'NO ACTIVE POLICY — the person path denies closed. Fix the store in Advanced below.';
   document.getElementById('gui-editor').classList.toggle('hidden', !store.active);
+  summaryState.policyActive = store.active;
+  renderSummary();
 }
 
 /* --- the GUI editor (7.2.6): forms over the same store -------------------
@@ -955,6 +982,22 @@ document.getElementById('access-tabs').onclick = (ev) => {
     p.classList.toggle('hidden', p.id !== `tab-${activeTab}`);
   }
 };
+
+/* --- Dashboard vs Access: page-level view switch, same idiom as the
+   Access screen's own tabs above (click delegation on the container,
+   toggle .on / .hidden). Every element inside either view keeps its own
+   id, so nothing else in this file needed to change. */
+document.getElementById('views').onclick = (ev) => {
+  const b = ev.target.closest('button.view-tab');
+  if (!b) return;
+  const view = b.dataset.view;
+  for (const t of document.querySelectorAll('#views .view-tab')) {
+    t.classList.toggle('on', t === b);
+  }
+  for (const v of document.querySelectorAll('.view')) {
+    v.classList.toggle('hidden', v.id !== `view-${view}`);
+  }
+};
 document.getElementById('gui-save').onclick = async () => {
   if (!draft) return;
   setGuiState('validating…');
@@ -1066,6 +1109,8 @@ function renderGrants(rows) {
   box.replaceChildren();
   document.getElementById('grant-count').textContent = rows.length;
   document.getElementById('grants-empty').classList.toggle('hidden', rows.length > 0);
+  summaryState.grants = rows.length;
+  renderSummary();
   for (const g of rows) {
     const row = el('div', 'row');
     row.append(el('span', 'id', g.profile ? `${g.profile}` : g.tool));

@@ -62,10 +62,24 @@ h1 { font-size: 15px; letter-spacing: .18em; margin: 0; }
 .killbar.engaged #kill-state { color: var(--bad); font-weight: 700; }
 .kill-actions { margin-left: auto; display: flex; gap: 8px; }
 .detail { color: var(--muted); font-size: 13px; margin-left: 10px; }
+.summary-line.urgent { color: var(--bad); font-weight: 600; }
 
-main {
-  display: grid; gap: 16px; padding: 16px 20px 40px;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+/* --- view nav: Dashboard (act) vs Access (configure), not one flat
+   grid of five equally-weighted panels --- */
+.views { display: flex; gap: 4px; padding: 10px 20px 0; }
+.views .view-tab {
+  font-size: 14px; font-weight: 600; padding: 8px 14px;
+  border: 1px solid transparent; border-bottom: 2px solid transparent;
+  border-radius: 6px 6px 0 0; background: none; color: var(--muted);
+}
+.views .view-tab:hover { color: var(--ink); }
+.views .view-tab.on { color: var(--ink); border-bottom-color: var(--accent); }
+
+main { padding: 16px 20px 40px; }
+.view { display: flex; flex-direction: column; gap: 16px; }
+.secondary-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   align-items: start;
 }
 .panel {
@@ -73,13 +87,32 @@ main {
   border-radius: 10px; padding: 14px 16px; min-width: 0;
 }
 .panel.wide { grid-column: 1 / -1; }
+/* The one panel that means "act now" gets visual weight the glance
+   panels don't — an accent border always, an urgent one when something
+   is actually waiting. */
+.panel.primary { border-color: var(--accent); padding: 18px 20px; }
+.panel.primary.attention {
+  border-color: var(--bad);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--bad) 35%, transparent);
+}
 h2 {
   font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
   color: var(--muted); margin: 0 0 10px;
 }
+.panel.primary > h2 {
+  font-size: 17px; text-transform: none; letter-spacing: 0;
+  color: var(--ink); font-weight: 700;
+}
 .count {
   font-size: 11px; background: var(--bg); border: 1px solid var(--line);
   border-radius: 20px; padding: 1px 8px; margin-left: 6px; letter-spacing: 0;
+}
+/* A count that means "N decisions waiting" must not look like a count
+   that means "50 rows shown for context" — same shape, different
+   urgency, so only urgency gets a different color. */
+.count.urgent {
+  background: var(--bad); border-color: var(--bad); color: #fff;
+  font-weight: 700;
 }
 .empty { color: var(--muted); font-size: 13px; margin: 4px 0 0; }
 

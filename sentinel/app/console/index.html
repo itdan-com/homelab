@@ -59,11 +59,14 @@
 
   <div id="app" class="hidden">
   <!-- Kill-switch state is the loudest thing on the page: if it is
-       engaged, nothing else on screen matters. -->
+       engaged, nothing else on screen matters. The summary line next to
+       it is the second-loudest, on purpose — one sentence answering
+       "does anything need me" before scrolling into any panel. -->
   <section id="killbar" class="killbar">
     <div>
       <span id="kill-state">kill switch: off</span>
       <span id="kill-detail" class="detail"></span>
+      <span id="summary-line" class="detail summary-line"></span>
     </div>
     <div class="kill-actions">
       <button id="kill-btn" class="danger">Engage kill switch</button>
@@ -75,76 +78,92 @@
     </div>
   </section>
 
+  <!-- Two modes, not one flat grid: Dashboard is where you ACT (decide,
+       revoke, watch); Access is where you CONFIGURE (rare — groups,
+       people, servers, limits, connections). Access gets its own screen
+       instead of a card among five equals because it already IS one in
+       the code — five tabs, forms, a save/history flow — not a widget. -->
+  <nav id="views" class="views">
+    <button data-view="dashboard" class="view-tab on">Dashboard</button>
+    <button data-view="access" class="view-tab">Access</button>
+  </nav>
+
   <main>
-    <section class="panel wide">
-      <h2>Asking for power <span id="pending-count" class="count">0</span></h2>
-      <div id="pending"></div>
-      <p id="pending-empty" class="empty">Nothing is asking right now.</p>
-    </section>
+    <div id="view-dashboard" class="view">
+      <section class="panel primary wide" id="pending-panel">
+        <h2>Asking for power <span id="pending-count" class="count">0</span></h2>
+        <div id="pending"></div>
+        <p id="pending-empty" class="empty">Nothing is asking right now.</p>
+      </section>
 
-    <section class="panel wide" id="access-panel">
-      <h2>Access <span id="policy-version" class="count">—</span></h2>
-      <div id="policy-status" class="ctx"></div>
+      <div class="secondary-grid">
+        <section class="panel">
+          <h2>Borrowed right now <span id="grant-count" class="count">0</span></h2>
+          <div id="grants"></div>
+          <p id="grants-empty" class="empty">No live grants.</p>
+        </section>
 
-      <div id="gui-editor" class="hidden">
-        <div class="tabs" id="access-tabs">
-          <button data-tab="groups" class="tab on">Groups</button>
-          <button data-tab="people" class="tab">People</button>
-          <button data-tab="servers" class="tab">Servers &amp; tools</button>
-          <button data-tab="limits" class="tab">Limits &amp; windows</button>
-          <button data-tab="creds" class="tab">Connections</button>
-        </div>
-        <div id="tab-groups" class="tabpane"></div>
-        <div id="tab-people" class="tabpane hidden"></div>
-        <div id="tab-servers" class="tabpane hidden"></div>
-        <div id="tab-limits" class="tabpane hidden"></div>
-        <div id="tab-creds" class="tabpane hidden"></div>
+        <section class="panel">
+          <h2>Active flows <span id="flow-count" class="count">0</span></h2>
+          <div id="flows"></div>
+          <p id="flows-empty" class="empty">No flow has been active recently.</p>
+        </section>
 
-        <div class="acts">
-          <button id="gui-save" class="grant">Save &amp; activate</button>
-          <button id="gui-reset" class="ghost">Reset to active</button>
-          <span id="gui-save-state" class="ctx"></span>
-        </div>
-        <div id="gui-errors" class="errors"></div>
+        <section class="panel">
+          <h2>The record <span class="count">last 50</span></h2>
+          <div id="audit"></div>
+        </section>
       </div>
+    </div>
 
-      <details id="editors">
-        <summary>Advanced — the raw store documents (the layer underneath; a GUI save rewrites these without comments)</summary>
-        <label for="ta-entities">entities.yaml — people &amp; groups</label>
-        <textarea id="ta-entities" spellcheck="false"></textarea>
-        <label for="ta-matrix">matrix.yaml — who may do what, where</label>
-        <textarea id="ta-matrix" spellcheck="false"></textarea>
-        <label for="ta-servers">servers.yaml — tool classes &amp; tiers</label>
-        <textarea id="ta-servers" spellcheck="false"></textarea>
-        <label for="ta-overlay">overlay.cedar — escape hatch (expected empty)</label>
-        <textarea id="ta-overlay" spellcheck="false" class="short"></textarea>
-        <div class="acts">
-          <button id="policy-save" class="grant">Save &amp; activate</button>
-          <button id="policy-reload" class="ghost">Reload from disk</button>
-          <span id="policy-save-state" class="ctx"></span>
+    <div id="view-access" class="view hidden">
+      <section class="panel wide" id="access-panel">
+        <h2>Access <span id="policy-version" class="count">—</span></h2>
+        <div id="policy-status" class="ctx"></div>
+
+        <div id="gui-editor" class="hidden">
+          <div class="tabs" id="access-tabs">
+            <button data-tab="groups" class="tab on">Groups</button>
+            <button data-tab="people" class="tab">People</button>
+            <button data-tab="servers" class="tab">Servers &amp; tools</button>
+            <button data-tab="limits" class="tab">Limits &amp; windows</button>
+            <button data-tab="creds" class="tab">Connections</button>
+          </div>
+          <div id="tab-groups" class="tabpane"></div>
+          <div id="tab-people" class="tabpane hidden"></div>
+          <div id="tab-servers" class="tabpane hidden"></div>
+          <div id="tab-limits" class="tabpane hidden"></div>
+          <div id="tab-creds" class="tabpane hidden"></div>
+
+          <div class="acts">
+            <button id="gui-save" class="grant">Save &amp; activate</button>
+            <button id="gui-reset" class="ghost">Reset to active</button>
+            <span id="gui-save-state" class="ctx"></span>
+          </div>
+          <div id="gui-errors" class="errors"></div>
         </div>
-        <div id="policy-errors" class="errors"></div>
-      </details>
-      <h2 class="sub">History</h2>
-      <div id="policy-history"></div>
-    </section>
 
-    <section class="panel">
-      <h2>Borrowed right now <span id="grant-count" class="count">0</span></h2>
-      <div id="grants"></div>
-      <p id="grants-empty" class="empty">No live grants.</p>
-    </section>
-
-    <section class="panel">
-      <h2>Active flows <span id="flow-count" class="count">0</span></h2>
-      <div id="flows"></div>
-      <p id="flows-empty" class="empty">No flow has been active recently.</p>
-    </section>
-
-    <section class="panel">
-      <h2>The record <span class="count">last 50</span></h2>
-      <div id="audit"></div>
-    </section>
+        <details id="editors">
+          <summary>Advanced — the raw store documents (the layer underneath; a GUI save rewrites these without comments)</summary>
+          <label for="ta-entities">entities.yaml — people &amp; groups</label>
+          <textarea id="ta-entities" spellcheck="false"></textarea>
+          <label for="ta-matrix">matrix.yaml — who may do what, where</label>
+          <textarea id="ta-matrix" spellcheck="false"></textarea>
+          <label for="ta-servers">servers.yaml — tool classes &amp; tiers</label>
+          <textarea id="ta-servers" spellcheck="false"></textarea>
+          <label for="ta-overlay">overlay.cedar — escape hatch (expected empty)</label>
+          <textarea id="ta-overlay" spellcheck="false" class="short"></textarea>
+          <div class="acts">
+            <button id="policy-save" class="grant">Save &amp; activate</button>
+            <button id="policy-reload" class="ghost">Reload from disk</button>
+            <span id="policy-save-state" class="ctx"></span>
+          </div>
+          <div id="policy-errors" class="errors"></div>
+        </details>
+        <h2 class="sub">History</h2>
+        <div id="policy-history"></div>
+      </section>
+    </div>
   </main>
   </div>
 
