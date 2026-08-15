@@ -65,6 +65,110 @@ vendor's own limitation, hands back read+write always, so Cedar alone
 can't add granularity a backend doesn't expose without inspecting the
 call itself.
 
+## Decision 1 — BUILT (2026-08-15), with a real scope boundary found by adversarial review
+
+Implemented as designed: `context.actions_in_window` (`_1m`/`_1h`
+sub-fields, generated from `config.VELOCITY_WINDOWS_MINUTES` so the
+schema and the query can never drift), computed by
+`service.actions_in_window()` from a new `AuditEvent.tier` column
+(added alongside a composite `(principal, tool, tier, ts)` index —
+this now runs before every Cedar evaluation, not just forensics),
+threaded into every context `ladder.decide()` builds — baseline,
+elevated, AND approved, computed once per call so a forbid referencing
+it fires at every rung the same way a tier-based forbid already does.
+`visible_tools()` asks with an all-zero stand-in, deliberately: a
+listing is a hypothetical "could you ever" question with no real call
+behind it, and must not flicker a tool out of view just because
+someone browsed past a threshold. Tests: `tests/test_velocity.py`, 9
+cases, proven order-independent (`pytest tests/test_velocity.py
+tests/test_ladder.py` both directions) and proven-to-fail-without-the-
+fix on the two regression guards added below.
+
+**A three-lens adversarial review (security, hot-path, Cedar-semantics)
+found six real, verified issues.** Two were fixed immediately as part
+of this decision; two are documented limitations; one — the important
+one — narrows what this decision actually protects, and needs an
+explicit reader of this ADR to know it:
+
+1. **[Fixed] `is_authorized()` never enforced the schema's `required`
+   flag at request time — only `validate_policies()` did, at
+   activation.** Verified directly against the shipped cedarpy 4.8.7:
+   a context missing a required field (say, a future call site that
+   forgets to populate `actions_in_window`) returned `Decision.Allow`
+   outright — not an error, not a no-op — silently defeating the exact
+   fail-open protection `required: true` was written to provide. This
+   applied to `resource.tier` too, since ADR-005 D3 — a latent gap in
+   already-shipped code, not something this decision introduced, just
+   never triggered because tier is never actually missing in practice.
+   **Fix:** `policy._SCHEMA` renamed to public `policy.SCHEMA` and
+   passed to `is_authorized()` in `ladder._ask()` — the one place in
+   the codebase that evaluates a live request. Regression-guarded:
+   `test_missing_context_field_denies_not_silently_permits` calls
+   `_ask()` with an incomplete context and asserts a deny; proven to
+   fail without the fix (mutation-tested by hand before commit).
+2. **[Fixed] No test distinguished `_1m` from `_1h`.** Confirmed by
+   mutation: collapsing both windows onto the same 60-minute lookback
+   left all 7 original tests green, because every test's calls
+   complete within milliseconds — both windows always agreed by
+   accident. **Fix:** `test_1m_and_1h_windows_are_independent` inserts
+   an `AuditEvent` row timestamped 30 minutes back directly and asserts
+   `_1m` excludes it while `_1h` includes it.
+3. **[Documented, not fixed] Keying is per literal tool name, not
+   per-server.** A hand-written rule like `resource.server == "github"
+   && context.actions_in_window._1h >= 2` *reads* like "cap github
+   writes at 2/hour" but is actually enforced per exact tool string —
+   `policy-example/servers.yaml`'s github write set has 5 distinct
+   tool names, so an actor rotating across them gets up to 10
+   writes/hour past a rule whose own text implies a ceiling of 2, with
+   no warning anywhere. Real, but a authoring-ergonomics gap, not a
+   security hole an attacker needs privilege to exploit intentionally
+   — noted in `service.actions_in_window()`'s docstring and the
+   backlog; a per-(server, action) aggregate alongside the per-tool one
+   is the natural fix, deferred to keep this decision's diff small.
+4. **[Documented, not fixed] `derive_resource()`'s tier matching is
+   case-sensitive with no normalization** (`policy.py`, pre-existing
+   since ADR-005 D3, not introduced here) — `ITDAN-COM/homelab` and
+   `itdan-com/homelab` classify to different tiers even though GitHub's
+   real API treats owner/repo as case-insensitive. This decision makes
+   the pre-existing gap MORE consequential: tier now also gates which
+   velocity bucket a call's count lands in, so alternating case is now
+   also a velocity-cap evasion, not just a tier-forbid evasion. Left
+   untouched here deliberately — it's Decision 3's code, and normalizing
+   case correctly needs its own look (some backends' identifiers ARE
+   case-sensitive; a blanket `.lower()` isn't obviously right for every
+   server). Filed to the backlog, flagged as amplified-by-this-decision.
+5. **[The important one, NOT fixed — a real scope boundary] Velocity
+   only protects Airlock's Cedar/person-door path
+   (`ladder.decide()`).** `check_capability()` — the function behind
+   `/v1/ext-authz`, the actual Envoy callout every in-cluster MCP call
+   physically passes through, including the classic pre-Airlock
+   flow-scoped single-tool capability mechanism (Phase 5.5's original
+   `POST /v1/capability-requests → poll → grant` loop, still live,
+   still in the README, still what `check_capability()` validates) —
+   evaluates no Cedar policy at all and was left untouched. A forbid
+   referencing `context.actions_in_window` protects a PERSON signed
+   into the door (verified: `ladder.decide()` runs fresh on every
+   message per 7.3.4, so velocity is live there), but NOT a caller
+   using the older flow-token mechanism directly. **Read against the
+   current architecture, this is narrower than it sounds**: Mission
+   Control is PR-only by construction and calls no MCP tool at all
+   (CLAUDE.md), and the Airlock door mints its own short-lived
+   forwarding tokens per message rather than routing through the
+   classic loop — so *today*, nothing that actually calls an MCP tool
+   in production exercises the unprotected path; it appears to be a
+   Phase-5.5 mechanism kept alive for the demo script and
+   backward-compatibility rather than a live production surface. But
+   it is not decommissioned, `check_capability()` has no principal and
+   no tier concept to key a Cedar-shaped rule on even if it wanted one
+   (a real design question, not a one-line fix), and the day a future
+   in-cluster automation uses that path directly instead of the door,
+   it inherits zero velocity protection silently. **Recorded as its
+   own backlog item, not folded into this decision**: closing it needs
+   an actual design pass (what identity does a flow-scoped grant key a
+   rate limit on with no principal; is a simple non-Cedar per-flow
+   counter the right shape given that path has no policy-authoring
+   surface at all) rather than a rushed extension bolted onto this one.
+
 ## Context
 
 Phase 7 (Airlock) is BUILD COMPLETE and ADR-005 already answers most
