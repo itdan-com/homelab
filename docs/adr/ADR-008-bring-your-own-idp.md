@@ -1,6 +1,11 @@
 # ADR-008: Bring-your-own-IdP — Okta/Ping/Entra compatibility without giving up the shipped default
 
-**Status:** **Proposed** (2026-08-22), awaiting owner accept/amend.
+**Status:** **ACCEPTED** (owner, 2026-08-22: *"accept 7.8 i guess?
+… gotta get started on some of this after we land"*). Binding from
+this point forward, same as every other accepted ADR in this repo.
+Build order is 7.8.1 → 7.8.2 → 7.8.3, scheduled after Phase 8's two
+remaining items (ADR-006 implementation; Alertmanager's Slack
+receiver) — the owner can pull it forward.
 Written from an eight-agent research pass (four readers over the door,
 ADR-005, the Authentik chart, and the ADR-007 landscape record; four
 web researchers over Authentik federation, the enterprise-SSO product
