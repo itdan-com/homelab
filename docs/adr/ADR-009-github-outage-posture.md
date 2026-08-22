@@ -1,6 +1,11 @@
 # ADR-009: Surviving the substrate — GitHub outage posture for Mission Control
 
-**Status:** **Proposed** (2026-08-22). Drafted at owner request after a
+**Status:** **ACCEPTED** (owner, 2026-08-22: *"accept and pushit"* —
+same day as proposed). Binding from this point forward, same as every
+other accepted ADR in this repo. The hardening session (build plan
+below) is green-lit, slotted after Phase 8's ADR-006 build, before or
+interleaved with Phase 7.8 at the owner's choice.
+Drafted at owner request after a
 four-agent assessment of the owner's question: *"what do we do about
 mission control's single point of failure when github goes down?"*
 Provenance, stated precisely: D2/D4/D5's *direction* was pre-agreed
