@@ -102,6 +102,29 @@ kube-prometheus-stack:
       # touching this release.
       serviceMonitorSelectorNilUsesHelmValues: false
       podMonitorSelectorNilUsesHelmValues: false
+      # ADR-006 Decision 1: scrape Sentinel's broker — an OFF-CLUSTER
+      # mTLS target, so ServiceMonitors don't apply; this is the repo's
+      # first static scrape config. The client identity is a Sentinel-CA
+      # leaf injected out-of-git by mint-certs.sh (prerequisite: the
+      # `sentinel-prometheus-client` Secret must exist in this namespace
+      # BEFORE this lands, or the Prometheus pod cannot mount and will
+      # not start). `sentinel-broker.internal` resolves via the
+      # coredns-custom override to the k3d gateway where the broker
+      # listens; the broker's own cert carries that SAN.
+      secrets:
+        - sentinel-prometheus-client
+      additionalScrapeConfigs:
+        - job_name: sentinel-broker
+          scheme: https
+          metrics_path: /metrics
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["sentinel-broker.internal:8401"]
+          tls_config:
+            ca_file: /etc/prometheus/secrets/sentinel-prometheus-client/ca.crt
+            cert_file: /etc/prometheus/secrets/sentinel-prometheus-client/tls.crt
+            key_file: /etc/prometheus/secrets/sentinel-prometheus-client/tls.key
+            server_name: sentinel-broker.internal
 
   alertmanager:
     alertmanagerSpec:

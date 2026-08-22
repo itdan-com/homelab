@@ -15,6 +15,24 @@ catalog:
   tier: dev
   dataClass: internal
 
+# ADR-006: the mTLS-gated, path-limited push route Sentinel's audit
+# shipper writes through. Out-of-git PREREQUISITE (same class as
+# sentinel-proxy's): mint-certs.sh must have injected the
+# `sentinel-ca-clientauth` Secret into this namespace, or Traefik
+# marks the TLSOption invalid and the route serves nothing (fails
+# closed — correct, but it looks like a 404 until you know this).
+pushIngress:
+  enabled: true
+  # Its own hostname on purpose — Traefik binds client-cert
+  # requirements to the SNI name (see templates/push-ingress.yaml).
+  host: loki-push.lab.local
+  tlsIssuer: lab-local-ca
+  clientCaSecret: sentinel-ca-clientauth
+  # The single-binary Service. Release name `loki` collapses the
+  # subchart fullname to just `loki` (helper quirk, verified live).
+  serviceName: loki
+  servicePort: 3100
+
 loki:
   deploymentMode: SingleBinary
 

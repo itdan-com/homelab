@@ -95,6 +95,19 @@ def healthz() -> dict:
             "policy_version": ap.version if ap else None}
 
 
+@app.get("/metrics", tags=["meta"])
+def metrics() -> Response:
+    """ADR-006 Decision 1: rates and state for Prometheus — read-only,
+    bounded labels only (never principal or resource). mTLS is the whole
+    gate, as for every broker route: holding a Sentinel-CA client cert
+    is the price of scraping, and the endpoint grants nothing."""
+    from . import metrics as m
+    with SessionLocal() as s:
+        body = m.render(s)
+    return Response(content=body,
+                    media_type="text/plain; version=0.0.4; charset=utf-8")
+
+
 @app.post(
     "/v1/capability-requests",
     response_model=CapabilityRequestOut,

@@ -1,0 +1,174 @@
+# Provisioned dashboard (dashboards-as-code): the Grafana sidecar loads any
+# ConfigMap labeled `grafana_dashboard: "1"` in this namespace.
+#
+# AIRLOCK ACTIVITY — Phase 8's fourth dashboard, ADR-006's deliverable:
+# one surface answering BOTH questions about the gate, from its two
+# deliberately different exports:
+#
+#   RATES AND STATE (Prometheus, from the broker's /metrics — bounded
+#   labels, no people): is the kill switch on, how many grants are
+#   live and through which door, how often is the platform saying no,
+#   and is the record's own machinery (sealer, shipper) healthy.
+#
+#   WHO DID WHAT (Loki, from the shipped audit copy — people and
+#   resources IN the line, never in labels): the per-event stream an
+#   operator correlates with app logs at the same timestamp, which is
+#   the whole reason the copy exists (ADR-006's one-query argument).
+#
+# The top row is the 3am row: kill switch, live grants, pending
+# decisions, active policy. If all four look right, stop reading.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "catalog.fullname" . }}-dashboard-airlock-activity
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  airlock-activity.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "graphTooltip": 1,
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["homelab", "airlock"],
+      "title": "Airlock activity",
+      "uid": "airlock-activity",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Kill switch",
+          "description": "The global cord. ENGAGED means every capability check is refusing, platform-wide. This is a deliberate human act — if it surprises you, that IS the incident.",
+          "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sentinel_kill_switch_engaged",
+            "legendFormat": "kill switch"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                { "type": "value", "options": { "0": { "text": "off", "color": "green" }, "1": { "text": "ENGAGED", "color": "red" } } }
+              ],
+              "noValue": "no data (broker unscraped)",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Live grants",
+          "description": "Capability grants currently valid (unexpired, unrevoked) — borrowed power that is out of the vault right now. The breakdown by door is in the panel below.",
+          "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sum(sentinel_grants_live) or vector(0)",
+            "legendFormat": "live"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "orange", "value": 3 },
+                { "color": "red", "value": 10 }
+              ]}
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Pending decisions",
+          "description": "Capability requests waiting on a human. Anything above zero is someone (or something) blocked at the gate — the console's urgent-red badge, as a graph.",
+          "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sentinel_requests_pending or vector(0)",
+            "legendFormat": "pending"
+          }],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null },
+                { "color": "red", "value": 1 }
+              ]}
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Active policy version",
+          "description": "Which policy store version is deciding right now. If this changed and nobody expected it to, read the console's policy history before anything else.",
+          "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "topk(1, sentinel_policy_info)",
+            "legendFormat": "{{`{{version}}`}}"
+          }],
+          "options": { "textMode": "name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+          "fieldConfig": {
+            "defaults": {
+              "noValue": "none active (person-path denies closed)",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Gate activity by event type",
+          "description": "What the gate is doing, from the audit copy in Loki: uses are normal life, denials are the platform saying no, grants are humans saying yes. A denial spike with no matching grant activity is someone (or something) probing.",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+          "datasource": { "type": "loki", "uid": "loki" },
+          "targets": [{
+            "expr": "sum by (event_type) (count_over_time({source=\"sentinel\"}[5m]))",
+            "legendFormat": "{{`{{event_type}}`}}"
+          }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Denials by server",
+          "description": "Which server's tools are being refused. `other` is a tool name outside the policy store's server list — junk or probing, and worth a look either way.",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+          "datasource": { "type": "loki", "uid": "loki" },
+          "targets": [{
+            "expr": "sum by (server) (count_over_time({source=\"sentinel\", event_type=\"denial\"}[15m]))",
+            "legendFormat": "{{`{{server}}`}}"
+          }]
+        },
+        {
+          "type": "timeseries",
+          "title": "Live grants by door",
+          "description": "admin = console card, confirm = self-elevation (sudo-shaped), approve = a different human said yes. If `approve` is not rare, ADR-005 says the policy is wrong — this panel is that sentence, plotted.",
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [{
+            "expr": "sentinel_grants_live",
+            "legendFormat": "{{`{{granted_via}}`}}"
+          }]
+        },
+        {
+          "type": "timeseries",
+          "title": "The record's own health",
+          "description": "Unsealed rows growing means the sealer stopped (hash chain lagging). Shipping backlog growing means the Loki copy is falling behind the canonical record — the two-system tamper property is degrading. Both should hug zero.",
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "targets": [
+            { "expr": "sentinel_audit_unsealed_rows", "legendFormat": "unsealed (sealer backlog)" },
+            { "expr": "sentinel_audit_shipping_backlog_rows", "legendFormat": "unshipped (Loki backlog)" },
+            { "expr": "sentinel_audit_shipping_skipped_rows_total", "legendFormat": "skipped (permanent divergence)" }
+          ]
+        },
+        {
+          "type": "logs",
+          "title": "Audit stream (who did what)",
+          "description": "The per-event record, hash chain and all: principal, tool, resource and policy version live in each line — searchable here, never label-indexed. Correlate a line's timestamp with the same moment in any app's logs: that one query is why this copy exists.",
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 20 },
+          "datasource": { "type": "loki", "uid": "loki" },
+          "options": { "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true },
+          "targets": [{
+            "expr": "{source=\"sentinel\"}"
+          }]
+        }
+      ]
+    }

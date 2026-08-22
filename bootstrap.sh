@@ -139,6 +139,22 @@ if [ -f k3d/lab-ca.enc.yaml ]; then
 else
   echo "no k3d/lab-ca.enc.yaml — cert-manager will mint a fresh CA (trust it once per SETUP.md)"
 fi
+# ADR-006: Sentinel's out-of-git cluster artifacts (its CA as a Traefik
+# clientAuth secret; Prometheus's scrape client cert). Prometheus HARD
+# mounts sentinel-prometheus-client (prometheusSpec.secrets), so a
+# rebuild that skips this leaves the ENTIRE metrics stack — alerting,
+# dashboards, KEDA's scaler signal — stuck in ContainerCreating.
+# mint-certs.sh is idempotent and keeps an existing CA (the checkout's
+# gitignored sentinel/certs/ is what survives rebuilds, same as the
+# lab CA survives via SOPS).
+if [ -x sentinel/scripts/mint-certs.sh ] || [ -f sentinel/scripts/mint-certs.sh ]; then
+  bash sentinel/scripts/mint-certs.sh >/dev/null \
+    && echo "sentinel PKI in place (CA kept if it existed) — cluster secrets injected" \
+    || { echo "!! sentinel/scripts/mint-certs.sh FAILED — Prometheus will not start"; exit 1; }
+else
+  echo "!! sentinel/scripts/mint-certs.sh missing — Prometheus mounts sentinel-prometheus-client and will NOT start without it"
+  exit 1
+fi
 
 step "8/10 cert-manager CRDs (argocd's own TLS door needs the Certificate kind)"
 # Server-side apply: these CRDs exceed client-side apply's annotation

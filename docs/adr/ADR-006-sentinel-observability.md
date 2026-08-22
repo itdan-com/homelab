@@ -1,8 +1,59 @@
 # ADR-006: Getting Sentinel's record into the observability stack
 
-**Status:** Proposed (2026-08-04). **Revised the same day after owner
-review** — the first draft chose metrics-only and justified the gap
-instead of closing it. See "What the first draft got wrong".
+**Status:** **ACCEPTED-AS-BUILT** (2026-08-22, built under the standing
+"Next action — implement ADR-006 (mine, no owner input needed)" in
+STATUS.md). Originally Proposed 2026-08-04; **revised the same day
+after owner review** — the first draft chose metrics-only and
+justified the gap instead of closing it. See "What the first draft got
+wrong", and the as-built addendum below for where the implementation
+deviates from the text and what the adversarial review forced into
+the open.
+
+## As built (2026-08-22) — deviations and the exposure accounting, corrected
+
+Recorded so the text above stays readable as the design and this
+section as the truth:
+
+1. **The bounded label is `event_type`, not "outcome".** The audit
+   table's closed 11-value enum is the axis that exists; dashboards
+   and alerts key on it. Same discipline, truer name.
+2. **"Ship on seal" means per-row on the admin timer.** Sealing stamps
+   hashes; segment FILES only exist at rotation — so the shipper
+   pushes newly sealed rows every 30s tick in the segment LINE format
+   (canonical + prev_hash + row_hash: Loki's copy carries the chain).
+   The two synchronous seal calls on console endpoints do not ship;
+   worst added lag is one tick.
+3. **Rotation now refuses to outrun the copy**: `/v1/audit/rotate`
+   409s rather than prune sealed rows the shipper has not shipped —
+   without this, pruning unshipped rows would silently DROP the
+   backlog gauge and mute the very divergence alert this ADR promised
+   (review-caught).
+4. **"No new secret to manage" was wrong.** Two new leaves
+   (loki-client, prometheus-client) and two new out-of-git cluster
+   Secrets (`sentinel-ca-clientauth`, `sentinel-prometheus-client` in
+   `monitoring`), minted/injected by mint-certs.sh and now ALSO by
+   bootstrap.sh (Prometheus hard-mounts the scrape secret — a rebuild
+   without it bricks the whole metrics stack).
+5. **"The one genuinely new exposure" is actually three, and the
+   second needs an owner decision (#11).** (a) The push route, as
+   designed — mTLS-gated, path-limited. (b) **prometheus-client in
+   the monitoring namespace reaches EVERY broker route**, because the
+   broker has no per-cert authorization: a compromised monitoring
+   workload can file capability requests with attacker-authored text
+   and poll/claim them. It cannot GRANT (a human passkey tap remains
+   the only yes), reach the admin API, or touch the kill switch.
+   Accepted-for-now with the narrowing named: a dedicated metrics
+   listener validating a metrics-only sub-CA. (c) **Loki's in-cluster
+   surface**: any pod can already push (forge) or query the audit
+   COPY on :3100 — the mTLS gate covers only the outside door. The
+   copy is confidentiality-expanded relative to the Sentinel-host
+   original; a NetworkPolicy restricting :3100 to Alloy/Traefik/
+   Grafana is the named follow-up (backlogged), and chain-verifying
+   the copy against Sentinel is the eventual divergence check.
+6. Two accepted read-surfaces stated plainly: `policy_version` as an
+   info-label (one live series, console-minted content hash, never
+   attacker text) and the Envoy fleet's proxy-client cert being able
+   to read /metrics (counts and states only — no principals).
 
 ## Context
 

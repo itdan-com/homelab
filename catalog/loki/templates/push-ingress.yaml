@@ -1,0 +1,83 @@
+# ADR-006 Decision 2: the ONE genuinely new exposure this platform
+# accepts for observability — Loki's push endpoint, reachable from
+# outside the cluster so Sentinel (a different trust domain, on the
+# host) can copy its sealed audit rows in. Loki has no auth of its own
+# (auth_enabled: false), so the gate is this route, twice over:
+#
+#   PATH-LIMITED  — only /loki/api/v1/push matches. The query API stays
+#                   in-cluster; an audit COPY endpoint must never become
+#                   an audit READ endpoint for outsiders.
+#   mTLS-GATED    — the TLSOption below makes Traefik demand a client
+#                   certificate signed by SENTINEL'S OWN CA (injected
+#                   out-of-git by mint-certs.sh as sentinel-ca-clientauth;
+#                   the cluster cannot mint certs Sentinel trusts, so the
+#                   cluster cannot forge a writer identity).
+#
+# The route gets its OWN hostname on purpose: Traefik binds TLS options
+# to the SNI name, so sharing `localhost` with the plain doors would
+# make the client-cert requirement ambiguous — and an ambiguous gate is
+# no gate. The ADR-009-style bypass probe (wrong SNI + forged Host
+# header must be REFUSED) is part of this route's acceptance, not an
+# afterthought.
+#
+# Everything lives in THIS namespace (monitoring): k3s Traefik refuses
+# cross-namespace service refs, and TLSOption secretNames resolve in the
+# TLSOption's own namespace (same constraint the sentinel-proxy door
+# route documented on 2026-08-02).
+{{- if .Values.pushIngress.enabled }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "catalog.fullname" . }}-push-tls
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "catalog.fullname" . }}-push-tls
+  dnsNames:
+    - {{ .Values.pushIngress.host }}
+  issuerRef:
+    name: {{ .Values.pushIngress.tlsIssuer }}
+    kind: ClusterIssuer
+  privateKey:
+    rotationPolicy: Always
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: {{ include "catalog.fullname" . }}-push-mtls
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  # RequireAndVerifyClientCert: no Sentinel-CA client cert, no TLS
+  # handshake — the request never reaches Loki at all. If the CA secret
+  # is absent (fresh install before mint-certs.sh ran), Traefik marks
+  # the option invalid and the router serves nothing: fails CLOSED.
+  clientAuth:
+    secretNames:
+      - {{ .Values.pushIngress.clientCaSecret }}
+    clientAuthType: RequireAndVerifyClientCert
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ include "catalog.fullname" . }}-push
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "catalog.labels" . | nindent 4 }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`{{ .Values.pushIngress.host }}`) && PathPrefix(`/loki/api/v1/push`)
+      services:
+        - name: {{ .Values.pushIngress.serviceName }}
+          port: {{ .Values.pushIngress.servicePort }}
+  tls:
+    secretName: {{ include "catalog.fullname" . }}-push-tls
+    options:
+      name: {{ include "catalog.fullname" . }}-push-mtls
+      namespace: {{ .Release.Namespace }}
+{{- end }}

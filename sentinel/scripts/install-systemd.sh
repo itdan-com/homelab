@@ -59,6 +59,13 @@ OIDC_CLIENT_ID="${SENTINEL_OIDC_CLIENT_ID:-mcp-door}"
 OIDC_CA_BUNDLE="${SENTINEL_OIDC_CA_BUNDLE:-$CERT_DIR/lab-ca.crt}"
 MCP_UPSTREAMS="${SENTINEL_MCP_UPSTREAMS:-}"
 MCP_PROXY_BASE="${SENTINEL_MCP_PROXY_BASE:-https://localhost:8443}"
+# ADR-006: where the audit shipper pushes sealed rows. Its own hostname
+# ON PURPOSE — Traefik binds TLS options (the client-cert requirement)
+# to the SNI name, so the push route must not share `localhost` with
+# the plain routes. Needs a hosts entry on this host; the installer
+# checks and prints the exact line if missing.
+LOKI_PUSH_HOST="${SENTINEL_LOKI_PUSH_HOST:-loki-push.lab.local}"
+LOKI_PUSH_URL="${SENTINEL_LOKI_PUSH_URL:-https://$LOKI_PUSH_HOST:8443/loki/api/v1/push}"
 AUDIT_RETAIN_DAYS="${SENTINEL_AUDIT_RETAIN_DAYS:-90}"
 
 [[ $EUID -eq 0 ]] || { echo "!! run with sudo" >&2; exit 1; }
@@ -149,7 +156,8 @@ fi
 # and the service started against material that did not exist.
 copied=0
 for f in ca.crt ca.key broker.crt broker.key proxy-client.crt proxy-client.key \
-         console.crt console.key door.crt door.key; do
+         console.crt console.key door.crt door.key \
+         loki-client.crt loki-client.key; do
   if [[ ! -f "$CERT_DIR/$f" && -f "$REPO_DIR/certs/$f" ]]; then
     cp "$REPO_DIR/certs/$f" "$CERT_DIR/$f"; copied=$((copied + 1))
   fi
@@ -210,6 +218,21 @@ if [[ ! -f "$OIDC_CA_BUNDLE" ]]; then
     *) echo "== IdP verification uses the system trust store" ;;
   esac
 fi
+# ADR-006: the Loki push route's server CA, same lab-vs-cloud logic as
+# the IdP's — but its OWN variable, deliberately decoupled from
+# OIDC_CA_BUNDLE (ADR-008 lets an owner point the IdP at a public CA
+# while the push route stays on the lab CA; probe and runtime must
+# always verify against the SAME root).
+LOKI_CA_BUNDLE="$CERT_DIR/lab-ca.crt"
+if [[ ! -f "$LOKI_CA_BUNDLE" ]]; then
+  LOKI_CA_BUNDLE=""
+  case "$LOKI_PUSH_HOST" in
+    *.lab.local*|*localhost*|*.internal*)
+      echo "!! no cluster CA adopted and the Loki push host looks private —" >&2
+      echo "   audit shipping WILL fail TLS verification until it exists." >&2 ;;
+    *) echo "== Loki push verification uses the system trust store" ;;
+  esac
+fi
 
 # Publish the CA CERTIFICATE (not the key) where clients can read it.
 # $CERT_DIR is 0700/service-user because it holds private keys, which
@@ -260,6 +283,17 @@ SENTINEL_MCP_PROXY_BASE=$MCP_PROXY_BASE
 # removed; the segments are kept (they are the export a SIEM reads).
 SENTINEL_AUDIT_RETAIN_DAYS=$AUDIT_RETAIN_DAYS
 SENTINEL_AUDIT_EXPORT_DIR=$STATE_DIR/audit-segments
+# --- shipping the record to Loki (ADR-006) ---
+# The admin process pushes newly SEALED audit rows through the
+# cluster's mTLS push route, so the record lives in two systems with
+# different admins. Client cert = Sentinel-CA leaf; server verified
+# against the LAB CA (the route is a cert-manager certificate).
+# The push hostname must resolve on this host — see the note the
+# installer prints if it does not.
+SENTINEL_LOKI_PUSH_URL=$LOKI_PUSH_URL
+SENTINEL_LOKI_CA_BUNDLE=$LOKI_CA_BUNDLE
+SENTINEL_LOKI_CLIENT_CERT=$CERT_DIR/loki-client.crt
+SENTINEL_LOKI_CLIENT_KEY=$CERT_DIR/loki-client.key
 EOF
 chmod 0640 "$ENV_FILE"; chown root:"$SVC_USER" "$ENV_FILE"
 
@@ -401,6 +435,36 @@ if [[ "$IDP_OK" != "200" ]]; then
   echo "   Sign-in through the door would fail. Fix the CA or the" >&2
   echo "   address above, then re-run this script." >&2
   exit 1
+fi
+# ADR-006: can the audit shipper reach the mTLS push route? Non-fatal —
+# shipping retries every seal tick and the backlog gauge shows the gap —
+# but say exactly what is wrong NOW instead of leaving it to a graph.
+if [[ ! -f "$CERT_DIR/loki-client.crt" ]]; then
+  echo "!! loki-client.crt missing from $CERT_DIR — re-run scripts/mint-certs.sh"
+  echo "   (new ADR-006 leaf), then re-run this install. Audit shipping is"
+  echo "   misconfigured until then (calm 30s retries, backlog gauge grows)."
+elif ! getent hosts "$LOKI_PUSH_HOST" >/dev/null 2>&1; then
+  echo "!! $LOKI_PUSH_HOST does not resolve on this host. Audit shipping to"
+  echo "   Loki will fail-and-retry every seal tick until it does. One line"
+  echo "   in the WINDOWS hosts file fixes it (it propagates into WSL):"
+  echo "     127.0.0.1  $LOKI_PUSH_HOST"
+else
+  # Probe with EXACTLY the config the shipper will run with (same CA
+  # var written to the env file) — a probe on a different trust root
+  # vouches for a wire the service does not use.
+  LOKI_OK=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 -X POST \
+    ${LOKI_CA_BUNDLE:+--cacert "$LOKI_CA_BUNDLE"} \
+    --cert "$CERT_DIR/loki-client.crt" --key "$CERT_DIR/loki-client.key" \
+    -H 'Content-Type: application/json' -d '{"streams":[]}' \
+    "$LOKI_PUSH_URL" || true)
+  case "$LOKI_OK" in
+    2*) echo "== loki push route reachable, client cert accepted ($LOKI_OK)" ;;
+    4*) echo "== loki push route + mTLS OK ($LOKI_OK: Loki rejected the empty" \
+             "probe payload — fine, the gate is what was being probed)" ;;
+    *)  echo "!! loki push probe got '${LOKI_OK}' from $LOKI_PUSH_URL — shipping"
+        echo "   will retry every seal tick; check the catalog/loki pushIngress"
+        echo "   and that mint-certs.sh injected sentinel-ca-clientauth." ;;
+  esac
 fi
 echo "== wire probes: admin https 200, broker mTLS 200, door https 200 " \
      "(discovery ok, unauthenticated call refused), IdP reachable"

@@ -135,6 +135,25 @@ AUDIT_EXPORT_DIR = os.environ.get(
 # Exactly ONE process seals — two would fork the chain.
 AUDIT_SEAL_SECONDS = float(os.environ.get("SENTINEL_AUDIT_SEAL_SECONDS", "30"))
 
+# --- shipping the record to Loki (ADR-006) -----------------------------------
+#
+# After each seal pass the admin process pushes the newly sealed rows
+# through the cluster's mTLS-gated push route into Loki, so the audit
+# record lives in TWO systems with different administrators — erasing
+# history then requires compromising both (ADR-006's settling argument).
+# Empty URL = shipping off (the dev default until the route exists);
+# the installer writes the real value. The client proves itself with a
+# Sentinel-CA leaf (loki-client) and verifies the route against the
+# LAB CA — two different trust roots, on purpose.
+LOKI_PUSH_URL = os.environ.get("SENTINEL_LOKI_PUSH_URL") or None
+LOKI_CA_BUNDLE = os.environ.get("SENTINEL_LOKI_CA_BUNDLE") or None
+LOKI_CLIENT_CERT = os.environ.get("SENTINEL_LOKI_CLIENT_CERT") or None
+LOKI_CLIENT_KEY = os.environ.get("SENTINEL_LOKI_CLIENT_KEY") or None
+# Rows per push and pushes per seal tick: bounds how long one tick can
+# block a to_thread worker while a backlog drains (30s cadence retries).
+LOKI_BATCH_ROWS = int(os.environ.get("SENTINEL_LOKI_BATCH_ROWS", "500"))
+LOKI_MAX_BATCHES_PER_TICK = int(os.environ.get("SENTINEL_LOKI_MAX_BATCHES_PER_TICK", "10"))
+
 # --- the Airlock door (7.3.3) -------------------------------------------------
 #
 # A THIRD listener, because Sentinel now faces three populations with

@@ -182,7 +182,7 @@ async def lifespan(_app: FastAPI):
 
 
 async def _seal_loop():
-    from . import audit_chain
+    from . import audit_chain, loki_ship
     while True:
         await asyncio.sleep(AUDIT_SEAL_SECONDS)
         try:
@@ -190,6 +190,15 @@ async def _seal_loop():
                 audit_chain.seal(s)
         except Exception:
             logging.getLogger("sentinel").exception("audit sealing failed")
+        # ADR-006: ship what was just sealed (and any backlog a failed
+        # push left behind — the seal cadence IS the retry policy).
+        # to_thread because httpx blocks and this loop shares the
+        # console's event loop; sealing stays inline as before.
+        try:
+            if loki_ship.enabled():
+                await asyncio.to_thread(loki_ship.ship_pending)
+        except Exception:
+            logging.getLogger("sentinel").exception("audit shipping failed")
 
 
 app = FastAPI(
@@ -594,9 +603,35 @@ def audit_rotate(dry_run: bool = Query(default=True,
     """Writes old rows out as JSONL and only then removes them. Defaults
     to a DRY RUN: a button that deletes audit history on first click is
     a button that will be clicked by accident."""
-    from . import audit_chain
+    from datetime import timedelta as _td
+
+    from sqlalchemy import select as _select
+
+    from . import audit_chain, loki_ship
+    from .models import AuditEvent as _AE, utcnow as _utcnow
     with SessionLocal() as s:
         audit_chain.seal(s)
+        # ADR-006 guard (review-caught): never prune rows the Loki
+        # shipper has not copied yet — pruning unshipped rows would not
+        # only lose them from the copy, it would silently DROP the
+        # backlog gauge and mute the divergence alert that exists to
+        # catch exactly this. The shipper retries every 30s, so the
+        # honest answer to a 409 is "wait a minute, or fix shipping".
+        if not dry_run and loki_ship.enabled():
+            watermark = int(loki_ship.read_state().get("shipped_through_id", 0))
+            cutoff = _utcnow() - _td(days=AUDIT_RETAIN_DAYS)
+            unshipped_old = s.execute(
+                _select(_AE.id).where(_AE.ts < cutoff,
+                                      _AE.row_hash.is_not(None),
+                                      _AE.id > watermark).limit(1)
+            ).first()
+            if unshipped_old:
+                raise HTTPException(
+                    status_code=409,
+                    detail="rotation would prune rows the Loki shipper has "
+                           "not copied yet — wait for shipping to catch up "
+                           "(sentinel_audit_shipping_backlog_rows) or fix it, "
+                           "then retry")
         out = audit_chain.export_and_prune(s, AUDIT_EXPORT_DIR,
                                            AUDIT_RETAIN_DAYS, dry_run=dry_run)
     if not dry_run and out.get("pruned"):

@@ -65,7 +65,9 @@ cd "$CERT_DIR"
 
 [[ "$ROTATE_CA" == 1 ]] && rm -f ca.crt ca.key
 [[ "$ROTATE" == 1 ]] && rm -f broker.crt broker.key proxy-client.crt proxy-client.key \
-                                console.crt console.key door.crt door.key
+                                console.crt console.key door.crt door.key \
+                                loki-client.crt loki-client.key \
+                                prometheus-client.crt prometheus-client.key
 
 # --- CA (ECDSA P-256, matching the lab CA's curve choice) --------------------
 if [[ -f ca.crt ]]; then
@@ -115,6 +117,32 @@ mint_leaf proxy-client sentinel-proxy "basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=clientAuth"
 
+# ADR-006's two observability identities, both clientAuth-only siblings
+# of proxy-client. loki-client: the admin process's seal loop proves
+# itself to the cluster's mTLS push route when copying sealed audit
+# rows into Loki. prometheus-client: in-cluster Prometheus proves
+# itself to the broker's mTLS listener to scrape /metrics — minted as
+# its own leaf rather than reusing proxy-client so a compromised
+# scrape identity can be rotated without touching the enforcement
+# proxy's.
+#
+# BLAST RADIUS, named plainly (ADR-006 as-built addendum, owner
+# decision #11): the broker has NO per-cert authorization — mTLS is
+# the whole gate — so ANY Sentinel-CA client leaf reaches EVERY broker
+# route, and injecting prometheus-client into `monitoring` hands that
+# namespace the ability to file capability REQUESTS (and poll/claim
+# them), not just scrape. What it cannot do: grant anything (a human
+# passkey tap on the console remains the only yes), reach the admin
+# API, or touch the kill switch. The named narrowing, when wanted: a
+# dedicated metrics listener validating against a metrics-only sub-CA.
+mint_leaf loki-client sentinel-loki-shipper "basicConstraints=CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth"
+
+mint_leaf prometheus-client prometheus "basicConstraints=CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=clientAuth"
+
 # The CONSOLE's own server certificate. The admin console is served over
 # TLS even on loopback, and not for eavesdroppers — there are none on
 # loopback. It is because browser passkey providers (1Password, Dashlane,
@@ -160,6 +188,23 @@ if [[ "$CLUSTER" == 1 ]]; then
     --dry-run=client -o yaml | kubectl apply -f -
   kubectl create secret tls sentinel-proxy-client -n "$NAMESPACE" \
     --cert=proxy-client.crt --key=proxy-client.key \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  # ADR-006: the monitoring namespace's two Sentinel-CA artifacts.
+  # sentinel-ca-clientauth: Traefik's TLSOption validates the Loki
+  # push route's CLIENT certs against this CA (key `tls.ca` is what
+  # Traefik reads; `ca.crt` kept alongside for humans and tooling).
+  # sentinel-prometheus-client: mounted into Prometheus so its scrape
+  # of the broker's /metrics can pass the mTLS handshake.
+  MON_NS="${SENTINEL_MONITORING_NAMESPACE:-monitoring}"
+  kubectl create namespace "$MON_NS" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic sentinel-ca-clientauth -n "$MON_NS" \
+    --from-file=tls.ca=ca.crt --from-file=ca.crt=ca.crt \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create secret generic sentinel-prometheus-client -n "$MON_NS" \
+    --from-file=tls.crt=prometheus-client.crt \
+    --from-file=tls.key=prometheus-client.key \
+    --from-file=ca.crt=ca.crt \
     --dry-run=client -o yaml | kubectl apply -f -
 else
   echo "== --no-cluster: skipped ConfigMap/Secret injection"

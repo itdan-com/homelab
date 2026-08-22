@@ -65,6 +65,28 @@ spec:
               converging on git for this app, which means the next
               change will not land either.
 
+        - alert: ArgoCDApplicationSyncUnknown
+          # ADR-009 D5: the in-cluster symptom of the git provider being
+          # unreachable — apps flip to sync Unknown once ArgoCD can no
+          # longer resolve the repo (~3-6 min into an outage). Health
+          # stays green and workloads keep running; what this pages is
+          # "the change pipeline is frozen and self-heal has stopped
+          # enforcing", which is exactly when a human should know the
+          # break-glass runbook applies. Also catches every other way
+          # ArgoCD loses its source (creds, DNS), on purpose.
+          expr: argocd_app_info{sync_status="Unknown"} == 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ArgoCD app {{`{{ $labels.name }}`}} cannot reach its git source"
+            description: >-
+              Sync status Unknown means ArgoCD cannot fetch desired
+              state — a GitHub outage looks exactly like this. Running
+              workloads are unaffected and drift enforcement is paused.
+              If a fix must land during the outage, pause auto-sync
+              FIRST and commit before re-enabling (ADR-009 Decision 4).
+
         - alert: CertificateExpiringSoon
           # Every door on this platform is TLS, and a lab CA expiry is
           # the classic silent outage: nothing degrades until the day
@@ -82,11 +104,89 @@ spec:
 
     - name: airlock.rules
       # CLAUDE.md's anomaly list, expressed against what the platform
-      # actually exports today. Two of the four named there —
-      # secret reuse and unexpected namespaces — need Sentinel's audit
-      # in Prometheus or Loki, which is not wired yet; they are NOT
-      # written as rules that would silently never fire.
+      # actually exports today. ADR-006 wired Sentinel's metrics and
+      # audit copy in, so the kill-switch rule below is real now; the
+      # remaining named anomalies (secret reuse, unexpected namespaces)
+      # want the Loki copy and stay unwritten until queries exist that
+      # can actually fire.
       rules:
+        - alert: SentinelKillSwitchEngaged
+          # Phase 8 item 6: every flip pages immediately. Engaging the
+          # kill switch is a deliberate human act — the page is
+          # awareness ("someone pulled the cord, everything MCP is
+          # refusing"), not an accusation. It also catches the switch
+          # being LEFT on after an incident ends.
+          expr: sentinel_kill_switch_engaged == 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Sentinel's global kill switch is ENGAGED"
+            description: >-
+              Every capability check is refusing while this is on. If
+              the incident is over, release it from the console; if you
+              did not engage it, treat that as the incident.
+
+        - alert: SentinelMetricsAbsent
+          # The eyes on the gate itself. Fires while Prometheus cannot
+          # scrape the broker's /metrics — which is ALSO the expected
+          # state between this chart landing and the owner's next
+          # sentinel install (the route ships with the new code), so
+          # the description says so instead of paging a mystery.
+          expr: up{job="sentinel-broker"} == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Prometheus cannot scrape Sentinel's broker"
+            description: >-
+              No metrics from the gate: kill-switch state, denials and
+              grant gauges are all blind. If the ADR-006 sentinel
+              install has not run yet this is expected (the /metrics
+              route ships with it); otherwise check the broker unit and
+              the sentinel-prometheus-client secret.
+
+        - alert: SentinelAuditShippingSkipped
+          # The skip-shaped divergence, distinct from the retry-shaped
+          # one below: a 4xx makes the shipper advance PAST a batch
+          # (deliberately — one poison batch must not wedge the copy),
+          # which an adversary at the route could exploit to suppress
+          # the copy while backlog stays zero. Skipped rows are
+          # PERMANENT divergence, so any increase pages.
+          expr: increase(sentinel_audit_shipping_skipped_rows_total[1h]) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Loki rejected Sentinel audit rows — permanent copy divergence"
+            description: >-
+              The shipper skipped rows Loki 4xx-rejected (count is an
+              upper bound). The canonical record in Sentinel is intact;
+              the Loki copy now permanently lacks lines. Check the
+              admin unit's log for the rejected id range and why.
+
+        - alert: SentinelAuditShippingStalled
+          # ADR-006 named divergence between the canonical record and
+          # the Loki copy as a signal worth alerting on. Backlog above
+          # zero for half an hour means the copy is falling behind the
+          # record — the shipper is failing, off, or the push route is
+          # down. (30m = many retry ticks, so this never fires on one
+          # blip.)
+          expr: sentinel_audit_shipping_backlog_rows > 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Sentinel's audit copy to Loki is falling behind"
+            description: >-
+              Sealed audit rows are not reaching Loki. The canonical
+              record in Sentinel is intact; what is degrading is the
+              two-system tamper property and the dashboard's event
+              view. Check the admin unit's log for `loki push` lines
+              and the pushIngress route — or, if shipping was
+              deliberately disabled on the host (empty
+              SENTINEL_LOKI_PUSH_URL), silence this knowingly.
+
         - alert: MCPServerUnreachable
           # An MCP server that is down fails CLOSED (the proxy refuses),
           # so this is availability, not a security event. Said
