@@ -16,9 +16,16 @@
 # The route gets its OWN hostname on purpose: Traefik binds TLS options
 # to the SNI name, so sharing `localhost` with the plain doors would
 # make the client-cert requirement ambiguous — and an ambiguous gate is
-# no gate. The ADR-009-style bypass probe (wrong SNI + forged Host
-# header must be REFUSED) is part of this route's acceptance, not an
-# afterthought.
+# no gate.
+#
+# PROBED ON THE LIVE WIRE, 2026-08-22 (observed, not assumed):
+#   valid Sentinel-CA client cert            -> 204, line queryable in Loki
+#   no client cert                           -> refused AT THE HANDSHAKE
+#   wrong SNI + forged `Host: loki-push...`  -> 421 Misdirected Request
+#     (Traefik's domain-fronting protection closes the bypass)
+#   query API via this route                 -> 404 (path limit holds)
+#   sentinel-ca-clientauth secret DELETED    -> fails CLOSED: every
+#     connection refused, valid certs included; recovers on restore.
 #
 # Everything lives in THIS namespace (monitoring): k3s Traefik refuses
 # cross-namespace service refs, and TLSOption secretNames resolve in the
@@ -52,8 +59,9 @@ metadata:
 spec:
   # RequireAndVerifyClientCert: no Sentinel-CA client cert, no TLS
   # handshake — the request never reaches Loki at all. If the CA secret
-  # is absent (fresh install before mint-certs.sh ran), Traefik marks
-  # the option invalid and the router serves nothing: fails CLOSED.
+  # is absent (fresh install before mint-certs.sh ran), the router
+  # serves nothing: fails CLOSED — OBSERVED 2026-08-22 by deleting the
+  # secret live (all connections refused, valid certs included).
   clientAuth:
     secretNames:
       - {{ .Values.pushIngress.clientCaSecret }}

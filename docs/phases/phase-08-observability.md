@@ -29,16 +29,32 @@
      metrics** — `gen_ai_*` carries model and token type, no user — so
      the dashboard says so rather than implying it; person-level
      attribution is Sentinel's audit log.
-   - **Claude actions** (actions/hr, MCP-server-invocation rate, grant request latency, denial rate, kill-switch events).
+   - ~~**Claude actions**~~ — **DONE 2026-08-22** as "Airlock
+     activity" (ADR-006 built): the 3am row (kill switch, live grants,
+     pending decisions, active policy version) from the broker's new
+     /metrics; event-type and denial-by-server rates plus the raw
+     audit stream from the Loki copy; and the record's own health
+     (sealer backlog, shipping backlog, permanent skips). Waits on the
+     owner's sentinel install for the Prometheus half to populate;
+     Loki panels populate from the first shipped seal after that same
+     install.
 5. Wire Alertmanager → Slack `#claude-alerts`. **Rules written
    2026-08-04** (`catalog/monitoring/templates/alerts-platform.yaml`);
    the receiver still needs a Slack webhook, which is an owner
    decision, so alerts currently fire into Alertmanager's UI only.
 6. Define anomaly rules:
    - Secret reuse (same key appears in two distinct namespaces or files).
-   - Abnormal action rate (agent doing > N actions/min).
+   - Abnormal action rate (agent doing > N actions/min). *(Partially
+     served already: ADR-007 D1's velocity forbids act inline at the
+     gate, and `sentinel_audit_events` now exposes the windowed rates
+     an alert could key on — the rule itself still unwritten.)*
    - Unexpected namespaces touched.
-   - Kill-switch flips (every flip pages immediately).
+   - ~~Kill-switch flips~~ — **DONE 2026-08-22**:
+     `SentinelKillSwitchEngaged` (critical, 1m) on the new
+     `sentinel_kill_switch_engaged` gauge, alongside
+     `ArgoCDApplicationSyncUnknown` (ADR-009 D5),
+     `SentinelMetricsAbsent`, `SentinelAuditShippingStalled` and
+     `SentinelAuditShippingSkipped` — ten live rules total.
 
 ## Open questions — RESOLVED 2026-08-04
 
@@ -139,4 +155,26 @@
   That is the reason the upstream is commented out rather than left
   dangling with a note.
 
-- (empty)
+- **2026-08-22 (item 4 Airlock activity + ADR-006):** the full record
+  is the STATUS activity log and ADR-006's as-built addendum; the
+  five facts a future session needs: (1) "seal" and "segment file"
+  are different operations — the shipper pushes newly SEALED rows per
+  30s tick in the segment LINE format, so Loki's copy carries the
+  hash chain; (2) rotation now 409s rather than prune unshipped rows,
+  because pruning them would silently mute the divergence alert;
+  (3) the push route's gate was PROBED, not assumed — certless
+  refused at handshake, wrong-SNI+forged-Host 421, query API 404,
+  secret-deleted fails CLOSED (see push-ingress.yaml's observed
+  block); (4) `prometheus-client` reaches every broker route (no
+  per-cert authz) — owner decision #11, narrowing named; (5) the
+  metrics scrape target correctly shows 404-down until the owner's
+  sentinel install ships the /metrics route — `SentinelMetricsAbsent`
+  says so in its own description.
+- **2026-08-22 — the Cilium IP-lottery recurred and the backlogged
+  guard would have caught it in seconds.** Found mid-build: 22 of 32
+  scrape targets blackholed (CiliumNode registry stale on 2 of 4
+  nodes after a reboot, including a real address collision), fixed
+  with the documented DS restart, verified back to 12-down — and the
+  remaining 12 (kubelet ×3 nodes, apiserver) turned out to be DOWN
+  FOR THE ENTIRE 3-DAY RETENTION WINDOW: a separate, older breakage
+  nobody noticed because no rule watches those jobs. Backlogged.
