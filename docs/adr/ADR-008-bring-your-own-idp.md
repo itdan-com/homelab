@@ -52,6 +52,57 @@ Okta dev org — creating that account is the owner's (identity signup);
 everything else is proven against stubs + the live Authentik.**
 7.8.2 (broker mode docs+probes) and 7.8.3 (EMA spike) remain.
 
+## 7.8.3 spike findings (2026-08-23) — the gate is open: BUILD the receiver
+
+The four gating questions ADR-008 required answered before building,
+answered (four-researcher pass, sources in the session record):
+
+1. **Spec alignment: clean.** EMA went Stable 2026-06-17 and needed NO
+   revision for the 2026-07-28 core — it is a pure OAuth/HTTP-layer
+   extension (zero references to sessions or `_meta` in its normative
+   text); no alignment issue or PR is open. Build against
+   `draft-ietf-oauth-identity-assertion-authz-grant-04`.
+2. **No DCR anywhere on the path** — unregistered clients use CIMD as
+   their client_id (optionally private_key_jwt). The owner's DCR veto
+   is fully compatible. One draft note to honor: the profile SHOULD be
+   limited to confidential clients — for CIMD clients that means
+   private_key_jwt with keys from their metadata document, not
+   public+PKCE.
+3. **Receiver obligations are precise**, and Keycloak's experimental
+   receiver (read at source) is the validation-chain reference: typ
+   `oauth-id-jag+jwt`; signature via the IdP's JWKS; `aud` must equal
+   OUR AS issuer identifier; `client_id` claim must match the
+   authenticated client; `jti` single-use (Keycloak FORCES the replay
+   cache for this typ even when config says otherwise — adopt that);
+   exp/iat with a max-assertion-lifetime cap (300s); minted token
+   audience-restricted to the MCP server in the `resource` claim; NO
+   refresh token on this grant. Discovery = advertise
+   `authorization_grant_profiles_supported:
+   ["urn:ietf:params:oauth:grant-profile:id-jag"]` + jwt-bearer in
+   grant_types_supported on the door's RFC 8414 metadata. Account
+   mapping: Keycloak refuses JIT and requires a pre-existing federated
+   link — which is exactly our (issuer, sub) pin; an ID-JAG for a
+   principal we have never seen interactively REFUSES (the policy
+   store + the pin stay the authorities; email in the assertion is
+   advisory).
+4. **Testable with zero external accounts.** xaa.dev is genuinely
+   open (no signup): its Bring-Your-Own-Resource flow makes the
+   playground IdP (`https://idp.xaa.dev`, live discovery + JWKS
+   probed) mint real signed ID-JAGs with OUR AS as the audience, and
+   the exchange is a scriptable RFC 8693 POST (one interactive login,
+   then refresh-token-driven headless minting). The unit suite gets a
+   ~50-line local test-only ID-JAG signer (no open-source issuer
+   exists; Keycloak's issuer side is an open PR).
+
+**The honest boundary:** Anthropic's EMA client is still a
+waitlist-gated beta (Team/Enterprise), Okta-wired ("more IdPs coming
+soon"), and Claude Code has NO EMA config surface at all — so
+Claude-as-client cannot exercise our receiver today, from any plan we
+hold. VS Code (preview, policy-managed `mcp.enterpriseManagedAuth.idp`)
+is the one self-administerable real client. The receiver ships
+proven by suite + xaa.dev, with Claude-client verification recorded as
+blocked-on-Anthropic-GA, not on us.
+
 ## Context
 
 Three facts, one from our own code and two from the field, make this
