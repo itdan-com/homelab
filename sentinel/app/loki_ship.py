@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import ssl
 import time
 from datetime import timezone
 
@@ -55,11 +56,20 @@ def enabled() -> bool:
 
 
 def _http() -> httpx.Client:
-    cert = None
+    """The client cert rides an EXPLICIT ssl.SSLContext, never httpx's
+    `cert=` parameter: httpx 0.28.1 silently drops `cert=` when
+    `verify` is a CA-bundle path, so the handshake presented nothing
+    and Traefik's gate refused every push with certificate_required —
+    found live 2026-08-23 after every probe (curl-based, installer
+    included) had passed, because curl honors the same pair of inputs.
+    tests/test_loki_ship.py's real-mTLS regression test pins this."""
+    verify: ssl.SSLContext | str | bool = config.LOKI_CA_BUNDLE or True
     if config.LOKI_CLIENT_CERT and config.LOKI_CLIENT_KEY:
-        cert = (config.LOKI_CLIENT_CERT, config.LOKI_CLIENT_KEY)
-    return httpx.Client(timeout=10.0, follow_redirects=False,
-                        verify=config.LOKI_CA_BUNDLE or True, cert=cert)
+        ctx = ssl.create_default_context(
+            cafile=config.LOKI_CA_BUNDLE or None)
+        ctx.load_cert_chain(config.LOKI_CLIENT_CERT, config.LOKI_CLIENT_KEY)
+        verify = ctx
+    return httpx.Client(timeout=10.0, follow_redirects=False, verify=verify)
 
 
 def _state_path(state_dir: str | None = None) -> str:

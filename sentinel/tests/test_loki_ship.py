@@ -191,3 +191,96 @@ def test_batches_drain_in_one_tick(monkeypatch, tmp_path):
     out = _ship(stub, tmp_path)
     assert out["shipped"] == 5
     assert len(stub.calls) == 3  # 2 + 2 + 1
+
+
+def test_client_cert_actually_reaches_a_real_mtls_handshake(monkeypatch, tmp_path):
+    """The 2026-08-23 production find, pinned: httpx 0.28.1 silently
+    DROPS `cert=` when `verify` is a CA-bundle path, so the shipper
+    passed every stubbed test and every curl probe while presenting NO
+    client certificate on the live wire. This test runs a REAL TLS
+    server that REQUIRES a client cert (an ephemeral CA minted
+    in-test) and drives _http() against it — if the client context
+    ever stops carrying the cert chain, the handshake fails and this
+    fails with it. No stubs anywhere on the TLS layer, deliberately."""
+    import datetime
+    import ssl
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    def _mint(cn, issuer_cert=None, issuer_key=None, is_ca=False, san=None):
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        b = (x509.CertificateBuilder()
+             .subject_name(name)
+             .issuer_name(issuer_cert.subject if issuer_cert else name)
+             .public_key(key.public_key())
+             .serial_number(x509.random_serial_number())
+             .not_valid_before(now - datetime.timedelta(minutes=5))
+             .not_valid_after(now + datetime.timedelta(hours=1))
+             .add_extension(x509.BasicConstraints(ca=is_ca, path_length=None),
+                            critical=True))
+        if san:
+            b = b.add_extension(
+                x509.SubjectAlternativeName([x509.DNSName(san)]), critical=False)
+        cert = b.sign(issuer_key or key, hashes.SHA256())
+        return cert, key
+
+    def _write(path, cert, key=None):
+        data = cert.public_bytes(serialization.Encoding.PEM)
+        if key is not None:
+            data += key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption())
+        path.write_bytes(data)
+        return str(path)
+
+    ca_cert, ca_key = _mint("test-mtls-ca", is_ca=True)
+    srv_cert, srv_key = _mint("localhost", ca_cert, ca_key, san="localhost")
+    cli_cert, cli_key = _mint("test-shipper", ca_cert, ca_key)
+
+    ca_pem = _write(tmp_path / "ca.pem", ca_cert)
+    srv_pem = _write(tmp_path / "srv.pem", srv_cert, srv_key)
+    _write(tmp_path / "cli.crt", cli_cert)
+    (tmp_path / "cli.key").write_bytes(cli_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption()))
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    srv_ctx.load_cert_chain(srv_pem)
+    srv_ctx.load_verify_locations(ca_pem)
+    srv_ctx.verify_mode = ssl.CERT_REQUIRED   # the mTLS gate, for real
+    httpd = HTTPServer(("127.0.0.1", 0), H)
+    httpd.socket = srv_ctx.wrap_socket(httpd.socket, server_side=True)
+    port = httpd.server_address[1]
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        monkeypatch.setattr(config, "LOKI_PUSH_URL",
+                            f"https://localhost:{port}/loki/api/v1/push")
+        monkeypatch.setattr(config, "LOKI_CA_BUNDLE", ca_pem)
+        monkeypatch.setattr(config, "LOKI_CLIENT_CERT", str(tmp_path / "cli.crt"))
+        monkeypatch.setattr(config, "LOKI_CLIENT_KEY", str(tmp_path / "cli.key"))
+        _seed(1)
+        with SessionLocal() as s:
+            out = loki_ship.ship(s, state_dir=str(tmp_path))
+        assert out["shipped"] == 1, (
+            "the shipper did not survive a REAL mTLS handshake — "
+            "if this regressed, check how _http() carries the client cert")
+    finally:
+        httpd.shutdown()
