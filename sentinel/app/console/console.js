@@ -491,9 +491,82 @@ function buildGroupsPane() {
 
 /* --- lens 2: People — search, capped list, effective access ------------- */
 
+/* 7.8.1 (ADR-008): the identity LEDGER beside the policy people —
+   who has actually signed in, whether their sign-in is disabled, and
+   the IdP migration window. Fetched when the pane builds; a failure
+   degrades to the policy-only view rather than breaking the pane. */
+let ledger = {};          // email -> {id, disabled, idp_iss, last_seen_at}
+let idpMigration = { active: false };
+let ledgerLoaded = false; // one fetch per page life; actions refresh it
+let ledgerError = false;  // a blind pane must never look like an empty one
+
+async function refreshLedger() {
+  try {
+    const rows = await api('/v1/principals');
+    ledger = Object.fromEntries(rows.map((r) => [r.email, r]));
+    idpMigration = await api('/v1/idp-migration');
+    ledgerError = false;
+  } catch (e) {
+    // The pane still renders (policy view is independent), but says
+    // PLAINLY that the ledger is unreadable — silently showing no
+    // sign-in rows is indistinguishable from "nobody ever signed in",
+    // on the surface used for offboarding decisions.
+    ledgerError = true;
+  }
+  ledgerLoaded = true;
+}
+
+function migrationStrip(pane) {
+  const box = el('div', 'prow');
+  if (ledgerError) {
+    box.append(el('span', 'chip warn',
+      'identity ledger unavailable — sign-in states below are UNKNOWN, not empty'));
+    pane.append(box);
+    return;
+  }
+  if (idpMigration.active) {
+    box.append(el('span', 'chip warn',
+      `IdP migration OPEN → ${idpMigration.new_issuer} (until ${idpMigration.expires_at})`));
+    const close = el('button', 'ghost', 'close window');
+    close.onclick = async () => {
+      try {
+        await api('/v1/idp-migration', { method: 'DELETE' });
+        await refreshLedger(); buildEditor();
+      } catch (e) { alert('could not close window: ' + e.message); }
+    };
+    box.append(close);
+  } else {
+    const det = document.createElement('details');
+    det.append(el('summary', 'ctx', 'advanced: IdP migration (re-pin window)'));
+    const inner = el('div', 'prow');
+    const iss = document.createElement('input');
+    iss.placeholder = 'new issuer URL (https://…)'; iss.size = 40;
+    const go = el('button', 'ghost', 'open 24h window');
+    go.onclick = async () => {
+      if (!iss.value) return;
+      try {
+        await api('/v1/idp-migration', {
+          method: 'POST', body: JSON.stringify({ new_issuer: iss.value }) });
+        await refreshLedger(); buildEditor();
+      } catch (e) { alert('could not open window: ' + e.message); }
+    };
+    inner.append(iss, go,
+      el('span', 'ctx', 'the one sanctioned re-pin path — every re-pin is audited'));
+    det.append(inner);
+    box.append(det);
+  }
+  pane.append(box);
+}
+
 function buildPeoplePane() {
   const pane = document.getElementById('tab-people');
   pane.replaceChildren();
+  if (!ledgerLoaded) {
+    // first build: fetch once, then re-render this pane with the data.
+    // ledgerLoaded guards the loop; later updates refresh explicitly.
+    refreshLedger().then(buildPeoplePane);
+  }
+  migrationStrip(pane);
   const srow = el('div', 'prow');
   const search = document.createElement('input');
   search.placeholder = 'search people…';
@@ -577,6 +650,33 @@ function buildPeopleList(listBox) {
         if (expandedPerson === email) expandedPerson = null;
       }));
       body.append(grow);
+
+      /* 7.8.1: the ledger row — sign-in state and its switch. Only for
+         people who have actually signed in (a policy entry with no
+         ledger row has no principal to disable yet). */
+      const led = ledger[email];
+      if (led) {
+        const lrow = el('div', 'prow');
+        lrow.append(el('span', led.disabled ? 'chip warn' : 'chip ok',
+          led.disabled ? 'sign-in DISABLED' : 'sign-in enabled'));
+        if (led.last_seen_at) {
+          lrow.append(el('span', 'ctx', `last seen ${led.last_seen_at}`));
+        }
+        const tog = el('button', 'ghost',
+          led.disabled ? 'enable sign-in' : 'disable sign-in');
+        tog.onclick = async (ev) => {
+          ev.stopPropagation();
+          try {
+            await api(`/v1/principals/${led.id}/disabled`, {
+              method: 'POST',
+              body: JSON.stringify({ disabled: !led.disabled }) });
+            await refreshLedger();
+            buildEditor();
+          } catch (e) { alert('could not update sign-in: ' + e.message); }
+        };
+        lrow.append(tog);
+        body.append(lrow);
+      }
 
       body.append(el('div', 'ctx sep', 'can, right now (resolved):'));
       const closure = personClosure(email);

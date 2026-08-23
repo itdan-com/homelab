@@ -26,7 +26,16 @@ import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Index, LargeBinary, String
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -58,13 +67,43 @@ class Principal(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     display_name: Mapped[str | None] = mapped_column(String(128))
     # Pinned on first sight (trust-on-first-use). A later token carrying
-    # the same email with a DIFFERENT subject is a named anomaly and a
-    # refusal, not a silent re-bind — the cheap defense against an IdP
-    # re-issuing an address to a new hire (ADR-005 Decision 2).
-    idp_sub: Mapped[str | None] = mapped_column(String(255), unique=True)
+    # the same email with a DIFFERENT subject — or the same subject from
+    # a DIFFERENT issuer — is a named anomaly and a refusal, not a
+    # silent re-bind (ADR-005 Decision 2; ADR-008 Decision 1 made the
+    # pin issuer-qualified: a bare sub is only meaningful relative to
+    # who asserted it, and email must never be the join key ACROSS
+    # issuers). The one sanctioned re-bind is the operator-declared,
+    # audited IdP migration window (IdpMigration below).
+    idp_iss: Mapped[str | None] = mapped_column(String(255))
+    idp_sub: Mapped[str | None] = mapped_column(String(255))
+    # Vendor-stable RECOVERY attribute, never a join key: Entra's sub is
+    # pairwise per app registration, so `oid@tid` survives an app
+    # re-registration that idp_sub does not (ADR-008 D1, probe-flagged).
+    idp_stable_id: Mapped[str | None] = mapped_column(String(128))
     first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    __table_args__ = (
+        UniqueConstraint("idp_iss", "idp_sub", name="uq_principals_idp_iss_sub"),
+    )
+
+
+class IdpMigration(Base):
+    """The ONE sanctioned email-join across issuers (ADR-008 D1): an
+    operator-declared, passkey-gated, time-boxed window during which a
+    principal's first sign-in from the NEW issuer re-pins their
+    (issuer, sub) — each re-pin individually audited. Outside a live
+    window, an issuer/subject mismatch refuses, permanently. Singleton
+    row id=1; absence or expiry means no migration is running."""
+
+    __tablename__ = "idp_migrations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    new_issuer: Mapped[str] = mapped_column(String(255))
+    opened_by: Mapped[str] = mapped_column(String(128))
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class Flow(Base):

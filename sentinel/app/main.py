@@ -67,6 +67,7 @@ from .models import (
     CapabilityGrant,
     CapabilityRequest,
     Flow,
+    Principal,
     RequestStatus,
     utcnow,
 )
@@ -80,9 +81,11 @@ from .schemas import (
     GrantOut,
     GrantRevokeOut,
     GrantRow,
+    IdpMigrationIn,
     KillIn,
     KillStatus,
     PendingRequest,
+    PrincipalDisabledIn,
     PolicyActivateOut,
     PolicyHistoryRow,
     PolicyRevertIn,
@@ -94,15 +97,19 @@ from .schemas import (
 )
 from .service import (
     audit,
+    close_idp_migration,
     mint_forwarding_token,
     deny_request,
     engage_kill,
     grant_request,
+    idp_migration_active,
     kill_state,
+    open_idp_migration,
     refresh_status,
     release_kill,
     revoke_flow,
     revoke_grant,
+    set_principal_disabled,
 )
 
 CONSOLE_DIR = Path(__file__).parent / "console"
@@ -879,3 +886,100 @@ def revoke_whole_flow(flow_id: str, body: RevokeIn,
             raise HTTPException(status_code=404, detail="unknown flow_id")
         n = revoke_flow(s, flow_id, by=operator, reason=body.reason)
         return FlowRevokeOut(flow_id=flow_id, grants_revoked=n)
+
+
+# --- the identity ledger (7.8.1, ADR-008 D1/D3) -------------------------------
+
+@app.get(
+    "/v1/principals",
+    tags=["decisions"],
+    summary="The identity ledger — who has ever signed in, and their state",
+    dependencies=[Depends(require_operator)],
+)
+def list_principals():
+    with SessionLocal() as s:
+        rows = s.scalars(select(Principal).order_by(Principal.email)).all()
+        return [{"id": p.id, "email": p.email,
+                 "display_name": p.display_name, "idp_iss": p.idp_iss,
+                 "disabled": p.disabled_at is not None,
+                 "last_seen_at": (p.last_seen_at.isoformat() + "Z"
+                                  if p.last_seen_at else None)}
+                for p in rows]
+
+
+@app.post(
+    "/v1/principals/{principal_id}/disabled",
+    tags=["decisions"],
+    summary="Turn a person's sign-in off (or back on) — the offboarding switch",
+    dependencies=[Depends(console_guard)],
+)
+def set_disabled(principal_id: str, body: PrincipalDisabledIn,
+                 operator: str = Depends(current_operator)):
+    """ADR-008 D3: the check existed (every door call re-reads the row);
+    this is its trigger. Disabling kills even an already-minted 8h door
+    token on its next use. Live grants are untouched — revoke those
+    separately if the situation calls for it."""
+    with SessionLocal() as s:
+        try:
+            p = set_principal_disabled(s, principal_id,
+                                       disabled=body.disabled, actor=operator)
+        except ValueError:
+            raise HTTPException(status_code=404, detail="unknown principal_id")
+        return {"id": p.id, "email": p.email,
+                "disabled": p.disabled_at is not None}
+
+
+@app.get(
+    "/v1/idp-migration",
+    tags=["decisions"],
+    summary="Is an IdP migration window open?",
+    dependencies=[Depends(require_operator)],
+)
+def idp_migration_status():
+    with SessionLocal() as s:
+        m = idp_migration_active(s)
+        if m is None:
+            return {"active": False}
+        return {"active": True, "new_issuer": m.new_issuer,
+                "opened_by": m.opened_by,
+                "expires_at": m.expires_at.isoformat() + "Z"}
+
+
+@app.post(
+    "/v1/idp-migration",
+    tags=["decisions"],
+    summary="Open the IdP migration window (the one sanctioned re-pin path)",
+    dependencies=[Depends(console_guard)],
+)
+def idp_migration_open(body: IdpMigrationIn,
+                       operator: str = Depends(current_operator)):
+    """ADR-008 D1: outside this window, a changed (issuer, subject) is
+    a refusal, permanently — which is correct against a rogue token and
+    wrong against a planned migration. Opening is a passkey-gated,
+    audited act naming the ONE issuer sign-ins may re-pin to, and the
+    window closes itself."""
+    with SessionLocal() as s:
+        try:
+            m = open_idp_migration(s, new_issuer=body.new_issuer,
+                                   actor=operator, ttl_hours=body.ttl_hours)
+        except ValueError:
+            raise HTTPException(
+                status_code=409,
+                detail="a window naming the CURRENT issuer is refused — "
+                       "migration re-pins only ACROSS issuers; within one "
+                       "issuer a changed subject stays a permanent anomaly "
+                       "refusal (that is the TOFU defense, not a bug)")
+        return {"active": True, "new_issuer": m.new_issuer,
+                "expires_at": m.expires_at.isoformat() + "Z"}
+
+
+@app.delete(
+    "/v1/idp-migration",
+    tags=["decisions"],
+    summary="Close the IdP migration window early",
+    dependencies=[Depends(console_guard)],
+)
+def idp_migration_close(operator: str = Depends(current_operator)):
+    with SessionLocal() as s:
+        closed = close_idp_migration(s, actor=operator)
+        return {"active": False, "was_open": closed}

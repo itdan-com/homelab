@@ -145,6 +145,26 @@ AUDIT_SEAL_SECONDS = float(os.environ.get("SENTINEL_AUDIT_SEAL_SECONDS", "30"))
 # the installer writes the real value. The client proves itself with a
 # Sentinel-CA leaf (loki-client) and verifies the route against the
 # LAB CA — two different trust roots, on purpose.
+# --- bring-your-own-IdP knobs (ADR-008 D2, Phase 7.8.1) ----------------------
+#
+# Which id_token claim carries the person's email. `email` is the OIDC
+# default; Entra deployments commonly need `preferred_username` or
+# `upn` unless the optional email claim is configured. If the mapped
+# claim is absent from the id_token, the door falls back to ONE
+# userinfo call before refusing — some IdPs put identity there.
+OIDC_EMAIL_CLAIM = os.environ.get("SENTINEL_OIDC_EMAIL_CLAIM", "email")
+# How a confidential client proves itself at the token endpoint:
+# `basic` (HTTP Basic — the OAuth spec default, what Okta/Ping expect)
+# or `post` (credentials in the form body). Ignored for public
+# clients (no secret set). A typo here would silently mean `basic`
+# and fail every sign-in with an unexplained 401 — refuse loudly at
+# startup instead (review-caught).
+OIDC_CLIENT_AUTH = os.environ.get("SENTINEL_OIDC_CLIENT_AUTH", "basic")
+if OIDC_CLIENT_AUTH not in ("basic", "post"):
+    raise SystemExit(
+        f"SENTINEL_OIDC_CLIENT_AUTH must be 'basic' or 'post', "
+        f"got {OIDC_CLIENT_AUTH!r}")
+
 LOKI_PUSH_URL = os.environ.get("SENTINEL_LOKI_PUSH_URL") or None
 LOKI_CA_BUNDLE = os.environ.get("SENTINEL_LOKI_CA_BUNDLE") or None
 LOKI_CLIENT_CERT = os.environ.get("SENTINEL_LOKI_CLIENT_CERT") or None
@@ -196,8 +216,16 @@ OIDC_CA_BUNDLE = os.environ.get("SENTINEL_OIDC_CA_BUNDLE") or None
 DOOR_KEY_PATH = os.environ.get(
     "SENTINEL_DOOR_KEY", os.path.join(os.path.dirname(DB_PATH) or ".",
                                       "door-signing-key.pem"))
+# ADR-008 Decision 3: with an EXTERNAL IdP the door's token defaults
+# down to 60 minutes — offboarding there is fired-at-the-IdP, and an
+# 8h bearer is a long tail for a person the IdP already cut. The
+# shipped Authentik keeps 480 (same-host operator, console offboarding
+# one click away). Explicit SENTINEL_DOOR_TOKEN_TTL_MINUTES overrides
+# either default.
+_SHIPPED_ISSUER = "https://authentik.lab.local/application/o/mcp/"
 DOOR_TOKEN_TTL_MINUTES = int(
-    os.environ.get("SENTINEL_DOOR_TOKEN_TTL_MINUTES", "480"))
+    os.environ.get("SENTINEL_DOOR_TOKEN_TTL_MINUTES")
+    or ("480" if OIDC_ISSUER == _SHIPPED_ISSUER else "60"))
 
 # Static client allowlist (comma-separated client_ids) for MCP clients
 # that do not publish a CIMD document. CIMD is the preferred path and

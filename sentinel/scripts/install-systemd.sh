@@ -47,16 +47,49 @@ DOOR_BIND="${SENTINEL_DOOR_BIND:-127.0.0.1}"
 DOOR_PORT="${SENTINEL_DOOR_PORT:-8402}"
 DOOR_HOSTNAME="${SENTINEL_DOOR_HOSTNAME:-mcp.lab.local}"
 DOOR_ORIGIN="${SENTINEL_DOOR_ORIGIN:-https://localhost:$DOOR_PORT}"
+# 7.8.1 (ADR-008): every SENTINEL_OIDC_* knob resolves in three steps —
+# this shell's env wins; else the value the PREVIOUS install wrote
+# (re-running the installer is the documented deploy step, and a
+# redeploy that silently reverts an Okta deployment to Authentik
+# defaults — or drops the client secret, which cannot be re-derived —
+# was the review's second blocking finding); else the shipped default.
+_PREV_ENV="$ETC_DIR/sentinel.env"
+prev_knob() { # ENV_NAME DEFAULT -> value on stdout
+  local name="$1" default="$2"
+  if [[ -n "${!name+x}" ]]; then printf '%s' "${!name}"
+  elif [[ -f "$_PREV_ENV" ]] && grep -q "^$name=" "$_PREV_ENV"; then
+    grep "^$name=" "$_PREV_ENV" | head -1 | cut -d= -f2- | sed 's/^"//;s/"$//'
+  else printf '%s' "$default"; fi
+}
+
 # Which IdP the door federates sign-in to, and how to reach it. The
-# ISSUER is the logical identity that must match the `iss` in tokens;
-# the HTTP base is where it actually answers on this host (the lab's
-# Traefik is on :8443 behind a Host header, cloud has them identical).
-OIDC_ISSUER="${SENTINEL_OIDC_ISSUER:-https://authentik.lab.local/application/o/mcp/}"
-OIDC_HTTP_BASE="${SENTINEL_OIDC_HTTP_BASE:-https://authentik.lab.local:8443}"
-OIDC_CLIENT_ID="${SENTINEL_OIDC_CLIENT_ID:-mcp-door}"
-# The lab CA that signed the IdP's certificate. Detected from the
-# cluster if present — never hardcoded (ADR-004).
-OIDC_CA_BUNDLE="${SENTINEL_OIDC_CA_BUNDLE:-$CERT_DIR/lab-ca.crt}"
+# ISSUER is the logical identity that must match the `iss` in tokens.
+_SHIPPED_ISSUER="https://authentik.lab.local/application/o/mcp/"
+OIDC_ISSUER="$(prev_knob SENTINEL_OIDC_ISSUER "$_SHIPPED_ISSUER")"
+# HTTP_BASE (the lab's split-horizon transport rewrite) and the lab CA
+# pin default ONLY for the shipped Authentik issuer — an external IdP
+# has a real address and a real certificate, and the old
+# unconditional defaults made external installs impossible (the
+# review's other blocking finding: every IdP call was rewritten to the
+# Authentik host and verified against the lab CA).
+if [[ "$OIDC_ISSUER" == "$_SHIPPED_ISSUER" ]]; then
+  _HB_DEFAULT="https://authentik.lab.local:8443"
+  _CA_DEFAULT="$CERT_DIR/lab-ca.crt"
+else
+  _HB_DEFAULT=""
+  _CA_DEFAULT=""   # system trust store
+fi
+OIDC_HTTP_BASE="$(prev_knob SENTINEL_OIDC_HTTP_BASE "$_HB_DEFAULT")"
+OIDC_CLIENT_ID="$(prev_knob SENTINEL_OIDC_CLIENT_ID "mcp-door")"
+# EMAIL_CLAIM: which id_token claim carries the person's email (Entra
+# deployments often need preferred_username/upn). CLIENT_AUTH: basic
+# (spec default, Okta/Ping) or post. CLIENT_SECRET: export it when
+# registering the door as a confidential client — written to the
+# root-owned env file, preserved across re-runs, never echoed.
+OIDC_EMAIL_CLAIM="$(prev_knob SENTINEL_OIDC_EMAIL_CLAIM "email")"
+OIDC_CLIENT_AUTH="$(prev_knob SENTINEL_OIDC_CLIENT_AUTH "basic")"
+OIDC_CLIENT_SECRET="$(prev_knob SENTINEL_OIDC_CLIENT_SECRET "")"
+OIDC_CA_BUNDLE="$(prev_knob SENTINEL_OIDC_CA_BUNDLE "$_CA_DEFAULT")"
 MCP_UPSTREAMS="${SENTINEL_MCP_UPSTREAMS:-}"
 MCP_PROXY_BASE="${SENTINEL_MCP_PROXY_BASE:-https://localhost:8443}"
 # ADR-006: where the audit shipper pushes sealed rows. Its own hostname
@@ -245,7 +278,11 @@ install -m 0644 -o root -g root "$CERT_DIR/ca.crt" "$ETC_DIR/ca.crt"
 
 ENV_FILE="$ETC_DIR/sentinel.env"
 if [[ -f "$ENV_FILE" ]]; then
-  cp -a "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"   # never clobber config unbacked
+  _BAK="$ENV_FILE.bak.$(date +%s)"
+  cp -a "$ENV_FILE" "$_BAK"   # never clobber config unbacked
+  # backups can carry the OIDC client secret — root-only, and keep 3
+  chmod 0600 "$_BAK"
+  ls -t "$ENV_FILE".bak.* 2>/dev/null | tail -n +4 | xargs -r rm -f
   echo "== existing $ENV_FILE backed up"
 fi
 cat > "$ENV_FILE" <<EOF
@@ -270,6 +307,11 @@ SENTINEL_OIDC_ISSUER=$OIDC_ISSUER
 SENTINEL_OIDC_HTTP_BASE=$OIDC_HTTP_BASE
 SENTINEL_OIDC_CLIENT_ID=$OIDC_CLIENT_ID
 SENTINEL_OIDC_CA_BUNDLE=$OIDC_CA_BUNDLE
+# 7.8.1 (ADR-008): which claim carries the email, and how a
+# confidential client proves itself at the token endpoint.
+SENTINEL_OIDC_EMAIL_CLAIM=$OIDC_EMAIL_CLAIM
+SENTINEL_OIDC_CLIENT_AUTH=$OIDC_CLIENT_AUTH
+${OIDC_CLIENT_SECRET:+SENTINEL_OIDC_CLIENT_SECRET="$OIDC_CLIENT_SECRET"}
 # Where each MCP server actually lives (name=url,name=url). Empty until
 # a real server is deployed — policy can decide about a server that has
 # no upstream yet; it simply cannot be called.
@@ -421,12 +463,26 @@ DOOR_401=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST \
   exit 1; }
 # Can the door actually REACH the identity provider? Everything above
 # passes with a door that will fail every sign-in: the federation leg
-# is the one hop no health check touches. Probed the way the door does
-# it — same URL, same CA bundle — so a TLS or DNS problem surfaces here
-# instead of as a 500 the first time a human tries to log in (which is
-# exactly how it was found, 2026-08-02).
-IDP_URL="${OIDC_HTTP_BASE%/}/application/o/$(basename "${OIDC_ISSUER%/}")/.well-known/openid-configuration"
+# is the one hop no health check touches. Probed THE WAY THE DOOR DOES
+# IT (7.8.1, ADR-008 D2.1): the issuer's own discovery URL — the first
+# version rebuilt Authentik's /application/o/<slug>/ path shape here,
+# so any other vendor's issuer failed the preflight even though the
+# door itself would have worked. With the lab's split-horizon rewrite
+# (OIDC_HTTP_BASE) the fetch rides the transport base with the
+# issuer's Host pinned, exactly like door._transport_url; without it,
+# the raw issuer URL is the whole story.
+if [[ -n "$OIDC_HTTP_BASE" ]]; then
+  _iss_no_scheme="${OIDC_ISSUER#*://}"
+  _iss_netloc="${_iss_no_scheme%%/*}"
+  _iss_path="/${_iss_no_scheme#*/}"; [[ "$_iss_path" == "/$_iss_no_scheme" ]] && _iss_path=""
+  IDP_URL="${OIDC_HTTP_BASE%/}${_iss_path%/}/.well-known/openid-configuration"
+  IDP_HOST_ARGS=(-H "Host: ${_iss_netloc}")
+else
+  IDP_URL="${OIDC_ISSUER%/}/.well-known/openid-configuration"
+  IDP_HOST_ARGS=()
+fi
 IDP_OK=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
+  "${IDP_HOST_ARGS[@]}" \
   ${OIDC_CA_BUNDLE:+--cacert "$OIDC_CA_BUNDLE"} "$IDP_URL" || true)
 if [[ "$IDP_OK" != "200" ]]; then
   echo "!! the door cannot verify/reach the identity provider (got '${IDP_OK}')" >&2

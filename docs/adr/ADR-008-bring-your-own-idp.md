@@ -26,6 +26,32 @@ external-tenant adoption to "when Airlock goes multi-tenant for real";
 this ADR deliberately advances that timing to single-tenant
 deployments, on the owner's trigger and the market findings below.
 
+## 7.8.1 BUILT (2026-08-22, same day as accepted) — with the review earning three saves
+
+D1/D2/D3's session shipped: the (issuer, sub) composite pin with an
+audited migration window and a live migration (probe-proven up-down-up
+with data; the old global sub-unique explicitly dropped — copy_from
+carries constraints unless told otherwise, probe-caught); nonce + azp
+hard validation, configurable email claim + OIDC-Core-checked userinfo
+fallback, conditional Host pinning, client_secret_basic; the console
+disable-principal switch (invalidating BROWSER sessions too, not only
+bearers — review-caught residual); the /link redirect loop fixed with
+a real Set-Cookie regression test; the installer preflight door-shaped
+with three-step knob resolution (shell → previous install → default),
+which also fixed two review blockers: a `--code` redeploy silently
+dropping the client secret, and external-IdP installs being impossible
+(the old unconditional HTTP_BASE/lab-CA defaults rewrote every IdP
+call to Authentik's address). The review's sharpest save: a
+**same-issuer migration window is refused** — it would have converted
+the re-issued-mailbox TOFU defense into a 24h silent re-bind, proven
+end-to-end before it was closed. External-IdP deployments also default
+the door token TTL to 60m (D3's posture, previously unimplemented).
+Suite 152→173. Registration docs: `docs/idp-registration.md`.
+**Still owed on 7.8.1's exit criterion: the live matrix against a real
+Okta dev org — creating that account is the owner's (identity signup);
+everything else is proven against stubs + the live Authentik.**
+7.8.2 (broker mode docs+probes) and 7.8.3 (EMA spike) remain.
+
 ## Context
 
 Three facts, one from our own code and two from the field, make this

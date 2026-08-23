@@ -59,8 +59,10 @@ from .config import (
     MCP_UPSTREAMS,
     upstream_token,
     OIDC_CA_BUNDLE,
+    OIDC_CLIENT_AUTH,
     OIDC_CLIENT_ID,
     OIDC_CLIENT_SECRET,
+    OIDC_EMAIL_CLAIM,
     OIDC_HTTP_BASE,
     OIDC_ISSUER,
     POLICY_RELOAD_SECONDS,
@@ -162,6 +164,17 @@ def _http() -> httpx.Client:
                         verify=OIDC_CA_BUNDLE or True)
 
 
+def _idp_headers() -> dict:
+    """Host pinning ONLY when the lab's split-horizon transport rewrite
+    is active — unconditional pinning assumed the issuer host serves
+    the token/JWKS endpoints too, which breaks IdPs whose endpoints
+    live on a different host (custom-domain tenants; ADR-008 D2.3).
+    Without a rewrite, the URL's own host is the right Host header."""
+    if OIDC_HTTP_BASE:
+        return {"Host": urlparse(OIDC_ISSUER).netloc}
+    return {}
+
+
 def oidc_config() -> dict:
     """Authentik's discovery document, cached. Fetched from the issuer
     (transport-rewritten); the `iss` inside it stays authoritative."""
@@ -169,7 +182,7 @@ def oidc_config() -> dict:
         return _oidc_cache["config"]
     url = _transport_url(OIDC_ISSUER.rstrip("/") + "/.well-known/openid-configuration")
     with _http() as c:
-        r = c.get(url, headers={"Host": urlparse(OIDC_ISSUER).netloc})
+        r = c.get(url, headers=_idp_headers())
         r.raise_for_status()
         cfg = r.json()
     _oidc_cache["config"] = cfg
@@ -184,7 +197,7 @@ def _idp_key(kid: str | None):
         if jwks is None or attempt:
             with _http() as c:
                 r = c.get(_transport_url(oidc_config()["jwks_uri"]),
-                          headers={"Host": urlparse(OIDC_ISSUER).netloc})
+                          headers=_idp_headers())
                 r.raise_for_status()
                 jwks = _oidc_cache["jwks"] = r.json()
         for k in jwks.get("keys", []):
@@ -392,10 +405,14 @@ def _upstream_login(sid: str) -> str:
     the door's route to it, that needs its own setting; here and in
     cloud the two are the same."""
     challenge = _b64u(hashlib.sha256(_pending[sid]["verifier"].encode()).digest())
+    # nonce (ADR-008 D2.4, OIDC Core): PKCE binds the CODE leg; the
+    # nonce binds the ID_TOKEN to this browser session. Minted here,
+    # checked in the callback's claims.
+    nonce = _pending[sid].setdefault("nonce", secrets.token_urlsafe(24))
     return _transport_url(oidc_config()["authorization_endpoint"]) + "?" + urlencode({
         "response_type": "code", "client_id": OIDC_CLIENT_ID,
         "redirect_uri": f"{DOOR_ORIGIN}/callback",
-        "scope": "openid email profile", "state": sid,
+        "scope": "openid email profile", "state": sid, "nonce": nonce,
         "code_challenge": challenge, "code_challenge_method": "S256",
     })
 
@@ -409,6 +426,13 @@ def callback(request: Request):
     if sess is None:
         return _err("This sign-in expired or was already used. "
                     "Start it again from your MCP client.")
+    if sess.get("kind") == "link":
+        # link-kind entries share the _pending store but belong to the
+        # /link/{server}/callback leg — refusing here keeps their
+        # nonce-less shape from ever reaching this validator
+        # (review-caught: a truthy nonce guard is how a future producer
+        # silently opts out of nonce checking).
+        return _err("Wrong callback for this flow.")
     if q.get("error"):
         return _err(f"The identity provider refused: {q.get('error')}")
     code = q.get("code")
@@ -418,23 +442,68 @@ def callback(request: Request):
     data = {"grant_type": "authorization_code", "code": code,
             "redirect_uri": f"{DOOR_ORIGIN}/callback",
             "client_id": OIDC_CLIENT_ID, "code_verifier": sess["verifier"]}
+    # Confidential-client auth (ADR-008 D2.5): HTTP Basic is the OAuth
+    # spec default and what Okta/Ping expect; `post` keeps the old
+    # form-body shape for IdPs that want it. Public clients (no
+    # secret) send neither — PKCE is their proof.
+    basic_auth = None
     if OIDC_CLIENT_SECRET:
-        data["client_secret"] = OIDC_CLIENT_SECRET
+        if OIDC_CLIENT_AUTH == "post":
+            data["client_secret"] = OIDC_CLIENT_SECRET
+        else:
+            basic_auth = (OIDC_CLIENT_ID, OIDC_CLIENT_SECRET)
     try:
         with _http() as c:
             r = c.post(_transport_url(oidc_config()["token_endpoint"]), data=data,
-                       headers={"Host": urlparse(OIDC_ISSUER).netloc})
-        if r.status_code != 200:
-            raise ClientError(f"token exchange failed ({r.status_code})")
-        id_token = r.json().get("id_token")
-        if not id_token:
-            raise ClientError("identity provider returned no id_token")
-        header = jwt.get_unverified_header(id_token)
-        claims = jwt.decode(
-            id_token, _idp_key(header.get("kid")), algorithms=["RS256"],
-            audience=OIDC_CLIENT_ID, issuer=OIDC_ISSUER,
-            options={"require": ["exp", "iat", "sub", "iss", "aud"]})
-    except (ClientError, jwt.PyJWTError, httpx.HTTPError) as e:
+                       headers=_idp_headers(), auth=basic_auth)
+            if r.status_code != 200:
+                raise ClientError(f"token exchange failed ({r.status_code})")
+            tokens = r.json()
+            id_token = tokens.get("id_token")
+            if not id_token:
+                raise ClientError("identity provider returned no id_token")
+            header = jwt.get_unverified_header(id_token)
+            claims = jwt.decode(
+                id_token, _idp_key(header.get("kid")), algorithms=["RS256"],
+                audience=OIDC_CLIENT_ID, issuer=OIDC_ISSUER,
+                options={"require": ["exp", "iat", "sub", "iss", "aud"]})
+            # nonce binds the id_token to the session this door started
+            # (ADR-008 D2.4) — MANDATORY, no truthiness escape: every
+            # legitimate session gets one in _upstream_login, so a
+            # missing nonce is a refusal, not a skip. azp: when aud is
+            # multi-valued it must be present AND name us (the ADR's
+            # "required" wording, deliberately stricter than OIDC
+            # Core's SHOULD).
+            if claims.get("nonce") != sess.get("nonce"):
+                raise ClientError("id_token nonce mismatch")
+            if isinstance(claims.get("aud"), list) and \
+                    claims.get("azp") != OIDC_CLIENT_ID:
+                raise ClientError("id_token azp missing or mismatched")
+            # Email claim mapping (ADR-008 D2.2): the configured claim
+            # first; ONE userinfo call as fallback (some IdPs — Entra
+            # without the optional claim — put identity there); then a
+            # hard refusal, because a person without a stable email
+            # cannot exist in the policy store.
+            email = (claims.get(OIDC_EMAIL_CLAIM) or "").strip().lower()
+            if not email and tokens.get("access_token"):
+                ui_url = oidc_config().get("userinfo_endpoint")
+                if ui_url:
+                    ui = c.get(_transport_url(ui_url), headers={
+                        **_idp_headers(),
+                        "Authorization": f"Bearer {tokens['access_token']}"})
+                    if ui.status_code == 200:
+                        ui_claims = ui.json()
+                        # OIDC Core 5.3.2: userinfo values are only
+                        # usable if its sub matches the id_token's —
+                        # the cheap defense against token substitution.
+                        # Honest bound, stated: on this path the email
+                        # is TLS-attested, not signature-attested; the
+                        # (iss, sub) pin stays signature-grade either
+                        # way.
+                        if ui_claims.get("sub") == claims.get("sub"):
+                            email = (ui_claims.get(OIDC_EMAIL_CLAIM)
+                                     or "").strip().lower()
+    except (ClientError, jwt.PyJWTError, httpx.HTTPError, ValueError) as e:
         log.warning("door sign-in failed: %s", e)
         with SessionLocal() as s:
             audit(s, AuditEventType.AUTH_FAILURE,
@@ -442,13 +511,20 @@ def callback(request: Request):
             s.commit()
         return _err("Sign-in could not be completed.")
 
-    email = (claims.get("email") or "").strip().lower()
     if not email:
-        return _err("Your identity provider did not release an email address.")
+        return _err("Your identity provider did not release an email address "
+                    f"(looked for the `{OIDC_EMAIL_CLAIM}` claim; "
+                    "SENTINEL_OIDC_EMAIL_CLAIM changes which).")
+    # Vendor-stable recovery id (never a join key): Entra's oid+tid
+    # survives an app re-registration that its pairwise sub does not.
+    stable = None
+    if claims.get("oid") and claims.get("tid"):
+        stable = f"oid:{claims['oid']}@{claims['tid']}"
     try:
         with SessionLocal() as s:
             p = get_or_create_principal(
                 s, email=email, idp_sub=claims.get("sub"),
+                idp_iss=claims.get("iss"), idp_stable_id=stable,
                 display_name=claims.get("name"))
             principal_id, principal_email = p.id, p.email
             audit(s, AuditEventType.AUTH_SUCCESS, principal=p.email,
@@ -464,9 +540,15 @@ def callback(request: Request):
         # authorization code is minted: a browser session is not an
         # API credential and cannot be exchanged for one.
         r = RedirectResponse(sess["return_to"], status_code=302)
+        # path="/" and not "/elevate": the narrower scope meant /link
+        # could NEVER receive the cookie, so account-linking was an
+        # infinite redirect loop (found by ADR-008's review; fixed in
+        # 7.8.1). Widening costs nothing security-wise — the cookie is
+        # a door-signed JWT that only the browser-page handlers read,
+        # and httponly/secure/samesite still apply everywhere.
         r.set_cookie("door_session", _session_cookie(principal_id, principal_email),
                      max_age=SESSION_TTL_SECONDS, httponly=True, secure=True,
-                     samesite="lax", path="/elevate")
+                     samesite="lax", path="/")
         return r
 
     ac = secrets.token_urlsafe(32)
@@ -896,10 +978,19 @@ def _session(request: Request) -> dict | None:
     if not raw:
         return None
     try:
-        return jwt.decode(raw, signing_key().public_key(), algorithms=["RS256"],
+        sess = jwt.decode(raw, signing_key().public_key(), algorithms=["RS256"],
                           audience="door-session", issuer=DOOR_ORIGIN)
     except jwt.PyJWTError:
         return None
+    # The offboarding switch must invalidate BROWSER sessions too, not
+    # only API bearers (review-caught: a just-disabled principal could
+    # otherwise elevate or link for up to the cookie's 15 minutes) —
+    # same one-line ledger re-read person_from_bearer already does.
+    with SessionLocal() as s:
+        p = s.get(Principal, sess.get("sub", ""))
+        if p is None or p.disabled_at is not None:
+            return None
+    return sess
 
 
 def _elevation_ticket(*, principal_id: str, email: str, outcome: str,
@@ -930,8 +1021,9 @@ def elevate_page(ticket: str, request: Request):
     sess = _session(request)
     if sess is None:
         # Sign in first, then come back here. Same federation as the
-        # API path; the session cookie it sets is scoped to /elevate
-        # and cannot be exchanged for a token.
+        # API path; the session cookie it sets is door-wide (path=/,
+        # 7.8.1 — /link needs it too) and cannot be exchanged for a
+        # token.
         sid = secrets.token_urlsafe(24)
         _pending[sid] = {"t": time.time(), "kind": "browser",
                          "verifier": secrets.token_urlsafe(48),

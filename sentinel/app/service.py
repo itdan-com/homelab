@@ -31,6 +31,7 @@ from .models import (
     CapabilityGrant,
     CapabilityRequest,
     Flow,
+    IdpMigration,
     KillState,
     Principal,
     RequestStatus,
@@ -506,28 +507,142 @@ def mint_forwarding_token(
     return token
 
 
+def idp_migration_active(s: Session) -> IdpMigration | None:
+    """The open migration window, or None. Expiry is checked here (lazy,
+    like request expiry) so an abandoned window closes itself."""
+    m = s.get(IdpMigration, 1)
+    if m is None:
+        return None
+    if m.expires_at <= utcnow():
+        return None
+    return m
+
+
+def _norm_issuer(iss: str | None) -> str:
+    """Trailing-slash normalization for issuer comparison ONLY (Authentik
+    issuers end in '/', Okta's do not; an operator typo must not open a
+    window that silently never matches). Pins store the token's iss
+    verbatim; only comparisons normalize."""
+    return (iss or "").rstrip("/")
+
+
+def open_idp_migration(s: Session, *, new_issuer: str, actor: str,
+                       ttl_hours: int = 24) -> IdpMigration:
+    """ADR-008 D1: the ONE sanctioned email-join across issuers —
+    operator-declared, time-boxed, every re-pin individually audited.
+    Opening is itself an audited console act.
+
+    A window naming the deployment's CURRENT issuer is REFUSED
+    (review-proven attack): migration re-pins only ACROSS issuers.
+    Within one issuer, a changed subject stays what ADR-005 D2 made it
+    — a permanent anomaly refusal — because a same-issuer window would
+    turn the re-issued-mailbox defense into a 24h silent re-bind, the
+    exact takeover TOFU pinning exists to stop."""
+    from .config import OIDC_ISSUER
+    if _norm_issuer(new_issuer) == _norm_issuer(OIDC_ISSUER):
+        raise ValueError("same-issuer-window")
+    m = s.get(IdpMigration, 1)
+    now = utcnow()
+    if m is None:
+        m = IdpMigration(id=1)
+        s.add(m)
+    m.new_issuer = new_issuer
+    m.opened_by = actor
+    m.opened_at = now
+    m.expires_at = now + timedelta(hours=ttl_hours)
+    audit(s, AuditEventType.POLICY_CHANGE, actor=actor,
+          details={"action": "idp-migration-opened",
+                   "new_issuer": new_issuer, "ttl_hours": ttl_hours})
+    s.commit()
+    return m
+
+
+def close_idp_migration(s: Session, *, actor: str) -> bool:
+    """Returns whether a LIVE window was closed — deleting a row lazy
+    expiry already ended reports False, so the console never flashes a
+    successful close of a window that had already ended itself
+    (review-caught). The stale row is removed either way."""
+    m = s.get(IdpMigration, 1)
+    if m is None:
+        return False
+    was_live = m.expires_at > utcnow()
+    s.delete(m)
+    audit(s, AuditEventType.POLICY_CHANGE, actor=actor,
+          details={"action": "idp-migration-closed",
+                   "new_issuer": m.new_issuer, "was_live": was_live})
+    s.commit()
+    return was_live
+
+
+def set_principal_disabled(s: Session, principal_id: str, *,
+                           disabled: bool, actor: str) -> Principal:
+    """`disabled_at` finally gets a writer (ADR-008 D3 prerequisite —
+    the review found the offboarding kill point was a check with no
+    trigger). Disabling locks the door immediately: person_from_bearer
+    re-reads the row per call, so even an 8h door token dies on its
+    next use. Live grants are untouched — revoke them separately if
+    the situation calls for it (their check paths are flow/tool-bound
+    and short-lived; the PERSON is what this switch turns off)."""
+    p = s.get(Principal, principal_id)
+    if p is None:
+        raise ValueError("unknown-principal")
+    p.disabled_at = utcnow() if disabled else None
+    audit(s, AuditEventType.POLICY_CHANGE, actor=actor, principal=p.email,
+          details={"action": "principal-disabled" if disabled
+                   else "principal-enabled"})
+    s.commit()
+    return p
+
+
 def get_or_create_principal(
     s: Session, *, email: str, idp_sub: str | None = None,
+    idp_iss: str | None = None, idp_stable_id: str | None = None,
     display_name: str | None = None,
 ) -> Principal:
-    """Identity-ledger upsert with TOFU subject pinning (ADR-005 D2).
+    """Identity-ledger upsert with ISSUER-QUALIFIED TOFU pinning
+    (ADR-005 D2; issuer added by ADR-008 D1 — a bare sub is only
+    meaningful relative to who asserted it).
 
     First sight creates the row (audited — no state without a paper
-    trail). The first token that carries an IdP `sub` pins it; any
-    later token with the same email and a DIFFERENT sub is refused and
-    audited as an anomaly — the cheap defense against an IdP re-issuing
-    an address to a new hire. Disabled principals are refused the same
-    way: the ledger answers "who", and a disabled who is still a no."""
+    trail). The first token carrying an IdP subject pins (iss, sub);
+    any later token with the same email and a different subject OR
+    issuer is refused and audited — UNLESS an operator has opened the
+    IdP migration window for exactly that issuer, in which case the
+    row re-pins with its own audit trail (the one sanctioned re-bind).
+    Rows minted before the issuer column existed backfill their iss on
+    the next matching-sub sign-in, audited, without ceremony. Disabled
+    principals are refused the same way: the ledger answers "who", and
+    a disabled who is still a no."""
+    from sqlalchemy.exc import IntegrityError
+
+    def _collision(pinned_email: str | None = None):
+        """The composite unique caught two principals contending for one
+        (iss, sub) — an IdP reusing a subject, or an email rename at the
+        IdP. Review-proven: without this handler the 500 also rolled the
+        audit row back — an identity anomaly with NO paper trail. The
+        audit gets a FRESH transaction so the rollback cannot eat it."""
+        s.rollback()
+        audit(s, AuditEventType.AUTH_FAILURE, principal=email,
+              details={"anomaly": "idp-sub-collision", "iss": idp_iss,
+                       "sub": idp_sub})
+        s.commit()
+        raise ValueError("idp-sub-collision")
+
     email = email.strip().lower()
     p = s.scalars(select(Principal).where(Principal.email == email)).first()
     now = utcnow()
     if p is None:
-        p = Principal(email=email, idp_sub=idp_sub,
+        p = Principal(email=email, idp_sub=idp_sub, idp_iss=idp_iss,
+                      idp_stable_id=idp_stable_id,
                       display_name=display_name, last_seen_at=now)
         s.add(p)
-        s.flush()
+        try:
+            s.flush()
+        except IntegrityError:
+            _collision()
         audit(s, AuditEventType.CREDENTIAL_ADDED, principal=email,
-              details={"kind": "principal", "sub_pinned": idp_sub is not None})
+              details={"kind": "principal", "sub_pinned": idp_sub is not None,
+                       "iss": idp_iss})
         s.commit()
         return p
     if p.disabled_at is not None:
@@ -536,17 +651,52 @@ def get_or_create_principal(
         s.commit()
         raise ValueError("principal-disabled")
     if idp_sub is not None:
+        sub_mismatch = p.idp_sub is not None and p.idp_sub != idp_sub
+        iss_mismatch = (p.idp_iss is not None and idp_iss is not None
+                        and _norm_issuer(p.idp_iss) != _norm_issuer(idp_iss))
         if p.idp_sub is None:
-            p.idp_sub = idp_sub
+            p.idp_sub, p.idp_iss = idp_sub, idp_iss
+            p.idp_stable_id = idp_stable_id or p.idp_stable_id
             audit(s, AuditEventType.CREDENTIAL_ADDED, principal=email,
-                  details={"kind": "principal-sub-pin"})
-        elif p.idp_sub != idp_sub:
-            audit(s, AuditEventType.AUTH_FAILURE, principal=email,
-                  details={"anomaly": "idp-sub-mismatch"})
-            s.commit()
-            raise ValueError("idp-sub-mismatch")
+                  details={"kind": "principal-sub-pin", "iss": idp_iss})
+        elif sub_mismatch or iss_mismatch:
+            m = idp_migration_active(s)
+            if m is not None and _norm_issuer(idp_iss) == _norm_issuer(m.new_issuer):
+                old_iss, old_sub = p.idp_iss, p.idp_sub
+                p.idp_iss, p.idp_sub = idp_iss, idp_sub
+                p.idp_stable_id = idp_stable_id
+                audit(s, AuditEventType.CREDENTIAL_ADDED, principal=email,
+                      details={"kind": "principal-sub-repin",
+                               "old_iss": old_iss, "old_sub": old_sub,
+                               "new_iss": idp_iss,
+                               "migration_opened_by": m.opened_by})
+            else:
+                # near-miss visibility (review-caught): if a window IS
+                # open, name its issuer in the refusal so an operator
+                # mid-migration can see the almost-match instead of a
+                # generic anomaly.
+                details = {"anomaly": "idp-sub-mismatch",
+                           "pinned_iss": p.idp_iss, "token_iss": idp_iss}
+                if m is not None:
+                    details["open_window_issuer"] = m.new_issuer
+                audit(s, AuditEventType.AUTH_FAILURE, principal=email,
+                      details=details)
+                s.commit()
+                raise ValueError("idp-sub-mismatch")
+        elif p.idp_iss is None and idp_iss is not None:
+            # pre-b6e4d1a8c3f2 row: same sub, issuer column empty —
+            # backfill, audited, no ceremony.
+            p.idp_iss = idp_iss
+            p.idp_stable_id = p.idp_stable_id or idp_stable_id
+            audit(s, AuditEventType.CREDENTIAL_ADDED, principal=email,
+                  details={"kind": "principal-iss-backfill", "iss": idp_iss})
+        elif idp_stable_id and p.idp_stable_id is None:
+            p.idp_stable_id = idp_stable_id
     if display_name and p.display_name != display_name:
         p.display_name = display_name
     p.last_seen_at = now
-    s.commit()
+    try:
+        s.commit()
+    except IntegrityError:
+        _collision()
     return p

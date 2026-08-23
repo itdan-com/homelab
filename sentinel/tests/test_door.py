@@ -33,7 +33,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import cimd, door  # noqa: E402
 from app.cimd import ClientError, redirect_uri_allowed  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
+from sqlalchemy import select  # noqa: E402
+
 from app.models import Principal  # noqa: E402
+from app.service import get_or_create_principal  # noqa: E402
 
 
 def _migrate():
@@ -59,6 +62,7 @@ def c():
 def _clean():
     door._pending.clear()
     door._codes.clear()
+    _NONCE.clear()   # a poisoned nonce must not leak across tests
     yield
 
 
@@ -217,31 +221,71 @@ def idp(monkeypatch):
     monkeypatch.setattr(door, "oidc_config", lambda: {
         "authorization_endpoint": "https://idp.test/authorize",
         "token_endpoint": "https://idp.test/token",
-        "jwks_uri": "https://idp.test/jwks"})
+        "jwks_uri": "https://idp.test/jwks",
+        "userinfo_endpoint": "https://idp.test/userinfo"})
     monkeypatch.setattr(door, "_idp_key", lambda kid: key.public_key())
 
-    state = {"email": "alice@example.com", "sub": "idp-sub-alice"}
+    state = {"email": "alice@example.com", "sub": "idp-sub-alice",
+             "extra": {}, "userinfo": None, "post_kwargs": []}
 
     class R:
         status_code = 200
 
         def json(self):
             import time
-            tok = jwt.encode({"iss": door.OIDC_ISSUER, "aud": door.OIDC_CLIENT_ID,
-                              "sub": state["sub"], "email": state["email"],
-                              "name": "Alice", "iat": int(time.time()),
-                              "exp": int(time.time()) + 300},
-                             key, algorithm="RS256")
-            return {"id_token": tok}
+            claims = {"iss": door.OIDC_ISSUER, "aud": door.OIDC_CLIENT_ID,
+                      "sub": state["sub"], "name": "Alice",
+                      "iat": int(time.time()),
+                      "exp": int(time.time()) + 300}
+            if state["email"] is not None:
+                claims["email"] = state["email"]
+            claims.update(state["extra"])   # 7.8.1: claim-mapping tests
+            # A compliant IdP echoes the nonce the authorize URL carried
+            # (7.8.1 made the door check it); _dance captures it below.
+            if _NONCE.get("v"):
+                claims["nonce"] = _NONCE["v"]
+            tok = jwt.encode(claims, key, algorithm="RS256")
+            return {"id_token": tok, "access_token": "at-test"}
+
+    class UI:
+        status_code = 200
+
+        def json(self):
+            return state["userinfo"] or {}
 
     class C:
         def __enter__(self): return self
         def __exit__(self, *a): return False
-        def post(self, *a, **k): return R()
-        def get(self, *a, **k): return R()
+
+        def post(self, *a, **k):
+            state["post_kwargs"].append(k)   # 7.8.1: client-auth tests
+            return R()
+
+        def get(self, url="", *a, **k):
+            if "userinfo" in str(url):
+                return UI()
+            return R()
 
     monkeypatch.setattr(door, "_http", lambda: C())
     return state
+
+
+_NONCE: dict = {}
+
+
+def _authorize_sid(c) -> str:
+    """A bare authorize leg for tests that drive the callback by hand:
+    returns the door's sid and captures the nonce the stub IdP must
+    echo (7.8.1 nonce check)."""
+    _, challenge = _pkce()
+    r = c.get("/authorize", params={
+        "response_type": "code", "client_id": CLIENT,
+        "redirect_uri": "http://localhost:18789/callback",
+        "code_challenge": challenge, "code_challenge_method": "S256"},
+        follow_redirects=False)
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    _NONCE["v"] = q.get("nonce", [None])[0]
+    return q["state"][0]
 
 
 def _dance(c, cimd_ok_unused=None):
@@ -254,7 +298,9 @@ def _dance(c, cimd_ok_unused=None):
         "state": "client-state", "resource": door.RESOURCE},
         follow_redirects=False)
     assert r.status_code == 302, r.text
-    sid = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+    q = parse_qs(urlparse(r.headers["location"]).query)
+    sid = q["state"][0]
+    _NONCE["v"] = q.get("nonce", [None])[0]
 
     r = c.get("/callback", params={"code": "idp-code", "state": sid},
               follow_redirects=False)
@@ -301,13 +347,7 @@ def test_authorization_code_is_single_use(c, cimd_ok, idp):
 
 
 def test_token_refuses_a_wrong_pkce_verifier(c, cimd_ok, idp):
-    verifier, challenge = _pkce()
-    r = c.get("/authorize", params={
-        "response_type": "code", "client_id": CLIENT,
-        "redirect_uri": "http://localhost:18789/callback",
-        "code_challenge": challenge, "code_challenge_method": "S256"},
-        follow_redirects=False)
-    sid = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+    sid = _authorize_sid(c)
     r = c.get("/callback", params={"code": "idp-code", "state": sid},
               follow_redirects=False)
     code = parse_qs(urlparse(r.headers["location"]).query)["code"][0]
@@ -324,13 +364,7 @@ def test_idp_sub_mismatch_refuses_sign_in(c, cimd_ok, idp):
     different IdP subject — a re-issued mailbox — is refused."""
     _dance(c)
     idp["sub"] = "idp-sub-someone-else"
-    verifier, challenge = _pkce()
-    r = c.get("/authorize", params={
-        "response_type": "code", "client_id": CLIENT,
-        "redirect_uri": "http://localhost:18789/callback",
-        "code_challenge": challenge, "code_challenge_method": "S256"},
-        follow_redirects=False)
-    sid = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
+    sid = _authorize_sid(c)
     r = c.get("/callback", params={"code": "idp-code", "state": sid},
               follow_redirects=False)
     assert r.status_code == 400 and "cannot sign in" in r.text
@@ -385,3 +419,154 @@ def httpx_stub(monkeypatch):
         monkeypatch.setattr(cimd, "_assert_public_address", lambda h: None)
         monkeypatch.setattr(cimd.httpx, "Client", lambda **k: C())
     return install
+
+
+# --- 7.8.1 (ADR-008 D2): the door speaks to strangers correctly ---------------
+
+def test_nonce_mismatch_refuses(c, cimd_ok, idp):
+    """The id_token must carry the nonce THIS session minted — a token
+    replayed from another session (or an IdP that drops the nonce after
+    once echoing it) is refused."""
+    sid = _authorize_sid(c)
+    _NONCE["v"] = "not-what-the-door-minted"
+    r = c.get("/callback", params={"code": "idp-code", "state": sid},
+              follow_redirects=False)
+    assert r.status_code == 400 and "could not be completed" in r.text
+
+
+def test_azp_mismatch_refuses(c, cimd_ok, idp):
+    """OIDC Core: when aud is a list, azp must name us."""
+    idp["extra"] = {"aud": [door.OIDC_CLIENT_ID, "someone-else"],
+                    "azp": "someone-else"}
+    sid = _authorize_sid(c)
+    r = c.get("/callback", params={"code": "idp-code", "state": sid},
+              follow_redirects=False)
+    assert r.status_code == 400 and "could not be completed" in r.text
+    idp["extra"] = {}
+
+
+def test_email_claim_is_configurable(c, cimd_ok, idp, monkeypatch):
+    """Entra-shaped IdP: no `email` claim, identity in
+    preferred_username — one config knob, no code change (ADR-008 D2.2)."""
+    monkeypatch.setattr(door, "OIDC_EMAIL_CLAIM", "preferred_username")
+    idp["email"] = None
+    idp["sub"] = "idp-sub-pat"   # composite (iss, sub) is UNIQUE — a
+    idp["extra"] = {"preferred_username": "Pat@Example.COM"}
+    idp["userinfo"] = None
+    try:
+        tok = _dance(c)
+        assert tok
+        with SessionLocal() as s:
+            p = s.scalars(select(Principal)
+                          .where(Principal.email == "pat@example.com")).first()
+            assert p is not None   # lowercased, from the mapped claim
+    finally:
+        idp["email"] = "alice@example.com"
+        idp["extra"] = {}
+
+
+def test_userinfo_fallback_when_id_token_lacks_the_claim(c, cimd_ok, idp):
+    """Some IdPs put identity in userinfo, not the id_token: ONE
+    fallback call before refusing (ADR-008 D2.2)."""
+    idp["email"] = None
+    idp["sub"] = "idp-sub-userinfo"  # fresh (iss, sub) per person
+    # a compliant userinfo carries sub — the door verifies it matches
+    # the id_token's before trusting anything else (OIDC Core 5.3.2)
+    idp["userinfo"] = {"sub": "idp-sub-userinfo",
+                       "email": "via-userinfo@example.com"}
+    try:
+        tok = _dance(c)
+        assert tok
+        with SessionLocal() as s:
+            assert s.scalars(select(Principal).where(
+                Principal.email == "via-userinfo@example.com")).first()
+    finally:
+        idp["email"] = "alice@example.com"
+        idp["userinfo"] = None
+
+
+def test_missing_email_names_the_knob(c, cimd_ok, idp):
+    idp["email"] = None
+    idp["userinfo"] = None
+    try:
+        sid = _authorize_sid(c)
+        r = c.get("/callback", params={"code": "idp-code", "state": sid},
+                  follow_redirects=False)
+        assert r.status_code == 400
+        assert "SENTINEL_OIDC_EMAIL_CLAIM" in r.text
+    finally:
+        idp["email"] = "alice@example.com"
+
+
+def test_confidential_client_uses_basic_auth(c, cimd_ok, idp, monkeypatch):
+    """OAuth's spec-default token-endpoint auth (what Okta/Ping expect):
+    secret rides HTTP Basic, never the form body (ADR-008 D2.5)."""
+    monkeypatch.setattr(door, "OIDC_CLIENT_SECRET", "s3cret")
+    monkeypatch.setattr(door, "OIDC_CLIENT_AUTH", "basic")
+    idp["post_kwargs"].clear()
+    _dance(c)
+    k = idp["post_kwargs"][0]
+    assert k.get("auth") == (door.OIDC_CLIENT_ID, "s3cret")
+    assert "client_secret" not in k.get("data", {})
+
+
+def test_link_page_finally_sees_the_session(c, cimd_ok, idp):
+    """The ADR-008 review found account-linking was an INFINITE
+    redirect loop: the session cookie was scoped to /elevate and /link
+    could never receive it. Fixed in 7.8.1 (path=/): with a session
+    cookie the page RECOGNIZES the person (here: 409, unconfigured
+    server — not a bounce to the IdP); without one it still redirects
+    to sign in."""
+    with SessionLocal() as s:
+        p = get_or_create_principal(s, email="linker@example.com",
+                                    idp_sub="link-sub")
+        cookie = door._session_cookie(p.id, p.email)
+    c.cookies.set("door_session", cookie)
+    r = c.get("/link/github", follow_redirects=False)
+    c.cookies.delete("door_session")
+    assert r.status_code == 409 and "Cannot link" in r.text
+    r = c.get("/link/github", follow_redirects=False)
+    assert r.status_code == 302   # no session -> off to sign in
+
+
+def test_browser_callback_sets_a_door_wide_cookie(c, cimd_ok, idp):
+    """The REAL regression assertion for the /link loop fix: the
+    Set-Cookie the server emits must carry Path=/ — the earlier test
+    hand-set the cookie and would have passed with the bug intact
+    (review-caught)."""
+    idp["email"] = "cookie-path@example.com"   # fresh identity: alice
+    idp["sub"] = "idp-sub-cookie-path"         # already pins another sub
+    sid = "browser-sid-test"
+    door._pending[sid] = {"t": __import__("time").time(), "kind": "browser",
+                          "verifier": "v", "return_to": "/elevate/none"}
+    # route through _upstream_login so the nonce exists like a real flow
+    loc = door._upstream_login(sid)
+    from urllib.parse import parse_qs as _pq, urlparse as _up
+    _NONCE["v"] = _pq(_up(loc).query)["nonce"][0]
+    r = c.get("/callback", params={"code": "idp-code", "state": sid},
+              follow_redirects=False)
+    assert r.status_code == 302
+    set_cookie = r.headers["set-cookie"]
+    assert "door_session=" in set_cookie
+    assert "Path=/;" in set_cookie or set_cookie.endswith("Path=/")
+    assert "Path=/elevate" not in set_cookie
+
+
+def test_disabled_principal_browser_session_dies_too(c, cimd_ok, idp):
+    """The offboarding switch invalidates BROWSER sessions, not only
+    API bearers (review-caught: a just-disabled person could otherwise
+    elevate or link for the cookie's remaining 15 minutes)."""
+    from app.service import set_principal_disabled
+    with SessionLocal() as s:
+        p = get_or_create_principal(s, email="doomed@example.com",
+                                    idp_sub="doomed-sub")
+        pid = p.id
+        cookie = door._session_cookie(p.id, p.email)
+    c.cookies.set("door_session", cookie)
+    r = c.get("/link/github", follow_redirects=False)
+    assert r.status_code == 409          # session recognized (pre-disable)
+    with SessionLocal() as s:
+        set_principal_disabled(s, pid, disabled=True, actor="op-test")
+    r = c.get("/link/github", follow_redirects=False)
+    c.cookies.delete("door_session")
+    assert r.status_code == 302          # session refused -> sign-in redirect

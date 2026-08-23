@@ -156,6 +156,21 @@ class KillIn(AdminAction):
     reason: str | None = Field(default=None, max_length=512)
 
 
+class PrincipalDisabledIn(AdminAction):
+    """7.8.1 (ADR-008 D3): the offboarding switch. True = this person's
+    next door call refuses, whatever tokens they still hold."""
+    disabled: bool
+
+
+class IdpMigrationIn(AdminAction):
+    """7.8.1 (ADR-008 D1): open the ONE sanctioned re-pin window — the
+    operator attests the new issuer; every re-pin audits individually;
+    the window expires by itself."""
+    new_issuer: str = Field(min_length=8, max_length=255,
+                            pattern=r"^https://\S+$")
+    ttl_hours: int = Field(default=24, ge=1, le=168)
+
+
 class KillStatus(SentinelModel):
     engaged: bool
     engaged_at: datetime | None = None

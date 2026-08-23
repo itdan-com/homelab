@@ -261,6 +261,10 @@ h3.sub .ctx { font-weight: normal; font-size: .74rem; opacity: .7; margin-left: 
 .chip.lv-write-on-request, .chip.lv-write-on-approval { font-style: italic; }
 .chip.never { border-style: dashed; opacity: .85; }
 .chip.muted { opacity: .55; border-style: dashed; }
+/* 7.8.1 ledger states: enabled sign-in reads calm, an OPEN migration
+   window reads as something to notice (same vars the rest uses). */
+.chip.ok { color: var(--ok); border-color: var(--ok); }
+.chip.warn { color: var(--warn); border-color: var(--warn); font-weight: 600; }
 .chip .via { opacity: .6; font-size: .66rem; font-style: normal; font-weight: 400; }
 .chip button.x { padding: 0 .2rem; font-size: .7rem; margin-left: .1rem; }
 .ctx.sep { margin-top: .6rem; display: block; }

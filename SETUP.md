@@ -285,8 +285,9 @@ than held.
 **Two things must be true before a single tool appears**, and the second
 one surprises everyone once:
 
-1. You have a company account (Authentik) — the door federates sign-in
-   there.
+1. You have a company account — the door federates sign-in to the
+   deployment's IdP (the shipped Authentik by default; Okta/Entra/Ping
+   per `docs/idp-registration.md`, added in 7.8.1 per ADR-008).
 2. **Your email exists in the policy store.** Signing in proves *who*
    you are; the policy store alone decides *what* you may do, so a
    perfectly valid sign-in for someone the store has never heard of
