@@ -98,6 +98,49 @@ nothing re-pins, ever. Three things to know before opening one:
   window only after the new IdP's accounts are provisioned and locked
   down, and keep the TTL short.
 
+## Enterprise-Managed Authorization (EMA / ID-JAG) — zero-consent SSO
+
+*(7.8.3, ADR-008 D5. Off by default; turn on only when the
+deployment's IdP issues ID-JAGs — Okta today, others as they ship.)*
+
+With `SENTINEL_EMA_ENABLED=1`, the door's token endpoint accepts the
+`jwt-bearer` grant carrying an **ID-JAG** — a short-lived assertion
+your IdP mints after the person's normal SSO sign-in, naming this
+door as its audience. The client redeems it silently: no browser, no
+redirect, no consent screen. The door validates it Keycloak-strict
+(`typ oauth-id-jag+jwt`, your issuer's signature, exact audience,
+single-use `jti`, 300s lifetime cap, the redeeming client named in
+the assertion) and then — the part that matters — **joins only
+through the `(issuer, subject)` pin an interactive sign-in already
+established.** No just-in-time accounts, ever: a person who has never
+signed in through the browser flow cannot arrive via assertion, and
+the assertion's email claim never joins anything.
+
+Knobs: `SENTINEL_EMA_ENABLED`,
+`SENTINEL_EMA_MAX_ASSERTION_SECONDS` (default 300),
+`SENTINEL_EMA_ALLOW_PUBLIC_CLIENTS` (default off — the grant demands
+a confidential client proving itself via `private_key_jwt` with keys
+from its CIMD document; this knob is the documented weakening for a
+client that ships public-only).
+
+Two interop bounds, stated plainly: the client's CIMD document must
+carry its keys **inline** (`jwks`; a `jwks_uri` is refused — fail
+closed), and statically registered client_ids are public-only for
+this grant (no key material lives in `SENTINEL_DOOR_STATIC_CLIENTS`)
+— confidential EMA means a CIMD client.
+
+What EMA never does: mint an elevation session. `/elevate` and
+`/link` stay behind the interactive browser leg — a machine-exchanged
+assertion must never satisfy a human-confirm ceremony (ADR-008 D5's
+hard rule).
+
+Client reality check (2026-08-23): Anthropic's EMA client is a
+waitlisted beta wired to Okta; VS Code's preview
+(`mcp.enterpriseManagedAuth.idp`, policy-managed) is the one client
+you can drive yourself today. The receiver is proven by the suite's
+own ID-JAG signer and testable live against Okta's open playground
+(`xaa.dev`, Bring-Your-Own-Resource — no account needed).
+
 ## What never changes, whatever the IdP
 
 - Authorization (groups, tiers, windows, forbids) lives in Sentinel's

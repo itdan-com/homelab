@@ -103,6 +103,35 @@ is the one self-administerable real client. The receiver ships
 proven by suite + xaa.dev, with Claude-client verification recorded as
 blocked-on-Anthropic-GA, not on us.
 
+## 7.8.3 BUILT (2026-08-23, receiver half) — Airlock speaks the enterprise agent-auth standard
+
+`app/ema.py` + the door's jwt-bearer branch, off by default
+(`SENTINEL_EMA_ENABLED`), Keycloak-strict per the spike's chain, plus
+what the two-lens adversarial review forced: attacker bytes in the
+client assertion can no longer 500 without an audit row (the blocking
+find — an unaudited refusal on a public endpoint is an
+audit-blindness primitive); `leeway=10` on both decodes (probe: PyJWT
+2.13 refuses a future `iat`, so an IdP clock 3s ahead was a total EMA
+outage disguised as flakiness); the resource check runs BEFORE the
+ledger join (a refused grant must never leave an AUTH_SUCCESS row or
+a last_seen bump); the jti cache is lock-guarded (threadpool TOCTOU)
+and covers CLIENT assertions too (which also gained required
+jti/iat and the same 300s cap — a captured one was a decade-valid
+credential); mixed-kty CIMD jwks skip unusable keys; ambiguous
+multi-row pin matches refuse loudly. **Accepted bounds, named:** the
+jti cache is in-process, so a door restart re-opens a ≤300s replay
+window for an already-redeemed assertion whose bytes an attacker
+holds (durable upgrade: a jti-PK table); CIMD `jwks_uri` is refused
+(inline keys only, fail closed); static clients are public-only for
+this grant. ADR-008 D5's hard rule is now a TEST, not an aud-string
+accident: an EMA token presented as cookie and as bearer bounces off
+`/elevate` both ways. Suite 174→196 (22 EMA tests, incl. the suite's
+one un-stubbed pass through the real JWKS kid-matching path).
+**Remaining for 7.8.3's close: the xaa.dev live run** (one browser
+login mints real ID-JAGs audienced at a dev-stack door — owner-paced
+alongside the Okta org, decision #12) and Claude-as-client, blocked
+on Anthropic's waitlisted beta.
+
 ## Context
 
 Three facts, one from our own code and two from the field, make this

@@ -56,6 +56,7 @@ from .config import (
     DOOR_ORIGIN,
     DOOR_STATIC_CLIENTS,
     DOOR_TOKEN_TTL_MINUTES,
+    EMA_ENABLED,
     MCP_UPSTREAMS,
     upstream_token,
     OIDC_CA_BUNDLE,
@@ -68,9 +69,13 @@ from .config import (
     POLICY_RELOAD_SECONDS,
 )
 from .db import SessionLocal
-from .models import AuditEventType, Principal
+from sqlalchemy import select
+
+from . import ema
+from .models import AuditEventType, Principal, utcnow
 from .upstream_auth import UpstreamAuthError
 from .service import (
+    _norm_issuer,
     mint_forwarding_token,
     audit,
     create_request,
@@ -308,11 +313,20 @@ def as_metadata() -> dict:
         "token_endpoint": f"{DOOR_ORIGIN}/token",
         "jwks_uri": f"{DOOR_ORIGIN}/jwks",
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        # 7.8.3: the EMA/ID-JAG grant appears here ONLY when the
+        # deployment enables it — advertising a grant nobody can
+        # redeem invites probing (and the flag is how EMA clients
+        # discover us at all).
+        "grant_types_supported": (
+            ["authorization_code", ema.GRANT_TYPE] if EMA_ENABLED
+            else ["authorization_code"]),
+        **({"authorization_grant_profiles_supported": [ema.GRANT_PROFILE]}
+           if EMA_ENABLED else {}),
         # OAuth 2.1 posture, stated where clients can read it: no
         # implicit, no password, and PKCE is not optional.
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["none"],
+        "token_endpoint_auth_methods_supported": (
+            ["none", "private_key_jwt"] if EMA_ENABLED else ["none"]),
         "scopes_supported": ["mcp"],
         # The one flag that makes CIMD happen: clients only present a
         # URL client_id when the AS says it understands one.
@@ -564,11 +578,46 @@ def callback(request: Request):
                             status_code=302)
 
 
+def _mint_person_token(*, principal_id: str, email: str, resource: str,
+                       client_id: str) -> dict:
+    """The door's person-token, one mint for both entrances (the
+    interactive code flow and 7.8.3's EMA grant — a person who arrived
+    via ID-JAG must hold exactly the token an interactive sign-in
+    yields, no more).
+
+    JWT time claims are epoch seconds and MUST come from an
+    epoch-native clock. models.utcnow() is naive-UTC (the DB
+    convention), and .timestamp() on a naive datetime silently
+    applies the host's LOCAL offset — which stamped every token six
+    hours into the future on this box and made it "not yet valid" to
+    any correct validator. Two time conventions, one of them
+    invisible: use time.time() here, never the DB helper."""
+    now = int(time.time())
+    claims = {
+        "iss": DOOR_ORIGIN, "sub": principal_id, "email": email,
+        # Audience-bound to the resource the client named (RFC 8707,
+        # which Claude Code sends and Authentik would have ignored): a
+        # token minted for this door cannot be replayed at another.
+        "aud": resource, "client_id": client_id,
+        "iat": now, "exp": now + DOOR_TOKEN_TTL_MINUTES * 60,
+        "jti": secrets.token_urlsafe(12),
+    }
+    access = jwt.encode(claims, signing_key(), algorithm="RS256",
+                        headers={"kid": door_jwk()["kid"]})
+    return {"access_token": access, "token_type": "Bearer",
+            "expires_in": DOOR_TOKEN_TTL_MINUTES * 60, "scope": "mcp"}
+
+
 @app.post("/token", tags=["oauth"])
 def token(grant_type: str = Form(...), code: str = Form(None),
           redirect_uri: str = Form(None), client_id: str = Form(None),
-          code_verifier: str = Form(None)):
+          code_verifier: str = Form(None), assertion: str = Form(None),
+          client_assertion_type: str = Form(None),
+          client_assertion: str = Form(None)):
     _sweep(_codes, CODE_TTL_SECONDS)
+    if EMA_ENABLED and grant_type == ema.GRANT_TYPE:
+        return _token_id_jag(assertion, client_id,
+                             client_assertion_type, client_assertion)
     if grant_type != "authorization_code":
         return JSONResponse({"error": "unsupported_grant_type"}, 400)
     rec = _codes.pop(code or "", None)  # single use: popped before validation
@@ -580,28 +629,83 @@ def token(grant_type: str = Form(...), code: str = Form(None),
             code_verifier.encode()).digest()) != rec["challenge"]:
         return JSONResponse({"error": "invalid_grant",
                              "error_description": "PKCE verification failed"}, 400)
+    return _mint_person_token(
+        principal_id=rec["principal_id"], email=rec["email"],
+        resource=rec["resource"], client_id=rec["client_id"])
 
-    # JWT time claims are epoch seconds and MUST come from an
-    # epoch-native clock. models.utcnow() is naive-UTC (the DB
-    # convention), and .timestamp() on a naive datetime silently
-    # applies the host's LOCAL offset — which stamped every token six
-    # hours into the future on this box and made it "not yet valid" to
-    # any correct validator. Two time conventions, one of them
-    # invisible: use time.time() here, never the DB helper.
-    now = int(time.time())
-    claims = {
-        "iss": DOOR_ORIGIN, "sub": rec["principal_id"], "email": rec["email"],
-        # Audience-bound to the resource the client named (RFC 8707,
-        # which Claude Code sends and Authentik would have ignored): a
-        # token minted for this door cannot be replayed at another.
-        "aud": rec["resource"], "client_id": rec["client_id"],
-        "iat": now, "exp": now + DOOR_TOKEN_TTL_MINUTES * 60,
-        "jti": secrets.token_urlsafe(12),
-    }
-    access = jwt.encode(claims, signing_key(), algorithm="RS256",
-                        headers={"kid": door_jwk()["kid"]})
-    return {"access_token": access, "token_type": "Bearer",
-            "expires_in": DOOR_TOKEN_TTL_MINUTES * 60, "scope": "mcp"}
+
+def _token_id_jag(assertion, client_id, client_assertion_type,
+                  client_assertion):
+    """7.8.3 (ADR-008 D5): redeem an enterprise IdP's ID-JAG for the
+    door's person-token. Validation lives in app/ema.py; what lives
+    HERE is the ledger join and its refusals — because who a subject
+    IS was decided by an interactive sign-in's (issuer, sub) pin, and
+    this grant only ever rides that decision, never makes one (no JIT:
+    an assertion for a person the ledger has never seen refuses, and
+    the assertion's email claim is advisory, never a join key)."""
+    def _fail(reason: str, code: str = "invalid_grant", email: str | None = None):
+        with SessionLocal() as s:
+            audit(s, AuditEventType.AUTH_FAILURE, principal=email,
+                  details={"surface": "door", "method": "ema-id-jag",
+                           "reason": reason[:200]})
+            s.commit()
+        log.warning("ema grant refused: %s", reason)
+        return JSONResponse({"error": code}, 400)
+
+    if not assertion:
+        return _fail("missing assertion")
+    try:
+        caller = ema.authenticate_client(
+            client_id, client_assertion_type, client_assertion,
+            fetch_cimd=fetch_cimd)
+        claims = ema.validate_id_jag(
+            assertion, authenticated_client=caller, idp_key=_idp_key)
+    except ema.GrantError as e:
+        return _fail(str(e), e.code)
+    except ClientError as e:
+        # cimd.fetch_cimd's own refusals (SSRF guard, bad document)
+        # must be an invalid_client, not an unhandled 500.
+        return _fail(f"client metadata: {e}", "invalid_client")
+    # The resource check runs BEFORE the ledger join — it needs only
+    # the claims, and a refused grant must never leave an AUTH_SUCCESS
+    # row or a last_seen bump behind it (review-probed: the first
+    # draft committed success, then refused).
+    resource = claims.get("resource") or RESOURCE
+    if resource != RESOURCE:
+        return _fail("assertion resource does not name this deployment's "
+                     "MCP resource", "invalid_target")
+    iss, sub = claims["iss"], claims["sub"]
+    with SessionLocal() as s:
+        # ALL rows sharing this sub, filtered by normalized issuer —
+        # the composite unique deliberately allows one sub under two
+        # issuers, so a bare `.first()` by sub could return another
+        # issuer's row and refuse a legitimate person.
+        rows = s.scalars(select(Principal).where(
+            Principal.idp_sub == sub)).all()
+        matches = [r for r in rows
+                   if _norm_issuer(r.idp_iss) == _norm_issuer(iss)]
+        if len(matches) > 1:
+            # Two pins normalize onto one (issuer, sub) — a state the
+            # raw composite unique permits only via a trailing-slash
+            # habit change at the IdP. Impossible in practice, so it
+            # refuses LOUDLY rather than picking quietly.
+            return _fail("ambiguous (issuer, sub) pin — multiple ledger "
+                         "rows match this assertion")
+        p = matches[0] if matches else None
+        if p is None:
+            return _fail("unknown subject — no interactively-established "
+                         "(issuer, sub) pin for this assertion (no JIT)")
+        if p.disabled_at is not None:
+            return _fail("principal disabled", email=p.email)
+        p.last_seen_at = utcnow()
+        audit(s, AuditEventType.AUTH_SUCCESS, principal=p.email,
+              details={"surface": "door", "method": "ema-id-jag",
+                       "client": caller, "jti": claims["jti"],
+                       "iss": iss})
+        s.commit()
+        principal_id, email = p.id, p.email
+    return _mint_person_token(principal_id=principal_id, email=email,
+                              resource=resource, client_id=caller)
 
 
 # --- the resource ------------------------------------------------------------

@@ -165,6 +165,28 @@ if OIDC_CLIENT_AUTH not in ("basic", "post"):
         f"SENTINEL_OIDC_CLIENT_AUTH must be 'basic' or 'post', "
         f"got {OIDC_CLIENT_AUTH!r}")
 
+# --- the EMA / ID-JAG receiver (ADR-008 D5, Phase 7.8.3) ---------------------
+#
+# Enterprise SSO into Airlock: the door's token endpoint accepts the
+# jwt-bearer grant carrying an ID-JAG minted by the DEPLOYMENT'S
+# configured issuer (one IdP per deployment — the EMA issuer is never
+# a second issuer). Off by default: the shipped Authentik cannot mint
+# ID-JAGs, and a new grant type nobody uses is attack surface with no
+# customer. Turning it on is one env line on a deployment whose IdP
+# issues them (Okta today).
+EMA_ENABLED = bool(os.environ.get("SENTINEL_EMA_ENABLED"))
+# Max assertion lifetime (exp - iat). 300s is Keycloak's receiver
+# default; a longer-lived assertion is a bearer credential pretending
+# not to be one.
+EMA_MAX_ASSERTION_SECONDS = int(
+    os.environ.get("SENTINEL_EMA_MAX_ASSERTION_SECONDS", "300"))
+# The draft SHOULD-limits this grant to confidential clients and we
+# enforce it (private_key_jwt against the client's CIMD keys). This
+# knob is the documented weakening for a future client that ships
+# public-only — never the default.
+EMA_ALLOW_PUBLIC_CLIENTS = bool(
+    os.environ.get("SENTINEL_EMA_ALLOW_PUBLIC_CLIENTS"))
+
 LOKI_PUSH_URL = os.environ.get("SENTINEL_LOKI_PUSH_URL") or None
 LOKI_CA_BUNDLE = os.environ.get("SENTINEL_LOKI_CA_BUNDLE") or None
 LOKI_CLIENT_CERT = os.environ.get("SENTINEL_LOKI_CLIENT_CERT") or None
