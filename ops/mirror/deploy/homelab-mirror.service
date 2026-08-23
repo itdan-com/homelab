@@ -1,0 +1,11 @@
+# ADR-009 D3: refresh + verify the local bare mirror of the GitOps
+# repo. systemd USER unit; __OPS_DIR__ written by install-mirror.sh
+# (detect-at-install — the committed unit stays host-agnostic).
+[Unit]
+Description=Homelab GitOps repo mirror (fetch, clone-back verify, caches)
+
+[Service]
+Type=oneshot
+ExecStart=__OPS_DIR__/mirror-sync.sh
+TimeoutStartSec=300
+Nice=15

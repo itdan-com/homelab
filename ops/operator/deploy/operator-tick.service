@@ -4,6 +4,9 @@
 # ADR-004 construction rule; a cloud VM runs this identical file).
 [Unit]
 Description=Mission Control operator tick (headless, PR-only)
+# ADR-009 D2.6: a tick that DIES (non-zero / timeout-killed) leaves a
+# loud local marker. Calm degraded verdicts exit 0 and never fire this.
+OnFailure=operator-tick-alert.service
 
 [Service]
 Type=oneshot

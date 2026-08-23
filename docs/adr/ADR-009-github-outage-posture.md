@@ -27,6 +27,46 @@ recorded against owner-decision #3 (Phase 9 target), where the
 cost-shape doc's k3s-on-VMs finding gets re-presented before
 committing.
 
+## BUILT (2026-08-22, same day as accepted) — and the drill signed the numbers
+
+The hardening session ran the day of acceptance. What each decision
+became, with the honest residuals:
+
+- **D2 — built and rehearsed on the real script.** The envelope now
+  runs before any GitHub call; a blackholed GitHub produced
+  `verdict=github_unreachable` at exit 0 WITH the complete envelope in
+  the log line (the watchman survived); a 401 stub produced
+  `verdict=github_auth_refused` at exit 1 (revocation stays loud) and
+  the new credential-free `OnFailure=` marker was verified firing. All
+  three GitHub call sites bounded; interactive mode degrades instead
+  of refusing; the three charter/prompt carves and the `ACTION: local`
+  vocabulary are in.
+- **D3 — built and proven.** Bare mirror as a user timer
+  (`ops/mirror/`), clone-back-verified every run, at exact HEAD parity
+  on first sync; 10 chart tarballs + the sops/helm-secrets artifacts
+  cached (checksummed); bootstrap gained the tarball-cache fallback,
+  and a full `file://` clone was demonstrated. **Residual, named:**
+  the repo-server initContainer STILL wgets from github.com at pod
+  start — vendoring it properly needs a registry story the platform
+  does not have (backlogged with the registry item); the mirror's
+  `tools/` cache covers the rebuild case, and the runbook warns
+  against deleting ArgoCD pods mid-outage.
+- **D4 — drilled on devlab, runbook written from observed numbers
+  only** (`docs/operator-cheatsheet.md`, "When GitHub is down").
+  Timeline: blackhole at T0 → a T+69s hand edit reverted by selfHeal
+  in <20s (the fight window is REAL) → first app Unknown at T+6m37s,
+  all 15 by T+11m05s, health green throughout → D5 alert FIRING at
+  T+12m16s → repo-server deleted mid-outage stuck in `Init:1/2` on
+  the blocked wget (~5 min) → on DNS restore: repo-server recovered
+  in 44s, and the ApplicationSet **re-stamped the per-app
+  `automated.enabled=false` pause 2.5 minutes in** — the uncommitted
+  edit survived only behind the AppProject deny window, and died 20
+  seconds after the window lifted. Both pause primitives verified
+  accepted with git down.
+- **D5 — shipped with the ADR-006 build; proven end to end by the
+  drill** (pending → firing on schedule).
+- **D6 — untouched by design; builds in Phase 9.**
+
 ## Context — what the assessment established
 
 Full findings with file:line detail live in STATUS.md's 2026-08-22

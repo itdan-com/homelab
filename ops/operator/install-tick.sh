@@ -17,6 +17,8 @@ TOOL_PATH="$(for b in claude gh kubectl git curl python3; do dirname "$(command 
 
 sed -e "s|__OPS_DIR__|$OPS_DIR|" -e "s|__PATH__|$TOOL_PATH|" \
   "$OPS_DIR/deploy/operator-tick.service" > "$UNIT_DIR/operator-tick.service"
+sed -e "s|__OPS_DIR__|$OPS_DIR|" \
+  "$OPS_DIR/deploy/operator-tick-alert.service" > "$UNIT_DIR/operator-tick-alert.service"
 cp "$OPS_DIR/deploy/operator-tick.timer" "$UNIT_DIR/operator-tick.timer"
 
 systemctl --user daemon-reload

@@ -163,14 +163,31 @@ step "8/10 cert-manager CRDs (argocd's own TLS door needs the Certificate kind)"
 # manager; `crds.keep` in the catalog chart protects them from prune.
 # dependency build first: charts/ tarballs are deliberately gitignored
 # (ArgoCD resolves deps from Chart.lock itself) — a fresh clone has none.
-helm dependency build catalog/cert-manager >/dev/null
+# ADR-009 D3: `helm dependency build` reaches chart repos, 4 of 8 of
+# which are GitHub Pages — so a rebuild during a GitHub outage needs
+# the mirror's tarball cache as a fallback. dep_build tries the
+# network, then the cache, then fails honestly.
+MIRROR_CHARTS="${MIRROR_ROOT:-$HOME/.local/state/homelab-mirror}/charts"
+dep_build() { # chart-dir
+  helm dependency build "$1" >/dev/null 2>&1 && return 0
+  if [ -d "$MIRROR_CHARTS" ] && ls "$MIRROR_CHARTS"/*.tgz >/dev/null 2>&1; then
+    echo "  (chart repos unreachable — falling back to the mirror's tarball cache for $1)"
+    mkdir -p "$1/charts"
+    cp -u "$MIRROR_CHARTS"/*.tgz "$1/charts/" 2>/dev/null || true
+    # helm accepts pre-populated charts/ matching Chart.lock; verify:
+    helm dependency build "$1" >/dev/null 2>&1 && return 0
+  fi
+  echo "FATAL: helm dependency build $1 failed and no usable mirror cache at $MIRROR_CHARTS" >&2
+  return 1
+}
+dep_build catalog/cert-manager
 helm template cert-manager catalog/cert-manager -f catalog/cert-manager/values.yaml \
   | awk 'BEGIN{RS="\n---\n"} /(^|\n)kind: CustomResourceDefinition(\n|$)/ {printf "---\n%s\n", $0}' \
   | kubectl apply --server-side -f - >/dev/null
 echo "6 CRDs in place (rendered from the vendored chart, version-locked)"
 
 step "9/10 ArgoCD (then GitOps takes the wheel)"
-helm dependency build catalog/argocd >/dev/null
+dep_build catalog/argocd
 if ! helm status argocd -n argocd >/dev/null 2>&1; then
   # First pass with the ApplicationSet disabled: its CRD ships in this
   # same release and helm validates manifests up front.

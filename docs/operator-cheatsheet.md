@@ -374,3 +374,56 @@ In order:
    state.
 4. Worst case: `k3d cluster stop devlab` to freeze the situation, then
    investigate.
+
+## When GitHub is down (ADR-009 — drilled live 2026-08-22, every number below observed)
+
+**What it looks like:** ArgoCD apps flip to sync-status `Unknown`
+starting ~7 minutes in, staggered per-app (all 15 by ~11 min). Health
+stays green; running workloads never notice. The
+`ArgoCDApplicationSyncUnknown` alert reaches **Firing ~12 minutes in**
+— that page is how you find out. The operator tick keeps running its
+envelope every 5 minutes and logs `verdict=github_unreachable` with
+the full cluster picture; it cannot open PRs or issues and correctly
+does not try. (If the log says `github_auth_refused` instead, GitHub
+is UP and refusing the App — that's the revocation kill switch's
+shape; check the GitHub App before anything else.)
+
+**Default response: wait.** Full git outages typically run about an
+hour. Change is frozen; nothing is broken.
+
+**Break-glass (only when a fix truly cannot wait):**
+
+1. **Pause syncing FIRST — with the AppProject deny window, not a
+   per-app patch:**
+   ```
+   kubectl patch appproject default -n argocd --type merge -p \
+     '{"spec":{"syncWindows":[{"kind":"deny","schedule":"* * * * *","duration":"24h","applications":["*"],"manualSync":true}]}}'
+   ```
+   Why first: in the opening minutes of an outage selfHeal still
+   enforces from warm caches — a hand edit at T+69s was reverted in
+   under 20 seconds. Why the window and not
+   `automated.enabled=false` on the app: the ApplicationSet
+   controller **re-stamped the per-app pause 2.5 minutes after
+   GitHub returned**; the deny window survived and was the only
+   thing keeping the edit alive.
+2. **Fix imperatively** (`kubectl scale/edit/...`). Note what you did
+   somewhere durable.
+3. **On recovery, order is everything: commit the manual change to
+   git BEFORE lifting the window.** Observed: an uncommitted edit
+   died 20 seconds after the window came off. Lift the window last:
+   ```
+   kubectl patch appproject default -n argocd --type json -p \
+     '[{"op":"remove","path":"/spec/syncWindows"}]'
+   ```
+
+**Do not delete ArgoCD pods during an outage.** The repo-server's
+init step fetches tooling from github.com and a mid-outage restart
+sticks in `Init:1/2` until GitHub returns (observed: ~5 minutes stuck,
+recovered 44s after DNS came back).
+
+**Rebuild during an outage:** the mirror has everything —
+`git clone file://$HOME/.local/state/homelab-mirror/repo.git`, with
+the catalog's chart tarballs and the sops/helm-secrets artifacts
+cached beside it (`charts/`, `tools/`). `last-sync.txt` tells you how
+fresh it is; the mirror timer refreshes and clone-back-verifies every
+10 minutes.

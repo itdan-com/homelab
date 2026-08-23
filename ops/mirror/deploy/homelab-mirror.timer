@@ -1,0 +1,14 @@
+# Every 10 minutes while the host is up — a mirror at most 10 minutes
+# stale is fine insurance against outages measured in hours (ADR-009's
+# sizing: git outages typically ~1h). last-sync.txt is the staleness
+# check.
+[Unit]
+Description=Refresh the homelab GitOps mirror every 10 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

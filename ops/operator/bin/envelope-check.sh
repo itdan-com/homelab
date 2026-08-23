@@ -94,6 +94,17 @@ done
 if [ -n "$BAD_DOORS" ]; then flag doors_down "doors=DOWN(${BAD_DOORS%,})"
 else note "doors=ok(200/302/302/200)"; fi
 
+# --- 8. GitHub reachability (NOTE-ONLY, never an anomaly) ------------
+# ADR-009 D2.4: context for the agent when something ELSE wakes it — an
+# agent woken by github-down alone could neither PR nor issue and has
+# nothing to diagnose, so this line never joins ANOMALIES. Tokenless
+# probe on purpose (this script's header rule stands: NO GitHub token).
+GH_CODE=$(curl -s -o /dev/null -m 5 -w '%{http_code}' https://api.github.com/zen 2>/dev/null || echo 000)
+case "$GH_CODE" in
+  2*) note "github=ok" ;;
+  *)  note "github=UNREACHABLE(note-only: proposals/issues will not land; http=$GH_CODE)" ;;
+esac
+
 # --- Summary ---------------------------------------------------------
 if [ "${#ANOMALIES[@]}" -eq 0 ]; then
   echo "ENVELOPE=green"; exit 0

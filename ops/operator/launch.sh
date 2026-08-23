@@ -36,11 +36,37 @@ set -a; source "$STATE_DIR/env"; set +a
 # (the remote URL stays credential-free). The hard reset + clean is
 # also the tick's fail-safe: an errored previous pass leaves nothing
 # half-done in the workspace.
-TOKEN=$("$(dirname "${BASH_SOURCE[0]}")/bin/gh-app-token.sh")
-git -C "$REPO" fetch -q "https://x-access-token:${TOKEN}@github.com/${GH_REPO}.git" main
-git -C "$REPO" reset -q --hard FETCH_HEAD
-git -C "$REPO" checkout -qB main
-git -C "$REPO" clean -qfd
+#
+# ADR-009 D2: GitHub failing must DEGRADE this script, not abort it —
+# the first draft died at the token mint under set -e, before the
+# envelope check (which needs no GitHub) ever ran, so a GitHub outage
+# silently blinded the watchman. sync_repo classifies instead:
+#   GH_STATE=ok            token minted, clone synced
+#   GH_STATE=unreachable   network-shaped failure -> calm degrade
+#   GH_STATE=auth_refused  401/403 from a reachable GitHub — the
+#                          owner-side kill switch (App uninstall) looks
+#                          exactly like this, so it stays LOUD
+TOKEN=""
+GH_STATE=ok
+sync_repo() {
+  local rc=0
+  TOKEN=$("$(dirname "${BASH_SOURCE[0]}")/bin/gh-app-token.sh") || rc=$?
+  case "$rc" in
+    0) ;;
+    8) GH_STATE=auth_refused; return 0 ;;
+    *) GH_STATE=unreachable;  return 0 ;;
+  esac
+  # timeout: a blackholed git transport must not wedge the tick
+  # against the unit's 900s ceiling (the third call site is guard 3's
+  # `gh pr list`, bounded where it runs below).
+  if ! timeout 30 git -C "$REPO" fetch -q \
+       "https://x-access-token:${TOKEN}@github.com/${GH_REPO}.git" main; then
+    GH_STATE=unreachable; return 0
+  fi
+  git -C "$REPO" reset -q --hard FETCH_HEAD
+  git -C "$REPO" checkout -qB main
+  git -C "$REPO" clean -qfd
+}
 
 # The operator must NOT inherit the human's personal MCP servers.
 # Without this, a session launched here picks up whatever is configured
@@ -56,11 +82,26 @@ git -C "$REPO" clean -qfd
 EMPTY_MCP="$(mktemp)"; printf '{"mcpServers":{}}' > "$EMPTY_MCP"
 trap 'rm -f "$EMPTY_MCP"' EXIT
 
-# Read-only cluster eyes + bot GitHub hands.
+# Read-only cluster eyes. (Bot GitHub hands — GH_TOKEN — are exported
+# per-mode AFTER sync_repo has run and classified GitHub's state.)
 export KUBECONFIG="$STATE_DIR/kubeconfig"
-export GH_TOKEN="$TOKEN"
 
 if [ "$MODE" = interactive ]; then
+  sync_repo
+  # ADR-009 D2.5: GitHub down must not lock the owner out of their own
+  # operator's eyes — start degraded (read-only look, no PR hands)
+  # instead of refusing. The first draft aborted here, which meant the
+  # human escape hatch shared GitHub's fate.
+  case "$GH_STATE" in
+    unreachable)
+      echo "!!! GITHUB UNREACHABLE — operator starts DEGRADED: cluster eyes work,"
+      echo "!!! PR/issue hands do not. Clone may be one tick stale." ;;
+    auth_refused)
+      echo "!!! GITHUB REFUSED THE APP (401/403) — if you did not uninstall or"
+      echo "!!! revoke it, treat that as the incident. Starting degraded." ;;
+  esac
+  [ "$GH_STATE" = ok ] || TOKEN=""
+  export GH_TOKEN="$TOKEN"
   cd "$REPO/ops/operator"
   echo ">>> OPERATOR session: read-only cluster, PR-only GitHub (itdan-homelab-operator[bot])."
   echo ">>> No inherited MCP servers (--strict-mcp-config)."
@@ -75,6 +116,11 @@ fi
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 log() { printf '%s %s\n' "$TS" "$*" >> "$OBS_LOG"; }
 
+# ADR-009 D2.1: the envelope runs FIRST — it needs only the kubeconfig
+# and the local doors, so the platform keeps its watchman through any
+# GitHub outage. It runs from the PREVIOUS tick's clone (the sync
+# happens after), which is at most one tick stale — acceptable for a
+# script that changes rarely, and the price of not being blind.
 ENV_RC=0
 ENV_REPORT="$("$REPO/ops/operator/bin/envelope-check.sh" 2>&1)" || ENV_RC=$?
 ENV_LINE="$(printf '%s\n' "$ENV_REPORT" | tail -1)"
@@ -86,8 +132,30 @@ case "$ENV_LINE" in
                        ENV_FLAT="envelope-check crashed rc=$ENV_RC: $(printf '%s' "$ENV_REPORT" | tail -c 300 | tr '\n' ' ')" ;;
 esac
 
+# ADR-009 D2.2: NOW the GitHub leg — after the eyes, with the outcome
+# classified instead of fatal.
+sync_repo
+case "$GH_STATE" in
+  auth_refused)
+    # A reachable GitHub saying 401/403 is what App revocation — the
+    # documented owner-side kill switch — looks like. It must page,
+    # not blend into outage noise: log its own verdict and FAIL the
+    # unit so OnFailure= fires (ADR-009 D2.2 review finding).
+    log "verdict=github_auth_refused (App revoked/uninstalled? — if not, that IS the incident) $ENV_FLAT"
+    exit 1 ;;
+  unreachable)
+    # The gate fails closed for the agent (no PR, no issue — correct),
+    # the watchman stays alive (envelope above ran), and the fact is a
+    # calm logged verdict, mirroring the agent-error path. The push
+    # alert for this condition is cluster-side: ArgoCD apps flip
+    # sync-Unknown and the ADR-009 D5 rule fires.
+    log "verdict=github_unreachable anomalies=${ANOMALIES:-none} $ENV_FLAT"
+    exit 0 ;;
+esac
+export GH_TOKEN="$TOKEN"
+
 if [ -z "$ANOMALIES" ] && [ "$FORCE_AGENT" = 0 ]; then
-  log "verdict=green $ENV_FLAT"
+  log "verdict=green github=ok $ENV_FLAT"
   exit 0
 fi
 [ -z "$ANOMALIES" ] && ANOMALIES="forced"
@@ -120,8 +188,15 @@ if [ -z "$RUNNABLE" ]; then
 fi
 
 # Guard 3: open-PR cap. Counted from GitHub truth, not local state.
-OPEN_PRS="$(gh pr list --repo "$GH_REPO" --state open --json number,title,headRefName \
-  --jq '[.[] | select(.headRefName | startswith("operator/"))]')"
+# Bounded + classified like every other GitHub call (ADR-009 D2.3 —
+# the review caught this third call site: a blackhole starting between
+# the fetch and here would have wedged the tick on gh's unbounded
+# request, then died un-logged under set -e).
+OPEN_PRS="$(timeout 15 gh pr list --repo "$GH_REPO" --state open --json number,title,headRefName \
+  --jq '[.[] | select(.headRefName | startswith("operator/"))]')" || {
+  log "verdict=github_unreachable at=pr-cap anomalies=$RUNNABLE $ENV_FLAT"
+  exit 0
+}
 N_OPEN="$(printf '%s' "$OPEN_PRS" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 SLOTS=$(( TICK_MAX_OPEN_PRS - N_OPEN ))
 if [ "$SLOTS" -le 0 ]; then

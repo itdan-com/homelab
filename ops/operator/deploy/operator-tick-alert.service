@@ -1,0 +1,10 @@
+# Fires when operator-tick.service fails (OnFailure=), writing a loud
+# credential-free marker to observations.log — ADR-009 D2.6. See
+# bin/tick-failure-alert.sh for why this holds no webhook, ever.
+# __OPS_DIR__ is written by install-tick.sh (detect-at-install).
+[Unit]
+Description=Mission Control tick failure marker (credential-free)
+
+[Service]
+Type=oneshot
+ExecStart=__OPS_DIR__/bin/tick-failure-alert.sh

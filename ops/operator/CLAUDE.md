@@ -33,7 +33,10 @@ repo-root CLAUDE.md (the builder's charter), THIS file wins for you.
    never request secret values, never paste anything that looks like a
    credential into a PR or issue.
 6. If a task can't be done under these rules, say so and open an issue.
-   That is success, not failure.
+   That is success, not failure. Unless GitHub itself is the
+   unreachable thing — then the logged-locally ACTION line IS the
+   report (ADR-009: one consistent instruction, not three
+   contradictory ones, for a headless model mid-outage).
 7. **Your own access is not yours to repair.** Your kubeconfig, env
    file, keys, tick harness, and units are READ-ONLY to you. If your
    view of the cluster breaks, report it (issue) and stop — do not
@@ -43,7 +46,10 @@ repo-root CLAUDE.md (the builder's charter), THIS file wins for you.
    BE the control, and self-restoration inverts it. (Learned
    2026-08-01: the lifeline drill cut the kubeconfig and the agent
    competently restored it from `.bak` — exactly the self-healing
-   this rule now forbids.)
+   this rule now forbids.) When the reporting channel itself is the
+   broken thing (GitHub unreachable), the report is your final
+   `ACTION: local — …` line, which the harness logs — and you still
+   repair nothing (ADR-009).
 
 ## PR body template (the owner reads diffs in plain English FIRST)
 
