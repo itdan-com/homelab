@@ -41,10 +41,16 @@ export SENTINEL_CONSOLE_ORIGIN="https://localhost:$ADMIN_PORT"
 export SENTINEL_CONSOLE_HOSTS="127.0.0.1,localhost"
 # Point at the live IdP and cluster: those are read-only from here, and
 # testing against a stub is how integration bugs survive to production.
-export SENTINEL_OIDC_ISSUER="${SENTINEL_OIDC_ISSUER:-https://authentik.lab.local/application/o/mcp/}"
-export SENTINEL_OIDC_HTTP_BASE="${SENTINEL_OIDC_HTTP_BASE:-https://authentik.lab.local:8443}"
-export SENTINEL_OIDC_CLIENT_ID="${SENTINEL_OIDC_CLIENT_ID:-mcp-door}"
-export SENTINEL_OIDC_CA_BUNDLE="${SENTINEL_OIDC_CA_BUNDLE:-$RUN/lab-ca.crt}"
+# DASH defaults, not COLON-DASH (`${V-x}` vs `${V:-x}`): an explicitly
+# EMPTY export must survive — "no transport rewrite" and "system trust
+# store" are legitimate values for an external IdP, and `:-` silently
+# replaced them with the Authentik lab defaults, sending an
+# Okta-pointed door's discovery to authentik.lab.local (found live,
+# 2026-08-23 — the same trap the 7.8.1 review caught in the installer).
+export SENTINEL_OIDC_ISSUER="${SENTINEL_OIDC_ISSUER-https://authentik.lab.local/application/o/mcp/}"
+export SENTINEL_OIDC_HTTP_BASE="${SENTINEL_OIDC_HTTP_BASE-https://authentik.lab.local:8443}"
+export SENTINEL_OIDC_CLIENT_ID="${SENTINEL_OIDC_CLIENT_ID-mcp-door}"
+export SENTINEL_OIDC_CA_BUNDLE="${SENTINEL_OIDC_CA_BUNDLE-$RUN/lab-ca.crt}"
 export SENTINEL_MCP_PROXY_BASE="${SENTINEL_MCP_PROXY_BASE:-https://localhost:8443}"
 
 up() {
