@@ -153,3 +153,47 @@ own ID-JAG signer and testable live against Okta's open playground
   for where automated reconciliation is headed). With an external
   IdP the door's tokens default down to 60 minutes for exactly this
   reason (`SENTINEL_DOOR_TOKEN_TTL_MINUTES` overrides).
+
+## Connecting the gateway to Okta XAA — who plays which role
+
+*(Written after the 2026-08-23 live matrix, because the topology is
+the part everyone — including Okta's own samples — makes confusing.)*
+
+Okta's XAA sample registers a **custom authorization server in Okta
+for the resource side** (that is what an `xaa-files`-style AS is): in
+the sample, Okta plays BOTH the identity provider AND the resource's
+authorization server, because the sample has no resource AS of its
+own. **This platform does.** The Sentinel door carries its own
+authorization server — the same one that did CIMD and PKCE all along,
+now with the jwt-bearer receiver — so the resource-side custom AS is
+replaced by the door itself:
+
+```
+MCP client ──(one Okta SSO login)──► Okta org  (the ISSUER role only)
+     │                                  │
+     │◄── ID-JAG (aud = the door) ──────┘   [needs the XAA EA flag]
+     │
+     ├──► door /token  grant=jwt-bearer     [7.8.3's receiver — built]
+     │◄── door person-token
+     │
+     └──► door /mcp ──► Cedar ladder ──► sentinel-proxy ──► MCP servers
+```
+
+What the Okta org needs, once the XAA Early-Access flag is enabled
+(it is NOT self-service — email `developers@okta.com`; evidence for
+the request: org `integrator-4949708`, custom AS present, no
+`token-exchange` in any AS's `grant_types_supported`):
+
+1. a **requesting app / AI agent** entry for the MCP client,
+2. a **resource connection** naming the door's issuer
+   (`SENTINEL_DOOR_ORIGIN`) as the resource authorization server,
+3. a delegation policy for who may reach it.
+
+No custom authorization server. No per-MCP-server Okta objects — the
+door fronts every MCP server behind one resource AS, which is what
+makes it a gateway.
+
+**Where xaa.dev fits now:** it is only the interim live ID-JAG issuer
+for testing the receiver while the EA request is pending (its
+playground mints real assertions audienced at any AS with no
+account). Once the org's flag is flipped, xaa.dev has no role at all.
