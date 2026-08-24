@@ -47,9 +47,20 @@ the re-issued-mailbox TOFU defense into a 24h silent re-bind, proven
 end-to-end before it was closed. External-IdP deployments also default
 the door token TTL to 60m (D3's posture, previously unimplemented).
 Suite 152→173. Registration docs: `docs/idp-registration.md`.
-**Still owed on 7.8.1's exit criterion: the live matrix against a real
-Okta dev org — creating that account is the owner's (identity signup);
-everything else is proven against stubs + the live Authentik.**
+**7.8.1's exit criterion: CLOSED 2026-08-23** — the live matrix ran
+against the owner's real org (`integrator-4949708.okta.com`) and
+PASSED: a real person federated through Okta, the ledger pinned
+`(issuer, sub)` to a real Okta subject, audit trail complete. The
+matrix earned its existence four times over in one evening — every
+find a bug NO stub could show: (1) dev-stack's colon-dash defaults
+silently replaced explicit-empty OIDC env with Authentik's transport
+rewrite; (2) Okta refuses Basic auth combined with client_id in the
+body ("Cannot supply multiple client credentials", verbatim); (3) a
+2-second clock skew killed every sign-in — PyJWT refuses a future iat
+and the interactive path had no leeway (Authentik never showed it:
+same host, same clock); (4) uvicorn's graceful SIGTERM let a browser
+keep-alive hold a stale door through four restarts (dev-stack down
+now kills by port ownership). Each fix is committed with its test.
 7.8.2 (broker mode docs+probes) and 7.8.3 (EMA spike) remain.
 
 ## 7.8.3 spike findings (2026-08-23) — the gate is open: BUILD the receiver
