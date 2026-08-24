@@ -508,6 +508,9 @@ def test_confidential_client_uses_basic_auth(c, cimd_ok, idp, monkeypatch):
     k = idp["post_kwargs"][0]
     assert k.get("auth") == (door.OIDC_CLIENT_ID, "s3cret")
     assert "client_secret" not in k.get("data", {})
+    # Okta live-find 2026-08-23: client_id in the body ALONGSIDE Basic
+    # is "multiple client credentials" and 401s — must not be sent
+    assert "client_id" not in k.get("data", {})
 
 
 def test_link_page_finally_sees_the_session(c, cimd_ok, idp):

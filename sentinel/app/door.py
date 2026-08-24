@@ -466,6 +466,12 @@ def callback(request: Request):
             data["client_secret"] = OIDC_CLIENT_SECRET
         else:
             basic_auth = (OIDC_CLIENT_ID, OIDC_CLIENT_SECRET)
+            # With Basic auth the client_id must NOT also ride the
+            # body: Okta 401s the mix verbatim — "Cannot supply
+            # multiple client credentials" (found live, first real
+            # Okta sign-in, 2026-08-23). RFC 6749 §3.2.1 only wants
+            # body client_id for unauthenticated clients anyway.
+            data.pop("client_id", None)
     try:
         with _http() as c:
             r = c.post(_transport_url(oidc_config()["token_endpoint"]), data=data,
