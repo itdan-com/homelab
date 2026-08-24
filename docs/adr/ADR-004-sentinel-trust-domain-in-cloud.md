@@ -1,7 +1,10 @@
 # ADR-004: Where Sentinel runs in the cloud
 
-**Status:** **Proposed** 2026-07-27 (Phase 5.5.5). Recommendation
-stated; needs owner acceptance before Phase 8 scope is fixed.
+**Status:** **ACCEPTED** — formally flipped 2026-08-24 alongside
+ADR-010 (which implements this ADR's cloud shape for AWS). In practice
+binding since it was written: CLAUDE.md, the shipped Phase 5.5 work,
+and ADR-009 D6 all rely on it. Originally **Proposed** 2026-07-27
+(Phase 5.5.5).
 **Owner input:** "continue thinking about end state and ensure we
 aren't making things more difficult than they need to be if we had just
 implemented things the correct production ready scalable way the first

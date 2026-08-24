@@ -221,3 +221,17 @@ retry. Kubernetes Jobs on spot/preemptible nodes, queue-scaled. And
 the honest note — **token spend will exceed infrastructure spend by an
 order of magnitude**, so optimising the cloud bill by 20% while the
 model bill grows unwatched is the wrong place to spend attention.
+
+
+## Correction (2026-08-24, via ADR-010 recon)
+
+This doc predates ADR-009 Decision 6 and counts only TWO always-on
+VMs beside the cluster (Sentinel + Mission Control operator). The
+end-state topology is now THREE: **cluster + Sentinel VM + operator
+VM + forge VM** (ADR-009 D6 — the git forge gets its own trust
+domain so cluster-admin can't merge the agent's own PRs, and so it
+survives the cluster it rebuilds). ADR-010 sizes all three as t4g
+Graviton burstable (~$12/mo each on t4g.small, ~$30-40/mo for the
+trust tier including one public IPv4 each for egress). The
+run-vs-connect margin math below is unchanged in shape; add the
+forge VM to the per-deployment fixed cost.
