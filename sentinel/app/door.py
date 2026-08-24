@@ -483,9 +483,16 @@ def callback(request: Request):
             if not id_token:
                 raise ClientError("identity provider returned no id_token")
             header = jwt.get_unverified_header(id_token)
+            # leeway=10: PyJWT 2.13 refuses a FUTURE iat outright, and
+            # this host measured 2s behind Okta's clock on the first
+            # live sign-in — "token is not yet valid (iat)" on every
+            # attempt. Same fix the EMA review applied to ema.py; the
+            # interactive path had been skew-intolerant all along
+            # (Authentik shares the lab host's clock, which is why it
+            # never showed).
             claims = jwt.decode(
                 id_token, _idp_key(header.get("kid")), algorithms=["RS256"],
-                audience=OIDC_CLIENT_ID, issuer=OIDC_ISSUER,
+                audience=OIDC_CLIENT_ID, issuer=OIDC_ISSUER, leeway=10,
                 options={"require": ["exp", "iat", "sub", "iss", "aud"]})
             # nonce binds the id_token to the session this door started
             # (ADR-008 D2.4) — MANDATORY, no truthiness escape: every
