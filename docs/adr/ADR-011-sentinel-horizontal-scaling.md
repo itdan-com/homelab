@@ -1,7 +1,8 @@
 # ADR-011: Sentinel horizontal scaling — stateless brokers, shared Postgres, one sealer, one kill switch
 
-**Status:** **Proposed** (2026-08-24), awaiting owner accept/amend.
-Written after the owner's challenge — *"i dont like that sentinel
+**Status:** **Accepted** (2026-08-23, owner — decision #14, *"Accept
+and I'll push"*). Proposed and accepted the same session,
+written after the owner's challenge — *"i dont like that sentinel
 can't horizontal scale"* — from a four-agent recon that verified the
 hot path, the audit hash chain's concurrency model, the SQLite→
 Postgres delta in this codebase, and ADR-004's trust invariants. The
