@@ -1,0 +1,15 @@
+# Terraform working files — never commit these.
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# Local, environment-specific variable values (the .example is committed).
+terraform.tfvars
+*.auto.tfvars
+
+# Any AWS credential files that wander in — belt and suspenders.
+*.pem
+.aws/

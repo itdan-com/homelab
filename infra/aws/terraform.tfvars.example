@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored
+# (it can hold environment-specific values); this .example is committed.
+
+region              = "us-east-1"
+name_prefix         = "homelab"
+vpc_cidr            = "10.0.0.0/16" # must avoid 10.42/16 (Cilium) and 10.43/16 (k3s svc)
+public_subnet_count = 2            # 1 = cost-min single node; 2+ = HA sizing profiles
