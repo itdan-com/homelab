@@ -87,6 +87,16 @@ down() {
     [[ -f "$RUN/$p.pid" ]] && kill "$(cat "$RUN/$p.pid")" 2>/dev/null || true
     rm -f "$RUN/$p.pid"
   done
+  # Kill by PORT OWNERSHIP too, forcefully: uvicorn's SIGTERM waits
+  # for open connections, and a browser's keep-alive from a sign-in
+  # attempt kept an old door alive through FOUR "restarts" — each new
+  # door lost the bind and died while the pid file pointed at the
+  # corpse (found live 2026-08-23, the Okta matrix). The pid file is
+  # a claim; the socket is the truth.
+  for port in "$DOOR_PORT" "$ADMIN_PORT" "$BROKER_PORT"; do
+    pid=$(ss -tlnp 2>/dev/null | grep ":$port " | grep -oP 'pid=\K[0-9]+' | head -1)
+    [[ -n "${pid:-}" ]] && kill -9 "$pid" 2>/dev/null || true
+  done
   echo "dev stack stopped"
 }
 
