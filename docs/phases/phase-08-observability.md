@@ -2,7 +2,13 @@
 
 **Goal (completion-only per ADR-001):** kube-prometheus-stack already landed in Phase 3 — this phase completes the stack: Loki for logs (+ Tempo for traces if budget allows), the four dashboards (cluster, app, LLM cost from the ai-gateway's token metrics, Claude actions), and Alertmanager wired to `#claude-alerts` for anomalies.
 
-**Status:** **IN PROGRESS from 2026-08-04** (Phase 7 build-complete). Item 2 (Loki + shipper) built and deploying. (Renumbered 7→8 on 2026-07-31 when Airlock became Phase 7.)
+**Status:** **COMPLETE 2026-08-24** save two named trailers: the
+Slack webhook (owner-paced — one URL wires the already-built receiver
+config and closes the last exit criterion) and Tempo (deferred by
+decision, see item 3). Everything else shipped: Loki+Alloy, four
+dashboards, ten alert rules, Sentinel /metrics + the audit copy with
+its mTLS push route (ADR-006 closed end-to-end 2026-08-23).
+(Renumbered 7→8 on 2026-07-31 when Airlock became Phase 7.)
 
 ---
 
@@ -14,13 +20,32 @@
    namespaces, 14-day retention, bounded label set, Grafana datasource
    provisioned. First finding within ten minutes: platform-wide inotify
    exhaustion (see notes).
-3. Add Tempo for traces + OpenTelemetry instrumentation on the control-plane Claude.
+3. ~~Add Tempo for traces~~ — **DEFERRED to post-Phase-9 by decision,
+   2026-08-24** (the "if budget allows" clause exercised, with the
+   reasoning written down rather than the item quietly dropped):
+   (a) traces earn their memory when there is multi-service LATENCY
+   to decompose, and this platform's request paths are short —
+   door→ladder→proxy→server — with the interesting question ("who
+   did what") already answered by the audit copy in Loki; (b) Tempo +
+   OTel instrumentation across three Sentinel processes and the
+   gateway is real build cost on a 32GB host already running
+   everything; (c) Phase 9 changes the calculus (managed collectors,
+   real network hops worth tracing). Revisit trigger: the first time
+   a latency question crosses two services and the logs cannot answer
+   it. The exit criterion's trace demo moves with it.
 4. Build Grafana dashboards:
    - ~~**Cluster health**~~ — **DONE 2026-08-04**, as "Platform
      health": restarts, pod phases, requests-vs-allocatable (requests,
      because that is what blocks a deploy), and two Loki panels. Eight
      panels deliberately, not forty.
-   - **App metrics** (request rate, latency, error rate per service).
+   - ~~**App metrics**~~ — **FOLDED, stated explicitly rather than
+     left dangling (2026-08-24)**: the one service with real traffic
+     (the AI gateway) has its rate/latency story across the LLM-usage
+     and scaling dashboards; the rest of the catalog is single-replica
+     internal services whose "error rate" is better read from the
+     Platform-health restart/Loki panels. A dedicated per-service
+     RED dashboard becomes worth building when Phase 9 puts real
+     users on real network paths — same revisit trigger as Tempo.
    - ~~**LLM cost**~~ — **DONE 2026-08-04** as "LLM usage and cost":
      tokens in/out, requests, latency percentiles, share by model, and
      the gateway replicas beside the token rate so the two are read
@@ -87,13 +112,21 @@
   one. High-cardinality fields stay in the log line, where search finds
   them.
 
-## Phase exit criteria
+## Phase exit criteria — closing ledger (2026-08-24)
 
-- All 4 Grafana dashboards populated with real data from a running platform.
-- An induced anomaly (e.g. simulated secret reuse) fires an alert in `#claude-alerts` within 1 min.
-- A Tempo trace shows a Claude action's full call graph: prompt → Sentinel grant → MCP call → upstream API → response.
-- Disk usage stays within budget at the chosen retention windows.
-- `STATUS.md` updated.
+- ~~All 4 Grafana dashboards populated~~ **DONE**: Platform health,
+  LLM usage, AI-gateway scaling, Airlock activity (both halves live
+  since ADR-006 closed).
+- An induced anomaly fires an alert within 1 min — **PROVEN to
+  Alertmanager** (the ADR-009 GitHub-outage drill: 15 apps induced
+  into sync-Unknown, `ArgoCDApplicationSyncUnknown` pending→FIRING on
+  schedule, observed live). The `#claude-alerts` DELIVERY leg awaits
+  only the owner's Slack webhook URL — config is built, receiver
+  wiring is one values edit when the URL exists.
+- ~~A Tempo trace…~~ — moves with the Tempo deferral (item 3).
+- ~~Disk within budget~~ **DONE**: 370G free of 1007G; PVCs at their
+  declared sizes (Prometheus 5Gi/3d, Loki 20Gi/14d, Grafana 1Gi).
+- ~~STATUS.md updated~~ — continuously, per session protocol.
 
 ## Notes captured during execution
 
