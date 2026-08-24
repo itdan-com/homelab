@@ -1,6 +1,6 @@
 # ADR-010: Phase 9 — the AWS shape (k3s-on-EC2, the trust-domain VMs, and what the catalog owes the cloud)
 
-**Status:** **Proposed** (2026-08-24), awaiting owner accept/amend.
+**Status:** **ACCEPTED** (owner, 2026-08-24: *"i think your recommendation is fine"* — k3s-on-EC2 as the substrate, EKS the documented second module). Binding; greenlights the multi-session Phase 9 build.
 Written from an eight-agent recon (four readers over ADR-002/004/009,
 the cost-shape doc, and the catalog's portability blockers; four
 researchers over EKS-vs-k3s economics, trust-domain VMs on AWS,

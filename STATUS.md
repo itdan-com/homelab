@@ -217,7 +217,7 @@ unprompted; the owner picks them up when they want to._
    named (current state), or green-light the narrowing — a dedicated
    metrics listener validating a metrics-only sub-CA (small design
    pass + one more unit flag).
-13. **Phase 9 substrate: k3s-on-EC2 vs EKS** (ADR-010, Proposed
+~~13. **Phase 9 substrate: k3s-on-EC2 vs EKS**~~ RESOLVED 2026-08-24 (owner: *"i think your recommendation is fine"*) — k3s-on-EC2 is the substrate, EKS the documented second module. Original entry: (ADR-010, Proposed
    2026-08-24). The ADR RECOMMENDS k3s-on-EC2 (half the cost, exact
    lab parity, no lock-in; EKS's Auto Mode can't run our Cilium) with
    EKS as a documented second module. This is deliberately the
